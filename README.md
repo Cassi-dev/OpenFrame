@@ -98,15 +98,6 @@ Mac com Apple Silicon ou Intel.
 - Qualidade: mais baixa, recomendada, mais alta, bitrate personalizado (Mbps) ou tamanho de arquivo alvo (MB)
 - Intervalo de quadros-chave, bitrate e taxa de amostragem do áudio
 - Resumo ao vivo com dimensões, bitrate e tamanho estimado; progresso, tempo restante e cancelamento
-
-## Limitações conhecidas
-
-- Sem os recursos de IA do CapCut (legendas automáticas, remoção de fundo, vozes),
-  que dependem de modelos e serviços proprietários.
-- Projetos e exportação em SDR (Rec. 709). Vídeos HDR são convertidos para SDR.
-- Volume limitado a 100% (limite do `AVAudioMix`).
-- Ainda sem animação por keyframes nem exportação em GIF.
-
 ---
 
 ## Para desenvolvedores
