@@ -1,5 +1,6 @@
 import OpenFrameCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TimelineView: View {
     @Environment(EditorModel.self) private var model
@@ -9,6 +10,23 @@ struct TimelineView: View {
     static let rulerHeight: CGFloat = 30
     static let headerWidth: CGFloat = 58
     static let clipInset: CGFloat = 4
+    static let rowStride = rowHeight + rowSpacing
+
+    /// Topo da linha `row` no conteúdo da timeline (a régua vem antes).
+    static func rowTop(_ row: Int) -> CGFloat {
+        rulerHeight + rowSpacing + CGFloat(row) * rowStride
+    }
+
+    /// Linha sob a posição `y` do conteúdo; nil sobre a régua.
+    static func row(atY y: CGFloat) -> Int? {
+        let row = Int(((y - rulerHeight - rowSpacing) / rowStride).rounded(.down))
+        return row >= 0 ? row : nil
+    }
+
+    /// Zoom e ponto sob os dedos no início da pinça.
+    @State private var pinchStart: (zoom: Double, time: Double, x: CGFloat)?
+    /// Posição do material arrastado da biblioteca sobre a timeline.
+    @State private var dropLocation: CGPoint?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,9 +35,12 @@ struct TimelineView: View {
             GeometryReader { geo in
                 let order = model.displayTrackOrder()
                 let tracks = order.map { model.project.tracks[$0] }
-                let contentWidth = max(geo.size.width - Self.headerWidth,
-                                       CGFloat((model.duration.seconds + 15) * model.zoom))
-                let contentHeight = Self.rulerHeight + CGFloat(tracks.count) * (Self.rowHeight + Self.rowSpacing)
+                let viewportWidth = geo.size.width - Self.headerWidth
+                // 15 s depois do fim (e no mínimo 160 pt, para a barra de ações do último clipe).
+                let contentWidth = max(viewportWidth,
+                                       CGFloat(model.duration.seconds * model.zoom) + max(CGFloat(15 * model.zoom), 160))
+                let contentHeight = Self.rulerHeight + CGFloat(tracks.count) * Self.rowStride
+                let drop = dropPreview
                 ScrollView(.vertical) {
                     HStack(alignment: .top, spacing: 0) {
                         VStack(spacing: Self.rowSpacing) {
@@ -35,15 +56,24 @@ struct TimelineView: View {
                             ZStack(alignment: .topLeading) {
                                 VStack(alignment: .leading, spacing: Self.rowSpacing) {
                                     RulerView(width: contentWidth)
-                                    ForEach(tracks) { track in
-                                        TrackRow(track: track, width: contentWidth)
+                                    ForEach(Array(tracks.enumerated()), id: \.element.id) { row, track in
+                                        TrackRow(track: track, width: contentWidth,
+                                                 highlighted: model.dragTarget?.row == row || (drop != nil && drop?.row == row))
+                                            .zIndex(isDragSource(track) ? 1 : 0)
                                     }
+                                }
+                                .padding(.bottom, ClipActionBar.reserve)
+                                if let drop {
+                                    DropGhost(range: drop.range, row: drop.row, height: contentHeight)
                                 }
                                 PlayheadView(height: contentHeight + 8, time: model.playhead)
                                     .offset(x: CGFloat(model.playhead.seconds * model.zoom) - PlayheadView.width / 2)
-                                ClipActionBar(tracks: tracks)
+                                ClipActionBar(tracks: tracks, contentWidth: contentWidth)
                             }
                             .frame(width: contentWidth, alignment: .topLeading)
+                            .background(ScrollViewAccessor(model: model))
+                            .simultaneousGesture(pinch)
+                            .onDrop(of: [.plainText], delegate: TimelineDropDelegate(model: model, location: $dropLocation))
                             .padding(.trailing, 24)
                         }
                         .scrollIndicators(.automatic)
@@ -52,7 +82,125 @@ struct TimelineView: View {
                     .frame(minHeight: geo.size.height, alignment: .top)
                 }
                 .scrollIndicators(.never)
+                .onChange(of: viewportWidth, initial: true) { model.timelineViewportWidth = viewportWidth }
             }
+        }
+    }
+}
+
+extension TimelineView {
+    /// Onde o material arrastado da biblioteca cairia, com a linha de destino
+    /// (nil se for criada uma faixa nova).
+    private var dropPreview: (row: Int?, range: TimeRange)? {
+        guard let location = dropLocation else { return nil }
+        let time = Micros(max(0, location.x) / model.zoom * 1_000_000)
+        guard let id = model.draggingMaterial,
+              let preview = model.dropPreview(id, at: time, row: Self.row(atY: location.y))
+        else { return (nil, TimeRange(start: time, duration: 0)) }
+        return preview
+    }
+
+    private func isDragSource(_ track: Track) -> Bool {
+        guard let id = model.dragTarget?.segment else { return false }
+        return track.segments.contains { $0.id == id }
+    }
+
+    /// Pinça no trackpad: zoom mantendo parado o ponto sob os dedos.
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let start = pinchStart ?? {
+                    let anchor = model.zoomAnchor(contentX: value.startLocation.x)
+                    return (model.zoom, anchor.time, anchor.x)
+                }()
+                pinchStart = start
+                model.setZoom(start.zoom * value.magnification, keeping: start.time, at: start.x)
+            }
+            .onEnded { _ in pinchStart = nil }
+    }
+}
+
+/// Entrega ao modelo o NSScrollView horizontal da timeline, para acompanhar a rolagem.
+private struct ScrollViewAccessor: NSViewRepresentable {
+    let model: EditorModel
+
+    func makeNSView(context: Context) -> NSView { Probe(model: model) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class Probe: NSView {
+        private weak var model: EditorModel?
+
+        init(model: EditorModel) {
+            self.model = model
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let scroll = enclosingScrollView { model?.attachTimelineScroll(scroll) }
+        }
+    }
+}
+
+/// Recebe materiais arrastados da biblioteca (o id do material como texto).
+private struct TimelineDropDelegate: DropDelegate {
+    let model: EditorModel
+    @Binding var location: CGPoint?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.plainText])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        location = info.location
+        return DropProposal(operation: .copy)
+    }
+
+    func dropExited(info: DropInfo) {
+        location = nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        location = nil
+        model.draggingMaterial = nil
+        guard let provider = info.itemProviders(for: [.plainText]).first else { return false }
+        let time = Micros(max(0, info.location.x) / model.zoom * 1_000_000)
+        let row = TimelineView.row(atY: info.location.y)
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let text = object as? NSString, let id = UUID(uuidString: text as String) else { return }
+            Task { @MainActor in model.dropMaterial(id, at: time, row: row) }
+        }
+        return true
+    }
+}
+
+/// Contorno de onde o material solto vai cair; sem linha conhecida (faixa
+/// nova), só a linha vertical no tempo.
+private struct DropGhost: View {
+    @Environment(EditorModel.self) private var model
+    let range: TimeRange
+    let row: Int?
+    let height: CGFloat
+
+    var body: some View {
+        let x = CGFloat(range.start.seconds * model.zoom)
+        Rectangle()
+            .fill(Theme.accent)
+            .frame(width: 2, height: height)
+            .offset(x: x - 1)
+            .allowsHitTesting(false)
+        if let row, range.duration > 0 {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Theme.accent.opacity(0.12))
+                .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .frame(width: max(4, CGFloat(range.duration.seconds * model.zoom)),
+                       height: TimelineView.rowHeight - TimelineView.clipInset * 2)
+                .offset(x: x, y: TimelineView.rowTop(row) + TimelineView.clipInset)
+                .allowsHitTesting(false)
         }
     }
 }
@@ -84,13 +232,16 @@ private struct TimelineToolbar: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Button { model.zoom = max(model.zoom / 1.4, 8) } label: { Image(systemName: "minus") }
+            Button { model.zoomToFit() } label: { Image(systemName: "rectangle.arrowtriangle.2.outward") }
+                .buttonStyle(GlyphButtonStyle())
+                .help("Ajustar à janela (⇧Z)")
+                .padding(.trailing, 6)
+            Button { model.zoomOut() } label: { Image(systemName: "minus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Afastar (⌘−)")
-            ThinSlider(value: Binding(get: { log(model.zoom) }, set: { model.zoom = exp($0) }),
-                       range: log(8.0)...log(600.0))
+            ThinSlider(value: zoomFraction, range: 0...1)
                 .frame(width: 120)
-            Button { model.zoom = min(model.zoom * 1.4, 600) } label: { Image(systemName: "plus") }
+            Button { model.zoomIn() } label: { Image(systemName: "plus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Aproximar (⌘=)")
         }
@@ -98,6 +249,13 @@ private struct TimelineToolbar: View {
         .buttonStyle(CircleButtonStyle(size: 28))
         .padding(.horizontal, 12)
         .frame(height: 46)
+    }
+
+    /// Zoom em escala logarítmica, de `minZoom` (projeto inteiro) a `maxZoom`.
+    private var zoomFraction: Binding<Double> {
+        let low = log(model.minZoom), high = log(EditorModel.maxZoom)
+        return Binding(get: { (log(model.zoom) - low) / (high - low) },
+                       set: { model.setZoom(exp(low + $0 * (high - low))) })
     }
 }
 
@@ -161,8 +319,8 @@ private struct RulerView: View {
         Canvas { ctx, size in
             let pill = CGRect(x: 0, y: 4, width: size.width, height: size.height - 8)
             ctx.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Theme.raised))
-            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-            let major = steps.first { $0 * zoom >= 110 } ?? 300
+            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400]
+            let major = steps.first { $0 * zoom >= 110 } ?? 14400
             let minor = major / 4
             var i = 0
             while Double(i) * minor * zoom <= size.width {
@@ -187,24 +345,30 @@ private struct RulerView: View {
         .frame(width: width, height: TimelineView.rulerHeight)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-            if model.isPlaying { model.togglePlay() }
-            model.seek(to: Micros(max(0, value.location.x) / model.zoom * 1_000_000))
+            model.scrub(to: Micros(max(0, value.location.x) / model.zoom * 1_000_000))
         })
         .help("Arraste para navegar")
     }
 
     static func label(_ t: Double, step: Double) -> String {
+        if t >= 3600 {
+            let s = Int(t)
+            return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+        }
         let minutes = Int(t) / 60
         let seconds = t - Double(minutes * 60)
         return step < 1 ? String(format: "%02d:%04.1f", minutes, seconds) : String(format: "%02d:%02d", minutes, Int(seconds))
     }
 }
 
-/// Playhead com a cabeça da agulha da marca, que leva o tempo atual.
+/// Playhead com a cabeça da agulha da marca, que leva o tempo atual. A
+/// cabeça pode ser arrastada; a linha deixa os cliques passarem para os clipes.
 private struct PlayheadView: View {
+    @Environment(EditorModel.self) private var model
     static let width: CGFloat = 60
     let height: CGFloat
     let time: Micros
+    @State private var dragStart: Micros?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -218,14 +382,26 @@ private struct PlayheadView: View {
                     .frame(height: 16)
             }
             .frame(width: Self.width, height: 21)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    let start = dragStart ?? model.playhead
+                    dragStart = start
+                    model.scrub(to: start + Micros(Double(value.translation.width) / model.zoom * 1_000_000))
+                }
+                .onEnded { _ in dragStart = nil })
+            .help("Arraste para navegar")
             .padding(.top, 4)
             Rectangle()
                 .fill(Theme.accent)
                 .frame(width: 1.5)
                 .shadow(color: Theme.accent.opacity(0.5), radius: 3)
+                .allowsHitTesting(false)
         }
         .frame(width: Self.width, height: height, alignment: .top)
-        .allowsHitTesting(false)
     }
 }
 
@@ -235,11 +411,17 @@ private struct TrackRow: View {
     @Environment(EditorModel.self) private var model
     let track: Track
     let width: CGFloat
+    /// Destino de um clipe ou material arrastado.
+    let highlighted: Bool
+    /// Junção da faixa principal sob o mouse, que mostra o botão de transição.
+    @State private var hoveredJunction: Int?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(track.isMain ? 0.035 : 0.018))
+                .fill(Color.white.opacity(highlighted ? 0.07 : track.isMain ? 0.035 : 0.018))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.accent.opacity(highlighted ? 0.5 : 0)))
                 .contentShape(Rectangle())
                 .onTapGesture(coordinateSpace: .local) { location in
                     model.selection = nil
@@ -251,18 +433,36 @@ private struct TrackRow: View {
             }
             if track.isMain {
                 ForEach(Array(track.segments.dropLast().enumerated()), id: \.element.id) { index, seg in
-                    transitionButton(seg, next: track.segments[index + 1])
+                    transitionButton(seg, next: track.segments[index + 1], index: index)
                 }
             }
         }
         .frame(width: width, height: TimelineView.rowHeight)
         .opacity(track.hidden ? 0.4 : 1)
+        .onContinuousHover { phase in
+            guard track.isMain else { return }
+            var nearest: Int?
+            if case .active(let point) = phase {
+                nearest = junctions.indices.min { abs(junctions[$0] - point.x) < abs(junctions[$1] - point.x) }
+                if let i = nearest, abs(junctions[i] - point.x) > 40 { nearest = nil }
+            }
+            if nearest != hoveredJunction { hoveredJunction = nearest }
+        }
     }
 
-    /// Botão na junção entre dois clipes.
-    private func transitionButton(_ seg: Segment, next: Segment) -> some View {
+    /// Posição x de cada junção entre clipes da faixa principal.
+    private var junctions: [CGFloat] {
+        zip(track.segments, track.segments.dropFirst()).map { seg, next in
+            CGFloat(Double(seg.targetEnd + next.targetStart) / 2 / 1_000_000 * model.zoom)
+        }
+    }
+
+    /// Botão na junção entre dois clipes. Sem transição, só aparece com o mouse
+    /// perto da junção ou com um dos dois clipes selecionado.
+    private func transitionButton(_ seg: Segment, next: Segment, index: Int) -> some View {
         let junction = Double(seg.targetEnd + next.targetStart) / 2 / 1_000_000
         let has = seg.transition != nil
+        let visible = has || hoveredJunction == index || model.selection == seg.id || model.selection == next.id
         return Button {
             model.selection = seg.id
             model.inspectorTab = .transition
@@ -277,6 +477,9 @@ private struct TrackRow: View {
         }
         .buttonStyle(.plain)
         .help(seg.transition.map { "Transição: \($0.kind.displayName)" } ?? "Adicionar transição")
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
         // Abaixo do nome do clipe, para não cobri-lo.
         .offset(x: CGFloat(junction * model.zoom) - 10, y: TimelineView.rowHeight - TimelineView.clipInset - 24)
     }
@@ -292,7 +495,6 @@ private struct SegmentView: View {
     private var width: CGFloat { max(4, CGFloat(segment.targetDuration.seconds * model.zoom)) }
     private var height: CGFloat { TimelineView.rowHeight - TimelineView.clipInset * 2 }
     private var isSelected: Bool { model.selection == segment.id }
-    private static let rowStride = TimelineView.rowHeight + TimelineView.rowSpacing
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Self.radius, style: .continuous) }
 
     var body: some View {
@@ -307,12 +509,14 @@ private struct SegmentView: View {
         .overlay(alignment: .trailing) { if isSelected { handle(leading: false) } }
         .shadow(color: isSelected ? Theme.accent.opacity(0.35) : .clear, radius: 10)
         .contentShape(Rectangle())
+        .offset(dragShift)
         .gesture(
             DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                .onChanged { value in model.dragMove(segment.id, dx: value.translation.width) }
-                .onEnded { value in
-                    model.endDragMove(segment.id, rows: Int((value.translation.height / Self.rowStride).rounded()))
-                })
+                .onChanged { value in
+                    let rows = Int((value.translation.height / TimelineView.rowStride).rounded())
+                    model.dragMove(segment.id, dx: value.translation.width, rows: rows)
+                }
+                .onEnded { _ in model.endDragMove(segment.id) })
         .onTapGesture { model.selection = segment.id }
         .contextMenu {
             Button("Dividir no cursor") {
@@ -329,6 +533,13 @@ private struct SegmentView: View {
                 model.deleteSelection()
             }
         }
+    }
+
+    /// Deslocamento até a faixa de destino enquanto o clipe é arrastado para outra linha.
+    private var dragShift: CGSize {
+        guard let target = model.dragTarget, target.segment == segment.id else { return .zero }
+        return CGSize(width: CGFloat((target.start - segment.targetStart).seconds * model.zoom),
+                      height: CGFloat(target.rows) * TimelineView.rowStride)
     }
 
     @ViewBuilder
@@ -426,24 +637,38 @@ private struct SegmentView: View {
     }
 }
 
-/// Ações do clipe selecionado, flutuando logo acima dele.
+/// Ações do clipe selecionado, flutuando junto dele: acima do clipe ou, na
+/// primeira faixa, abaixo (para não cobrir a régua). A timeline reserva
+/// `reserve` sob a última faixa, para a barra nunca passar do conteúdo,
+/// que o ScrollView recorta; na horizontal ela fica dentro da área visível.
 private struct ClipActionBar: View {
+    static let height: CGFloat = 30
+    static let reserve: CGFloat = height + 6
+
     @Environment(EditorModel.self) private var model
     let tracks: [Track]
+    let contentWidth: CGFloat
 
     var body: some View {
-        if let seg = model.selectedSegment,
+        if model.dragTarget == nil, let seg = model.selectedSegment,
            let row = tracks.firstIndex(where: { $0.segments.contains { $0.id == seg.id } }) {
             let zoom = model.zoom
             let start = CGFloat(seg.targetStart.seconds * zoom)
             let end = CGFloat(seg.targetEnd.seconds * zoom)
             let canSplit = seg.targetRange.contains(model.playhead) && model.playhead > seg.targetStart
-            // Ao lado da linha do playhead (ou no início do clipe); na primeira
-            // faixa fica abaixo do clipe, para não cobrir a régua.
+            let actions = canSplit ? 3 : 2
+            let width = CGFloat(actions) * Self.height + CGFloat(actions - 1) + 8
+            // Ao lado da linha do playhead (ou no início do clipe), dentro da área
+            // visível, sem se afastar do clipe e sem passar das bordas do conteúdo.
             let anchor = canSplit ? CGFloat(model.playhead.seconds * zoom) + 8 : start + 8
-            let rowTop = TimelineView.rulerHeight + TimelineView.rowSpacing
-                + CGFloat(row) * (TimelineView.rowHeight + TimelineView.rowSpacing)
-            let y = row == 0 ? rowTop + TimelineView.rowHeight - 2 : rowTop - 28
+            let visibleLeft = model.timelineScrollX
+            let visibleRight = visibleLeft + model.timelineViewportWidth
+            let inView = model.timelineViewportWidth > 0
+                ? max(min(anchor, visibleRight - width - 8), visibleLeft + 8) : anchor
+            let nearClip = min(max(inView, start - width + 24), end - 24)
+            let x = max(0, min(nearClip, contentWidth - width))
+            let rowTop = TimelineView.rowTop(row)
+            let y = row == 0 ? rowTop + TimelineView.rowHeight - 2 : rowTop - Self.height + 2
             HStack(spacing: 0) {
                 if canSplit {
                     action("scissors", "Dividir (⌘B)") { model.splitAtPlayhead() }
@@ -454,12 +679,12 @@ private struct ClipActionBar: View {
                 action("trash", "Apagar (⌫)") { model.deleteSelection() }
             }
             .padding(.horizontal, 4)
-            .frame(height: 30)
+            .frame(height: Self.height)
             .background(Theme.raisedHigh, in: Capsule())
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
             .shadow(color: .black.opacity(0.6), radius: 8, y: 3)
             .fixedSize()
-            .offset(x: max(0, min(anchor, end)), y: y)
+            .offset(x: x, y: y)
             .transition(.opacity)
         }
     }
@@ -472,7 +697,7 @@ private struct ClipActionBar: View {
         Button(action: run) {
             Image(systemName: icon)
                 .font(Theme.font(11))
-                .frame(width: 30, height: 30)
+                .frame(width: Self.height, height: Self.height)
         }
         .buttonStyle(GlyphButtonStyle())
         .help(help)

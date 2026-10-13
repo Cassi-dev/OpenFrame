@@ -80,6 +80,13 @@ final class EditorModel {
     private(set) var isPlaying = false
     /// Pontos por segundo na timeline.
     var zoom: Double = 80
+    /// Largura visível e deslocamento horizontal da área rolável da timeline.
+    var timelineViewportWidth: CGFloat = 0
+    private(set) var timelineScrollX: CGFloat = 0
+    /// Destino do clipe sendo arrastado na vertical (outra faixa).
+    private(set) var dragTarget: DragTarget?
+    /// Material da biblioteca sendo arrastado, para prever onde ele cai.
+    var draggingMaterial: UUID?
     var exportSettings = ExportSettings()
     var showExport = false
     var errorMessage: String?
@@ -103,6 +110,12 @@ final class EditorModel {
     @ObservationIgnored private var pendingSeek: CMTime?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private(set) weak var timelineScrollView: NSScrollView?
+    @ObservationIgnored private var timelineScrollObserver: Any?
+    @ObservationIgnored private var pendingTimelineScrollX: CGFloat?
+    @ObservationIgnored private var scrollMonitor: Any?
+    /// Última versão de cada segmento mostrado no inspetor (ver `binding`).
+    @ObservationIgnored private var inspectedSegments: [UUID: Segment] = [:]
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -115,6 +128,7 @@ final class EditorModel {
             MainActor.assumeIsolated { self?.playerTimeChanged(time) }
         }
         installKeyMonitor()
+        installScrollMonitor()
         // `OpenFrame -open caminho.openframe` (argumentos com "-" viram UserDefaults;
         // caminhos soltos seriam tratados pelo AppKit como documentos a abrir).
         if let path = UserDefaults.standard.string(forKey: "open") {
@@ -197,11 +211,17 @@ final class EditorModel {
 
     // MARK: - Bindings para o inspetor
 
+    /// Ao apagar o clipe selecionado (ou desfazer a criação dele), o SwiftUI
+    /// ainda reavalia a aba do inspetor uma vez antes de removê-la, quando o
+    /// segmento já não está no projeto. Os bindings usam então a última versão
+    /// conhecida dele.
     func binding<T: Equatable>(_ id: UUID, _ keyPath: WritableKeyPath<Segment, T>) -> Binding<T> {
-        let fallback = project.segment(id)?[keyPath: keyPath]
+        if let seg = project.segment(id) { inspectedSegments[id] = seg }
+        let fallback = inspectedSegments[id]
         return Binding(
             get: { [weak self] in
-                self?.project.segment(id)?[keyPath: keyPath] ?? fallback!
+                // O segmento sempre existe quando o inspetor o mostra pela primeira vez.
+                (self?.project.segment(id) ?? fallback)![keyPath: keyPath]
             },
             set: { [weak self] value in
                 self?.mutate(coalesce: "\(id)\(keyPath)") { p in
@@ -309,6 +329,7 @@ final class EditorModel {
     private func playerTimeChanged(_ time: CMTime) {
         guard isPlaying else { return }
         playhead = min(time.micros, duration)
+        revealPlayhead()
         if player.rate == 0 || playhead >= duration {
             isPlaying = false
         }
@@ -335,6 +356,39 @@ final class EditorModel {
     func step(frames: Int) {
         if isPlaying { togglePlay() }
         seek(to: playhead + Micros(Double(frames) / project.fps * 1_000_000))
+        revealPlayhead()
+    }
+
+    /// Scrub pela régua ou pela agulha do playhead.
+    func scrub(to t: Micros) {
+        if isPlaying { togglePlay() }
+        seek(to: t)
+    }
+
+    func goToStart() {
+        if isPlaying { togglePlay() }
+        seek(to: 0)
+        revealPlayhead()
+    }
+
+    func goToEnd() {
+        if isPlaying { togglePlay() }
+        seek(to: duration)
+        revealPlayhead()
+    }
+
+    /// Vai ao corte anterior ou seguinte: início ou fim de qualquer clipe.
+    func jumpToEdit(forward: Bool) {
+        if isPlaying { togglePlay() }
+        var edges: Set<Micros> = [0, duration]
+        for seg in project.tracks.flatMap(\.segments) {
+            edges.insert(seg.targetStart)
+            edges.insert(seg.targetEnd)
+        }
+        let target = forward ? edges.filter { $0 > playhead }.min() : edges.filter { $0 < playhead }.max()
+        guard let target else { return }
+        seek(to: target)
+        revealPlayhead()
     }
 
     /// Busca "perseguida": enquanto uma busca está em andamento, guarda só a
@@ -395,6 +449,33 @@ final class EditorModel {
         var id: UUID?
         mutate { id = TimelineEditor.addOverlay(m, to: &$0, at: playhead) }
         selection = id
+    }
+
+    /// Material da biblioteca solto na timeline, no tempo e na linha (ordem de
+    /// exibição) indicados.
+    func dropMaterial(_ id: UUID, at time: Micros, row: Int?) {
+        guard let m = project.material(id) else { return }
+        let track = trackIndex(forRow: row)
+        var newId: UUID?
+        mutate { newId = TimelineEditor.insertMedia(m, into: &$0, at: time, track: track) }
+        selection = newId
+    }
+
+    /// Onde o material cairia: linha de exibição (nil se for criada uma faixa) e intervalo.
+    func dropPreview(_ id: UUID, at time: Micros, row: Int?) -> (row: Int?, range: TimeRange)? {
+        guard let m = project.material(id) else { return nil }
+        var p = project
+        let newId = TimelineEditor.insertMedia(m, into: &p, at: time, track: trackIndex(forRow: row))
+        guard let loc = p.locate(newId), let seg = p.segment(newId) else { return nil }
+        // Uma faixa criada para o material não existe no projeto atual.
+        let trackId = p.tracks[loc.track].id
+        let row = project.tracks.firstIndex { $0.id == trackId }.flatMap { displayTrackOrder().firstIndex(of: $0) }
+        return (row, seg.targetRange)
+    }
+
+    private func trackIndex(forRow row: Int?) -> Int? {
+        let order = displayTrackOrder()
+        return row.flatMap { order.indices.contains($0) ? order[$0] : nil }
     }
 
     func removeMaterial(_ m: Material) {
@@ -519,14 +600,23 @@ final class EditorModel {
 
     // MARK: - Arrastar na timeline
 
-    func dragMove(_ id: UUID, dx: CGFloat) {
+    /// Arraste do clipe: `dx` em pontos; `rows`, deslocamento vertical em linhas.
+    func dragMove(_ id: UUID, dx: CGFloat, rows: Int) {
         beginGesture()
         selection = id
         guard let base = gestureBase, let seg = base.segment(id), let loc = base.locate(id) else { return }
+        let row = dragTargetRow(id, rows: rows, in: base)
         let delta = Micros(Double(dx) / zoom * 1_000_000)
         if base.tracks[loc.track].isMain {
-            let center = (seg.targetStart + seg.targetEnd) / 2 + delta
-            updateGesture { TimelineEditor.reorderMain(&$0, segment: id, toCenter: center) }
+            if let row {
+                // Saindo da faixa principal: ela fica como estava até soltar.
+                setDragTarget(DragTarget(segment: id, rows: rows, row: row, start: max(0, seg.targetStart + delta)))
+                updateGesture { _ in }
+            } else {
+                setDragTarget(nil)
+                let center = (seg.targetStart + seg.targetEnd) / 2 + delta
+                updateGesture { TimelineEditor.reorderMain(&$0, segment: id, toCenter: center) }
+            }
             return
         }
         let points = TimelineEditor.snapPoints(base, excluding: id, extra: [playhead])
@@ -539,25 +629,41 @@ final class EditorModel {
             let end = start + seg.targetDuration
             start += TimelineEditor.snap(end, to: points, threshold: threshold) - end
         }
+        setDragTarget(row.map { DragTarget(segment: id, rows: rows, row: $0, start: start) })
         updateGesture { TimelineEditor.move(&$0, segment: id, toStart: start) }
     }
 
     /// Ao soltar: move para outra faixa (deslocamento vertical em linhas) e
     /// resolve sobreposições.
-    func endDragMove(_ id: UUID, rows: Int) {
-        if rows != 0, gestureBase != nil {
+    func endDragMove(_ id: UUID) {
+        if let target = dragTarget, target.segment == id, gestureBase != nil {
             let order = displayTrackOrder()
-            if let loc = project.locate(id),
-               let row = order.firstIndex(of: loc.track) {
-                let targetRow = row + rows
-                if order.indices.contains(targetRow) {
-                    let target = order[targetRow]
-                    updateGestureInPlace { TimelineEditor.moveToTrack(&$0, segment: id, track: target) }
+            if order.indices.contains(target.row) {
+                let track = order[target.row]
+                updateGestureInPlace { p in
+                    TimelineEditor.moveToTrack(&p, segment: id, track: track)
+                    TimelineEditor.move(&p, segment: id, toStart: target.start)
                 }
             }
         }
+        dragTarget = nil
         updateGestureInPlace { TimelineEditor.resolveOverlap(&$0, segment: id) }
         endGesture()
+    }
+
+    /// Linha de destino (ordem de exibição) do arraste vertical, só quando a
+    /// faixa aceita o clipe.
+    private func dragTargetRow(_ id: UUID, rows: Int, in base: Project) -> Int? {
+        let order = displayTrackOrder()
+        guard rows != 0, let loc = base.locate(id), let row = order.firstIndex(of: loc.track),
+              order.indices.contains(row + rows),
+              TimelineEditor.canMove(base, segment: id, toTrack: order[row + rows])
+        else { return nil }
+        return row + rows
+    }
+
+    private func setDragTarget(_ target: DragTarget?) {
+        if target != dragTarget { dragTarget = target }
     }
 
     func dragTrim(_ id: UUID, leading: Bool, dx: CGFloat) {
@@ -682,9 +788,133 @@ final class EditorModel {
         }
     }
 
+    // MARK: - Zoom da timeline
+
+    static let maxZoom = 600.0
+
+    /// Zoom em que o projeto inteiro cabe na largura visível da timeline.
+    var fitZoom: Double {
+        let usable = Double(timelineViewportWidth) - 48
+        guard duration > 0, usable > 0 else { return 80 }
+        return min(usable / duration.seconds, Self.maxZoom)
+    }
+
+    /// 8 pt/s, ou menos quando é preciso para um projeto longo caber inteiro.
+    var minZoom: Double { max(0.01, min(8, fitZoom)) }
+
+    func zoomIn() { setZoom(zoom * 1.4) }
+    func zoomOut() { setZoom(zoom / 1.4) }
+
+    /// Mostra o projeto inteiro, a partir do início.
+    func zoomToFit() { setZoom(fitZoom, keeping: 0, at: 0) }
+
+    /// Muda o zoom mantendo o tempo `time` (s) na posição `x` da área visível.
+    /// Sem âncora, mantém o playhead (se estiver à vista) ou o centro.
+    func setZoom(_ value: Double, keeping time: Double? = nil, at x: CGFloat? = nil) {
+        let new = min(max(value, minZoom), Self.maxZoom)
+        guard let scroll = timelineScrollView else {
+            zoom = new
+            return
+        }
+        let origin = timelineScrollOrigin
+        let anchor: (time: Double, x: CGFloat)
+        if let time, let x {
+            anchor = (time, x)
+        } else {
+            let playheadX = CGFloat(playhead.seconds * zoom) - origin
+            let width = scroll.contentView.bounds.width
+            anchor = (0...width).contains(playheadX)
+                ? (playhead.seconds, playheadX)
+                : (Double(origin + width / 2) / zoom, width / 2)
+        }
+        zoom = new
+        // O conteúdo só muda de largura no próximo layout; a rolagem vem depois.
+        pendingTimelineScrollX = CGFloat(anchor.time * new) - anchor.x
+        DispatchQueue.main.async { [weak self] in self?.applyPendingTimelineScroll() }
+    }
+
+    /// Ponto de zoom sob uma posição `x` do conteúdo da timeline.
+    func zoomAnchor(contentX: CGFloat) -> (time: Double, x: CGFloat) {
+        (Double(contentX) / zoom, contentX - timelineScrollOrigin)
+    }
+
+    /// Deslocamento da rolagem, contando um ajuste ainda não aplicado.
+    private var timelineScrollOrigin: CGFloat {
+        pendingTimelineScrollX ?? timelineScrollView?.contentView.bounds.origin.x ?? 0
+    }
+
+    private func applyPendingTimelineScroll() {
+        guard let target = pendingTimelineScrollX, let scroll = timelineScrollView else { return }
+        pendingTimelineScrollX = nil
+        scroll.window?.contentView?.layoutSubtreeIfNeeded()
+        let clip = scroll.contentView
+        let maxX = max(0, (scroll.documentView?.frame.width ?? 0) - clip.bounds.width)
+        clip.scroll(to: NSPoint(x: min(max(0, target), maxX), y: clip.bounds.origin.y))
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    /// ⌘ ou ⌥ + roda do mouse sobre a timeline: zoom no ponto do cursor.
+    private func installScrollMonitor() {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard !event.modifierFlags.intersection([.command, .option]).isEmpty else { return event }
+            let window = event.windowNumber
+            let location = event.locationInWindow
+            let delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.scrollingDeltaX
+            let precise = event.hasPreciseScrollingDeltas
+            let handled = MainActor.assumeIsolated {
+                self?.handleZoomScroll(window: window, location: location, delta: delta, precise: precise) ?? false
+            }
+            return handled ? nil : event
+        }
+    }
+
+    private func handleZoomScroll(window: Int, location: NSPoint, delta: CGFloat, precise: Bool) -> Bool {
+        guard let scroll = timelineScrollView, scroll.window?.windowNumber == window else { return false }
+        let point = scroll.convert(location, from: nil)
+        guard scroll.visibleRect.contains(point) else { return false }
+        guard delta != 0 else { return true }
+        let anchor = zoomAnchor(contentX: timelineScrollOrigin + point.x)
+        setZoom(zoom * exp(Double(delta) * (precise ? 0.01 : 0.12)), keeping: anchor.time, at: anchor.x)
+        return true
+    }
+
+    // MARK: - Rolagem da timeline
+
+    /// Rola a timeline para o playhead ficar à vista. Na reprodução, vira a
+    /// página quando ele chega perto da borda direita.
+    private func revealPlayhead() {
+        guard let scroll = timelineScrollView, pendingTimelineScrollX == nil else { return }
+        let clip = scroll.contentView
+        let width = clip.bounds.width
+        let left = clip.bounds.origin.x
+        let x = CGFloat(playhead.seconds * zoom)
+        guard width > 0, x < left || x > left + width - 40 else { return }
+        let maxX = max(0, (scroll.documentView?.frame.width ?? 0) - width)
+        clip.scroll(to: NSPoint(x: min(max(0, x - width * 0.1), maxX), y: clip.bounds.origin.y))
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    /// Recebe o NSScrollView horizontal da timeline e acompanha a rolagem.
+    func attachTimelineScroll(_ scroll: NSScrollView) {
+        guard scroll !== timelineScrollView else { return }
+        if let timelineScrollObserver { NotificationCenter.default.removeObserver(timelineScrollObserver) }
+        timelineScrollView = scroll
+        timelineScrollX = scroll.contentView.bounds.origin.x
+        scroll.contentView.postsBoundsChangedNotifications = true
+        timelineScrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let x = self.timelineScrollView?.contentView.bounds.origin.x,
+                      x != self.timelineScrollX else { return }
+                self.timelineScrollX = x
+            }
+        }
+    }
+
     // MARK: - Teclado
 
-    /// Espaço, Delete e setas funcionam em qualquer lugar, exceto ao digitar texto.
+    /// Espaço, Delete, Esc, setas, Home/End e ⇧Z funcionam em qualquer lugar, exceto ao digitar texto.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // O NSEvent não é Sendable: só o código e os modificadores entram no MainActor.
@@ -701,11 +931,28 @@ final class EditorModel {
         guard NSApp.keyWindow?.sheetParent == nil, NSApp.keyWindow?.attachedSheet == nil else { return false }
         switch keyCode {
         case 49: togglePlay()
+        case 6 where flags.contains(.shift): zoomToFit()
         case 51, 117: deleteSelection()
+        case 53:
+            guard selection != nil else { return false }
+            selection = nil
+        case 115: goToStart()
+        case 119: goToEnd()
+        case 126: jumpToEdit(forward: false)
+        case 125: jumpToEdit(forward: true)
         case 123: step(frames: flags.contains(.shift) ? -10 : -1)
         case 124: step(frames: flags.contains(.shift) ? 10 : 1)
         default: return false
         }
         return true
     }
+}
+
+/// Clipe arrastado para outra faixa: deslocamento em linhas, linha de destino
+/// (na ordem de exibição) e início do clipe nela.
+struct DragTarget: Equatable {
+    let segment: UUID
+    let rows: Int
+    let row: Int
+    let start: Micros
 }

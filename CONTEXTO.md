@@ -360,11 +360,7 @@ OPENFRAME_SNAPSHOT_DIR=/tmp/snaps .build/debug/OpenFrame -open projeto.openframe
 O modo de captura não fecha sozinho se a janela de exportação estiver aberta;
 encerre com `pkill -f debug/OpenFrame`.
 
-Git: repositório local em `~/Desktop/opencut`, sem remoto.
-- `394d7db` Núcleo (ainda como OpenCut)
-- `bec66a2` App SwiftUI, demo, empacotamento e documentação
-- `0e22857` Renomeação para OpenFrame (commit do usuário)
-- A marca (`assets/brand/`) e a remodelação da interface ainda não foram commitadas.
+Git: ver a seção 11 (gitflow, remoto `origin` no GitHub).
 
 ---
 
@@ -373,7 +369,6 @@ Git: repositório local em `~/Desktop/opencut`, sem remoto.
 **OpenFrame**
 - Teste manual das interações: arrastar entre faixas, aparar, scrub, atalhos,
   importar arrastando arquivos.
-- Rolagem automática da timeline durante a reprodução.
 - Volume acima de 100% (exigiria processamento de áudio próprio, já que o
   `AVAudioMix` limita a 1,0).
 - Exportação em GIF (o CapCut tem `GifExportViewModel`).
@@ -446,3 +441,49 @@ Pedido do usuário (13/10/2026): `main` é sempre a versão mais atual e sem bug
   criada depois do merge, na `main` atualizada.
 - `v0.1.0` aponta para `833edee`; o PR `release/0.1.0 → main` leva esse commit à `main`.
 
+
+---
+
+## 12. Timeline: zoom e usabilidade (13/10/2026)
+
+Pedidos do usuário a partir de uma captura em que a barra de ações do clipe aparecia cortada.
+
+**`feature/timeline-zoom`** (agente 04 do Maestri):
+- Barra de ações sempre inteira: a pilha de faixas reserva espaço embaixo, e a barra
+  fica dentro da área visível.
+- Zoom com "Ajustar à janela" (⇧Z), pinça, ⌘/⌥ + roda e âncora no playhead ou no
+  cursor. O zoom mínimo cai abaixo de 8 pt/s quando o projeto não cabe. O modelo
+  acompanha o `NSScrollView` horizontal (`attachTimelineScroll`).
+
+**`feature/timeline-usabilidade`**: itens que o usuário escolheu numa lista de 14
+(1, 2, 3, 5, 6, 10 e 13). Ficaram de fora:
+- scrub ao passar o mouse;
+- linha de encaixe;
+- etiqueta de tempo durante o arraste;
+- copiar e colar, e seleção múltipla;
+- botões repetidos na barra da timeline;
+- timeline vazia com instrução;
+- travar faixa.
+
+O que entrou:
+- Rolagem automática na reprodução, que vira a página perto da borda direita
+  (`revealPlayhead`), e também em Home/End, ↑/↓ e nos quadros.
+- A cabeça da agulha do playhead pode ser arrastada; a linha deixa os cliques passarem.
+- Atalhos: Home/End (início e fim), ↑/↓ (corte anterior e seguinte, considerando
+  bordas de qualquer clipe), Esc (tira a seleção).
+- Arrastar mídia da biblioteca para a timeline. Leva o id do material como texto e
+  usa `TimelineEditor.insertMedia`. Visual sobre sobreposição ou texto vira
+  sobreposição; nos demais casos entra na junção mais próxima da faixa principal.
+  Áudio vai para uma faixa de áudio. Enquanto o material é arrastado, um contorno
+  tracejado mostra onde ele vai cair.
+- Arraste vertical: o clipe aparece na faixa de destino, que fica destacada
+  (`DragTarget`), só se ela aceitar o tipo de mídia (`TimelineEditor.canMove`).
+  Saindo da faixa principal, ela fica como estava até soltar.
+- O botão "+" de transição só aparece com o mouse perto da junção ou com um dos
+  clipes vizinhos selecionado.
+- Duplo clique na alça entre o preview e a timeline maximiza a timeline ou volta
+  à altura anterior.
+- 50 testes (4 novos na suíte Timeline).
+- **Não verificado:** arrastes reais (biblioteca → timeline, agulha, entre faixas),
+  hover das transições e duplo clique na alça, por falta de permissão de
+  acessibilidade. O arraste vertical e a rolagem foram conferidos pelo `DebugSnapshot`.

@@ -185,6 +185,11 @@ private struct MaterialTile: View {
         }
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { model.addToTimeline(material) }
+        // Arrastar para a timeline: leva o id do material.
+        .onDrag {
+            model.draggingMaterial = material.id
+            return NSItemProvider(object: material.id.uuidString as NSString)
+        }
         .contextMenu {
             Button(material.kind == .audio ? "Adicionar à faixa de áudio" : "Adicionar à faixa principal") {
                 model.addToTimeline(material)
@@ -446,14 +451,19 @@ private struct ShortcutsPanel: View {
         ("Espaço", "Reproduzir / pausar"),
         ("← →", "Quadro a quadro"),
         ("⇧ ← →", "10 quadros"),
+        ("↑ ↓", "Corte anterior / seguinte"),
+        ("Home  End", "Início / fim do projeto"),
         ("⌘B", "Dividir no cursor"),
         ("⌘D", "Duplicar"),
         ("⌫", "Apagar clipe"),
+        ("esc", "Tirar a seleção"),
         ("⌘T", "Adicionar texto"),
         ("⌘I", "Importar mídia"),
         ("⌘Z", "Desfazer"),
         ("⇧⌘Z", "Refazer"),
         ("⌘ =  ⌘ −", "Zoom da timeline"),
+        ("⌘ + rolar, pinça", "Zoom no cursor"),
+        ("⇧Z", "Ajustar timeline à janela"),
         ("⌘S", "Salvar"),
         ("⌘E", "Exportar"),
     ]
