@@ -1,5 +1,5 @@
 import AppKit
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 import UniformTypeIdentifiers
 

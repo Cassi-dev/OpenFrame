@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
-@testable import OpenCutCore
+@testable import OpenFrameCore
 
 @Suite("Legendas")
 struct SubtitleTests {

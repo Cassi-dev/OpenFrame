@@ -1,9 +1,9 @@
 import Foundation
 
-/// Salva e abre projetos `.opencut` (JSON legível, no espírito do
+/// Salva e abre projetos `.openframe` (JSON legível, no espírito do
 /// `draft_content.json` do CapCut).
 public enum ProjectStore {
-    public static let fileExtension = "opencut"
+    public static let fileExtension = "openframe"
 
     public static func encode(_ project: Project) throws -> Data {
         let encoder = JSONEncoder()

@@ -2,25 +2,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenCut",
+    name: "OpenFrame",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "OpenCut", targets: ["OpenCut"]),
-        .library(name: "OpenCutCore", targets: ["OpenCutCore"]),
+        .executable(name: "OpenFrame", targets: ["OpenFrame"]),
+        .library(name: "OpenFrameCore", targets: ["OpenFrameCore"]),
     ],
     targets: [
         .target(
-            name: "OpenCutCore",
+            name: "OpenFrameCore",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "OpenCut",
-            dependencies: ["OpenCutCore"],
+            name: "OpenFrame",
+            dependencies: ["OpenFrameCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "OpenCutCoreTests",
-            dependencies: ["OpenCutCore"],
+            name: "OpenFrameCoreTests",
+            dependencies: ["OpenFrameCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

@@ -1,9 +1,9 @@
 import AppKit
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 
 @main
-struct OpenCutApp: App {
+struct OpenFrameApp: App {
     @State private var model = EditorModel()
 
     init() {
@@ -12,7 +12,7 @@ struct OpenCutApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("OpenCut") {
+        WindowGroup("OpenFrame") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 1100, minHeight: 720)
@@ -20,7 +20,7 @@ struct OpenCutApp: App {
                 .onOpenURL { url in
                     if url.pathExtension == ProjectStore.fileExtension { model.open(url: url) }
                 }
-                // Abrir um .opencut reaproveita a janela existente.
+                // Abrir um .openframe reaproveita a janela existente.
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .defaultSize(width: 1440, height: 900)

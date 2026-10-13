@@ -1,4 +1,4 @@
-# OpenCut
+# OpenFrame
 
 Editor de vídeo para macOS inspirado no CapCut, escrito em Swift com SwiftUI,
 AVFoundation e Core Image. A arquitetura e o conjunto de funcionalidades foram
@@ -50,33 +50,33 @@ binário, das bibliotecas ou dos recursos da ByteDance foi reaproveitado.
 ## Uso
 
 ```bash
-./scripts/make-app.sh          # gera build/OpenCut.app (release)
-open build/OpenCut.app
+./scripts/make-app.sh          # gera build/OpenFrame.app (release)
+open build/OpenFrame.app
 
-swift run OpenCut              # ou rode direto, em modo debug
+swift run OpenFrame              # ou rode direto, em modo debug
 ./scripts/test.sh              # roda os 44 testes
-./scripts/make-demo.sh         # cria ~/Desktop/OpenCut Demo/Demo.opencut com mídia de exemplo
+./scripts/make-demo.sh         # cria ~/Desktop/OpenFrame Demo/Demo.openframe com mídia de exemplo
 ./scripts/make-demo.sh --export  # ...e também renderiza Demo.mp4
 ```
 
-Para abrir um projeto pela linha de comando: `OpenCut -open caminho/projeto.opencut`.
-Com o app empacotado, arquivos `.opencut` também abrem com duplo clique.
+Para abrir um projeto pela linha de comando: `OpenFrame -open caminho/projeto.openframe`.
+Com o app empacotado, arquivos `.openframe` também abrem com duplo clique.
 
 ## Arquitetura
 
 ```
 Sources/
-  OpenCutCore/              biblioteca sem interface (testável)
+  OpenFrameCore/              biblioteca sem interface (testável)
     Model/                  Project, Track, Segment, Material — tempo em microssegundos
     Timeline/               TimelineEditor: operações puras (dividir, aparar, mover, ripple…)
     Render/                 FrameRenderer (Core Image), compositor AVFoundation,
                             CompositionBuilder, efeitos, animações, transições, texto
     Export/                 ExportSettings (cálculos de bitrate/tamanho) e Exporter
     Media/                  leitura de mídia e legendas SRT
-  OpenCut/                  app SwiftUI
+  OpenFrame/                  app SwiftUI
     EditorModel.swift       estado, desfazer por snapshot, preview com AVPlayer
     Views/                  mídia, preview, timeline, inspetor, exportação
-Tests/OpenCutCoreTests/     44 testes (Swift Testing), incluindo exportações reais
+Tests/OpenFrameCoreTests/     44 testes (Swift Testing), incluindo exportações reais
 scripts/                    empacotar, testar e gerar demo
 ```
 
@@ -88,7 +88,7 @@ Como funciona:
    faixa de vídeo vira até duas faixas da composição (A/B), para que clipes
    sobrepostos numa transição sejam decodificados ao mesmo tempo. Uma faixa preta
    de preenchimento cobre a timeline inteira.
-3. O `OpenCutCompositor` (um `AVVideoCompositing` customizado) recebe os quadros
+3. O `OpenFrameCompositor` (um `AVVideoCompositing` customizado) recebe os quadros
    decodificados e o `FrameRenderer` desenha cada quadro com Core Image: fundo,
    clipes com ajustes, filtros, efeitos e animações, transições e textos.
 4. O mesmo compositor serve ao preview (`AVPlayer`) e à exportação
@@ -98,7 +98,7 @@ Como funciona:
 
 ## Ferramenta de depuração
 
-`OPENCUT_SNAPSHOT_DIR=/tmp/snaps .build/debug/OpenCut -open projeto.opencut`
+`OPENFRAME_SNAPSHOT_DIR=/tmp/snaps .build/debug/OpenFrame -open projeto.openframe`
 percorre algumas telas, salva capturas das janelas e um quadro do preview, e
 fecha o app. Útil para verificar a interface sem permissão de gravação de tela.
 

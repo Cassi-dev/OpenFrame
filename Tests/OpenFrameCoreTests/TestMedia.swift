@@ -1,13 +1,13 @@
 import AVFoundation
 import CoreImage
 import Foundation
-@testable import OpenCutCore
+@testable import OpenFrameCore
 
 /// Gera arquivos de mídia sintéticos para os testes.
 enum TestMedia {
     static let directory: URL = {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("OpenCutTests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            .appendingPathComponent("OpenFrameTests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

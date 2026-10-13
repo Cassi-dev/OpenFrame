@@ -1,4 +1,4 @@
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 
 struct ContentView: View {
@@ -29,7 +29,7 @@ struct ContentView: View {
             ExportSheet()
                 .environment(model)
         }
-        .alert("OpenCut", isPresented: Binding(get: { model.errorMessage != nil },
+        .alert("OpenFrame", isPresented: Binding(get: { model.errorMessage != nil },
                                                set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") {}
         } message: {
@@ -46,7 +46,7 @@ struct TopBar: View {
             HStack(spacing: 6) {
                 Image(systemName: "scissors")
                     .foregroundStyle(Theme.accent)
-                Text("OpenCut").font(.headline)
+                Text("OpenFrame").font(.headline)
                 Text("— \(model.project.name)\(model.isDirty ? " •" : "")")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import OpenCutCore
+@testable import OpenFrameCore
 
 private func video(_ seconds: Double, name: String = "clip.mov") -> Material {
     Material(kind: .video, path: "/tmp/\(name)", name: name, duration: Time.seconds(seconds),

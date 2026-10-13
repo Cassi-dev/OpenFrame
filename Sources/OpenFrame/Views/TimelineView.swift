@@ -1,4 +1,4 @@
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 
 struct TimelineView: View {

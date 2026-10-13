@@ -1,4 +1,4 @@
-# Referência: o que o REA revelou do CapCut e onde isso está no OpenCut
+# Referência: o que o REA revelou do CapCut e onde isso está no OpenFrame
 
 Alvo analisado: `/Applications/CapCut.app` — CapCut 9.5.0 (build 286) para Mac,
 `com.lemon.lvoverseas`, universal (x86_64 + arm64). Análise estática apenas;
@@ -7,17 +7,17 @@ identificadas pelos IDs registrados na sessão de análise.
 
 ## Regra de reconstrução
 
-O OpenCut reimplementa **comportamentos** observados, não código. Nada foi
+O OpenFrame reimplementa **comportamentos** observados, não código. Nada foi
 copiado do binário, das bibliotecas (`libVECreator`, `libvideoeditor`,
 `libcccreator`…), dos modelos de IA ou dos recursos (fontes, efeitos, ícones).
 
-## Arquitetura do CapCut (evidência) → decisão no OpenCut
+## Arquitetura do CapCut (evidência) → decisão no OpenFrame
 
-| CapCut (observado) | Evidência | OpenCut |
+| CapCut (observado) | Evidência | OpenFrame |
 |---|---|---|
-| Launcher fino que carrega `libVECreator.dylib` e chama `_entryPoint` | `inspect_macho` `ev_71396aa7…`; strings `dlopen`/`dlsym` | App SwiftUI único; núcleo separado em `OpenCutCore` |
+| Launcher fino que carrega `libVECreator.dylib` e chama `_entryPoint` | `inspect_macho` `ev_71396aa7…`; strings `dlopen`/`dlsym` | App SwiftUI único; núcleo separado em `OpenFrameCore` |
 | Interface em Qt 6.2.2 + QML, padrão MVVM (`*ViewModel`) | dependências Mach-O; símbolos | SwiftUI + `@Observable` (`EditorModel`) |
-| Projeto em pasta com `draft_content.json`, `draft_meta_info.json` | strings do `libVECreator` | `Project` em JSON (`.opencut`), mesma divisão materiais/faixas/segmentos |
+| Projeto em pasta com `draft_content.json`, `draft_meta_info.json` | strings do `libVECreator` | `Project` em JSON (`.openframe`), mesma divisão materiais/faixas/segmentos |
 | Tempos do draft em microssegundos (`start`/`duration`) | formato do draft | `Micros` (`Int64`) e `TimeRange` |
 | Materiais: `transitions`, `speeds`, `canvas_color`, `canvas_blur`, `audio_fades`, `material_animations`, `video_effects` | strings | `Transition`, `speed`, `CanvasBackground.color/.blur`, `fadeIn/fadeOut`, `SegmentAnimation`, `VideoEffect` |
 | Faixa principal magnética e sobreposições | símbolos `MainTimeLine*`, `TimeLine` | `Track.isMain` + `TimelineEditor.relayoutMain` |
@@ -36,7 +36,7 @@ Membros encontrados no `libVECreator` (`ExportViewModel::…`):
 Valores presentes nas strings: `480p`, `720p`, `1080p`, `2K`, `4K`, `8K`;
 `23.976`/`24`/`25`/`29.97`/`30`/`50`/`59.94`/`60`/`120 fps`.
 
-| CapCut | OpenCut (`ExportSettings`) |
+| CapCut | OpenFrame (`ExportSettings`) |
 |---|---|
 | `resolutionList` + `isCustomResolution` | `ResolutionPreset` (480p…8K) + `.custom` (largura × altura) |
 | `frameRateList` | `FrameRate` com durações exatas NTSC (1001/30000 etc.) |
@@ -60,7 +60,7 @@ Valores presentes nas strings: `480p`, `720p`, `1080p`, `2K`, `4K`, `8K`;
 ## Incógnitas que não afetaram a reconstrução
 
 - As fórmulas exatas de bitrate do CapCut (`calcBitrate`) não foram decompiladas;
-  o OpenCut usa bits por pixel por quadro (H.264 0,1; HEVC 0,065) multiplicados
+  o OpenFrame usa bits por pixel por quadro (H.264 0,1; HEVC 0,065) multiplicados
   por 0,55 / 1 / 1,8 para os três níveis.
-- A curva de cada ajuste e filtro do CapCut não é conhecida; os do OpenCut são
+- A curva de cada ajuste e filtro do CapCut não é conhecida; os do OpenFrame são
   equivalentes visuais aproximados, implementados com filtros do Core Image.

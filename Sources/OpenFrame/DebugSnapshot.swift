@@ -1,15 +1,15 @@
 import AppKit
 import AVFoundation
 import CoreImage
-import OpenCutCore
+import OpenFrameCore
 
-/// Ferramenta de desenvolvimento: com `OPENCUT_SNAPSHOT_DIR` definido, o app
+/// Ferramenta de desenvolvimento: com `OPENFRAME_SNAPSHOT_DIR` definido, o app
 /// percorre algumas telas, salva capturas das próprias janelas e fecha.
 /// Um app pode capturar as próprias views sem permissão de gravação de tela.
 @MainActor
 enum DebugSnapshot {
     static func runIfRequested(_ model: EditorModel) {
-        guard let path = ProcessInfo.processInfo.environment["OPENCUT_SNAPSHOT_DIR"] else { return }
+        guard let path = ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_DIR"] else { return }
         let dir = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         Task { @MainActor in

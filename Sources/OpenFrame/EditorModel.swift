@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
 import Observation
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -71,7 +71,7 @@ final class EditorModel {
             MainActor.assumeIsolated { self?.playerTimeChanged(time) }
         }
         installKeyMonitor()
-        // `OpenCut -open caminho.opencut` (argumentos com "-" viram UserDefaults;
+        // `OpenFrame -open caminho.openframe` (argumentos com "-" viram UserDefaults;
         // caminhos soltos seriam tratados pelo AppKit como documentos a abrir).
         if let path = UserDefaults.standard.string(forKey: "open") {
             open(url: URL(fileURLWithPath: path))
@@ -569,7 +569,7 @@ final class EditorModel {
         open(url: url)
     }
 
-    /// Abre um projeto `.opencut` (menu, Finder ou linha de comando).
+    /// Abre um projeto `.openframe` (menu, Finder ou linha de comando).
     func open(url: URL) {
         if documentURL?.standardizedFileURL == url.standardizedFileURL, !isDirty { return }
         do {

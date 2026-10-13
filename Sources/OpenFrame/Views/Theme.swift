@@ -1,9 +1,9 @@
 import AppKit
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 
 /// O SwiftUI também declara `Material`; no app, o nome se refere ao nosso.
-typealias Material = OpenCutCore.Material
+typealias Material = OpenFrameCore.Material
 
 enum Theme {
     static let background = Color(red: 0.09, green: 0.09, blue: 0.11)

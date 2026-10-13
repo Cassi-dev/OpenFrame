@@ -147,10 +147,10 @@ public enum CompositionBuilder {
         let box = PlanBox(RenderPlan(project: project, renderSize: renderSize,
                                      trackIDs: trackIDs, orientations: orientations))
         let videoTrackIDs = composition.tracks(withMediaType: .video).map(\.trackID)
-        let instruction = OpenCutInstruction(timeRange: CMTimeRange(start: .zero, duration: composition.duration),
+        let instruction = OpenFrameInstruction(timeRange: CMTimeRange(start: .zero, duration: composition.duration),
                                              trackIDs: videoTrackIDs, box: box)
         let videoComposition = AVMutableVideoComposition()
-        videoComposition.customVideoCompositorClass = OpenCutCompositor.self
+        videoComposition.customVideoCompositorClass = OpenFrameCompositor.self
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = frameDuration
         videoComposition.instructions = [instruction]
@@ -173,7 +173,7 @@ public enum CompositionBuilder {
         let tolerance: Micros = 2_000
         if let i = lanes.firstIndex(where: { $0.end <= seg.targetStart + tolerance }) { return i }
         guard let ct = composition.addMutableTrack(withMediaType: mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw NSError(domain: "OpenCut", code: -2, userInfo: [NSLocalizedDescriptionKey: "Não foi possível criar faixa da composição"])
+            throw NSError(domain: "OpenFrame", code: -2, userInfo: [NSLocalizedDescriptionKey: "Não foi possível criar faixa da composição"])
         }
         lanes.append((ct, 0))
         return lanes.count - 1
@@ -234,7 +234,7 @@ public actor FillerClip {
 
     public func url() async throws -> URL {
         if let cached, FileManager.default.fileExists(atPath: cached.path) { return cached }
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("OpenCut", isDirectory: true)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("OpenFrame", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("filler-v1.mov")
         if !FileManager.default.fileExists(atPath: url.path) {
@@ -258,13 +258,13 @@ public actor FillerClip {
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input)
-        guard writer.startWriting() else { throw writer.error ?? NSError(domain: "OpenCut", code: -3) }
+        guard writer.startWriting() else { throw writer.error ?? NSError(domain: "OpenFrame", code: -3) }
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<30 {
             while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, side, side, kCVPixelFormatType_32BGRA, nil, &buffer)
-            guard let buffer else { throw NSError(domain: "OpenCut", code: -4) }
+            guard let buffer else { throw NSError(domain: "OpenFrame", code: -4) }
             CVPixelBufferLockBaseAddress(buffer, [])
             memset(CVPixelBufferGetBaseAddress(buffer), 0, CVPixelBufferGetDataSize(buffer))
             CVPixelBufferUnlockBaseAddress(buffer, [])
@@ -272,6 +272,6 @@ public actor FillerClip {
         }
         input.markAsFinished()
         await writer.finishWriting()
-        guard writer.status == .completed else { throw writer.error ?? NSError(domain: "OpenCut", code: -5) }
+        guard writer.status == .completed else { throw writer.error ?? NSError(domain: "OpenFrame", code: -5) }
     }
 }

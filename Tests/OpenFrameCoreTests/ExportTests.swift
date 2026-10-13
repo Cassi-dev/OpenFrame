@@ -1,7 +1,7 @@
 import AVFoundation
 import CoreImage
 import Testing
-@testable import OpenCutCore
+@testable import OpenFrameCore
 
 private final class ProgressLog: @unchecked Sendable {
     private let lock = NSLock()
@@ -41,7 +41,7 @@ struct ExportTests {
         }
         TimelineEditor.setSpeed(&p, segment: b, speed: 2)
         TimelineEditor.update(&p, segment: b) { $0.effects = [VideoEffect(kind: .rgbSplit)] }
-        TimelineEditor.addText(TextContent(text: "OpenCut"), to: &p, at: 500_000, duration: 2_000_000)
+        TimelineEditor.addText(TextContent(text: "OpenFrame"), to: &p, at: 500_000, duration: 2_000_000)
         return p
     }
 

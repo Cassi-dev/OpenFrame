@@ -2,7 +2,7 @@ import AVFoundation
 import CoreImage
 
 /// Instrução única que cobre a timeline inteira e carrega o plano de render.
-public final class OpenCutInstruction: NSObject, AVVideoCompositionInstructionProtocol {
+public final class OpenFrameInstruction: NSObject, AVVideoCompositionInstructionProtocol {
     public let timeRange: CMTimeRange
     public let enablePostProcessing = false
     public let containsTweening = true
@@ -20,14 +20,14 @@ public final class OpenCutInstruction: NSObject, AVVideoCompositionInstructionPr
 /// Compositor customizado: o AVFoundation decodifica os vídeos e entrega os
 /// quadros; nós desenhamos tudo (efeitos, transições, texto) com Core Image.
 /// É usado tanto no preview (AVPlayer) quanto na exportação (AVAssetReader).
-public final class OpenCutCompositor: NSObject, AVVideoCompositing {
+public final class OpenFrameCompositor: NSObject, AVVideoCompositing {
     private static let pixelAttributes: [String: any Sendable] = [
         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
         kCVPixelBufferMetalCompatibilityKey as String: true,
     ]
 
-    private let queue = DispatchQueue(label: "opencut.compositor", qos: .userInitiated)
-    private let context = CIContext(options: [.cacheIntermediates: false, .name: "OpenCut"])
+    private let queue = DispatchQueue(label: "openframe.compositor", qos: .userInitiated)
+    private let context = CIContext(options: [.cacheIntermediates: false, .name: "OpenFrame"])
     private let colorSpace = CGColorSpace(name: CGColorSpace.itur_709)!
     private let lock = NSLock()
     private var generation = 0
@@ -64,10 +64,10 @@ public final class OpenCutCompositor: NSObject, AVVideoCompositing {
     }
 
     private func render(_ request: AVAsynchronousVideoCompositionRequest) {
-        guard let instruction = request.videoCompositionInstruction as? OpenCutInstruction,
+        guard let instruction = request.videoCompositionInstruction as? OpenFrameInstruction,
               let buffer = request.renderContext.newPixelBuffer()
         else {
-            request.finish(with: NSError(domain: "OpenCut", code: -1,
+            request.finish(with: NSError(domain: "OpenFrame", code: -1,
                                          userInfo: [NSLocalizedDescriptionKey: "Instrução de composição inválida"]))
             return
         }

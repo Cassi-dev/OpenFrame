@@ -1,5 +1,5 @@
 import AVFoundation
-import OpenCutCore
+import OpenFrameCore
 import SwiftUI
 
 struct PreviewPanel: View {

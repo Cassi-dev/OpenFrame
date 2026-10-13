@@ -1,7 +1,7 @@
 import AVFoundation
 import CoreImage
 import Testing
-@testable import OpenCutCore
+@testable import OpenFrameCore
 
 @Suite("Renderização")
 struct RenderTests {

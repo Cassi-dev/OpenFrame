@@ -115,7 +115,7 @@ public final class Exporter: @unchecked Sendable {
         let group = DispatchGroup()
         for (index, pair) in pairs.enumerated() {
             group.enter()
-            let queue = DispatchQueue(label: "opencut.export.\(index)")
+            let queue = DispatchQueue(label: "openframe.export.\(index)")
             var finished = false
             pair.input.requestMediaDataWhenReady(on: queue) { [weak self] in
                 guard !finished else { return }

@@ -6,7 +6,7 @@ import CoreText
 import Foundation
 
 let positional = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("--") }
-let outputDir = URL(fileURLWithPath: positional.first ?? NSHomeDirectory() + "/Desktop/OpenCut Demo", isDirectory: true)
+let outputDir = URL(fileURLWithPath: positional.first ?? NSHomeDirectory() + "/Desktop/OpenFrame Demo", isDirectory: true)
 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
 /// Desenha um quadro: gradiente que muda de cor, círculo em movimento e um rótulo.
@@ -192,7 +192,7 @@ var title = TextStyle()
 title.fontSize = 0.11
 title.y = 0.55
 title.strokeWidth = 3
-let titleSeg = TimelineEditor.addText(TextContent(text: "OpenCut", style: title), to: &project, at: 300_000, duration: 3_000_000)
+let titleSeg = TimelineEditor.addText(TextContent(text: "OpenFrame", style: title), to: &project, at: 300_000, duration: 3_000_000)
 TimelineEditor.update(&project, segment: titleSeg) {
     $0.animationIn = SegmentAnimation(kind: .typewriter, duration: 1_000_000)
     $0.animationOut = SegmentAnimation(kind: .fade)
@@ -215,7 +215,7 @@ TimelineEditor.update(&project, segment: overlay) {
     $0.animationIn = SegmentAnimation(kind: .slideLeft)
 }
 
-let projectURL = outputDir.appendingPathComponent("Demo.opencut")
+let projectURL = outputDir.appendingPathComponent("Demo.openframe")
 try ProjectStore.save(project, to: projectURL)
 print(projectURL.path)
 
