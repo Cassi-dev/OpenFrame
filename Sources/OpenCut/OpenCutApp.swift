@@ -1,0 +1,80 @@
+import AppKit
+import OpenCutCore
+import SwiftUI
+
+@main
+struct OpenCutApp: App {
+    @State private var model = EditorModel()
+
+    init() {
+        // Necessário quando o binário roda fora de um .app (swift run).
+        NSApplication.shared.setActivationPolicy(.regular)
+    }
+
+    var body: some Scene {
+        WindowGroup("OpenCut") {
+            ContentView()
+                .environment(model)
+                .frame(minWidth: 1100, minHeight: 720)
+                .onAppear { NSApp.activate(ignoringOtherApps: true) }
+                .onOpenURL { url in
+                    if url.pathExtension == ProjectStore.fileExtension { model.open(url: url) }
+                }
+                // Abrir um .opencut reaproveita a janela existente.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+        }
+        .defaultSize(width: 1440, height: 900)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Novo projeto") { model.newProject() }
+                    .keyboardShortcut("n")
+                Button("Abrir projeto…") { model.openProject() }
+                    .keyboardShortcut("o")
+                Divider()
+                Button("Importar mídia…") { model.presentImportPanel() }
+                    .keyboardShortcut("i")
+                Button("Importar legendas (SRT)…") { model.importSubtitles() }
+            }
+            CommandGroup(replacing: .saveItem) {
+                Button("Salvar") { model.saveProject() }
+                    .keyboardShortcut("s")
+                Button("Salvar como…") { model.saveProject(as: true) }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Divider()
+                Button("Exportar vídeo…") { model.showExport = true }
+                    .keyboardShortcut("e")
+                Button("Exportar legendas (SRT)…") { model.exportSubtitles() }
+            }
+            CommandGroup(replacing: .undoRedo) {
+                Button("Desfazer") { model.undo() }
+                    .keyboardShortcut("z")
+                    .disabled(!model.canUndo)
+                Button("Refazer") { model.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!model.canRedo)
+            }
+            CommandMenu("Clipe") {
+                Button("Dividir no cursor") { model.splitAtPlayhead() }
+                    .keyboardShortcut("b")
+                Button("Duplicar") { model.duplicateSelection() }
+                    .keyboardShortcut("d")
+                    .disabled(model.selection == nil)
+                Button("Apagar  ⌫") { model.deleteSelection() }
+                    .disabled(model.selection == nil)
+                Divider()
+                Button("Adicionar texto") { model.addText() }
+                    .keyboardShortcut("t")
+            }
+            CommandMenu("Reprodução") {
+                Button(model.isPlaying ? "Pausar  ␣" : "Reproduzir  ␣") { model.togglePlay() }
+                Button("Quadro anterior  ←") { model.step(frames: -1) }
+                Button("Próximo quadro  →") { model.step(frames: 1) }
+                Divider()
+                Button("Aproximar timeline") { model.zoom = min(model.zoom * 1.4, 600) }
+                    .keyboardShortcut("=")
+                Button("Afastar timeline") { model.zoom = max(model.zoom / 1.4, 8) }
+                    .keyboardShortcut("-")
+            }
+        }
+    }
+}

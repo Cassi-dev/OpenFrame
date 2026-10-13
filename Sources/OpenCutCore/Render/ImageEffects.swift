@@ -193,17 +193,19 @@ enum ImageEffects {
     }
 
     private static func rgbSplit(_ img: CIImage, offset: Double) -> CIImage {
-        func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, alpha: CGFloat) -> CIImage {
+        // Cada canal mantém o alfa original: com alfa 0 a cor pré-multiplicada
+        // zeraria. A soma satura o alfa em 1, o que só altera bordas semitransparentes.
+        func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CIImage {
             img.applyingFilter("CIColorMatrix", parameters: [
                 "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
                 "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
                 "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
             ])
         }
-        let red = channel(1, 0, 0, alpha: 1).transformed(by: CGAffineTransform(translationX: offset, y: 0))
-        let green = channel(0, 1, 0, alpha: 0)
-        let blue = channel(0, 0, 1, alpha: 0).transformed(by: CGAffineTransform(translationX: -offset, y: 0))
+        let red = channel(1, 0, 0).transformed(by: CGAffineTransform(translationX: offset, y: 0))
+        let green = channel(0, 1, 0)
+        let blue = channel(0, 0, 1).transformed(by: CGAffineTransform(translationX: -offset, y: 0))
         return red
             .applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: green])
             .applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: blue])

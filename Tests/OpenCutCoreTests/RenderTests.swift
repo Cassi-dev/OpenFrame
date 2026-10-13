@@ -74,6 +74,28 @@ struct RenderTests {
         #expect(abs(c.r - c.g) < 6 && abs(c.g - c.b) < 6)
     }
 
+    @Test("Glitch RGB preserva as cores onde os canais se sobrepõem")
+    func rgbSplitKeepsColor() throws {
+        var p = Project()
+        let id = TimelineEditor.addMedia(try photo(CIColor(red: 1, green: 1, blue: 1)), to: &p)
+        TimelineEditor.update(&p, segment: id) { $0.effects = [VideoEffect(kind: .rgbSplit, intensity: 1)] }
+        let c = render(p, at: 0).color(0.5, 0.5)
+        #expect(c.r > 240 && c.g > 240 && c.b > 240)
+    }
+
+    @Test("Efeitos não mudam o tamanho do clipe nem deixam transparência")
+    func effectsKeepExtent() throws {
+        var p = Project()
+        p.canvas.background = .color(RGBA(1, 0, 1))
+        let id = TimelineEditor.addMedia(try photo(CIColor(red: 0.2, green: 0.6, blue: 0.3), width: 320, height: 180), to: &p)
+        for kind in VideoEffectKind.allCases where kind != .shake && kind != .zoomPulse {
+            TimelineEditor.update(&p, segment: id) { $0.effects = [VideoEffect(kind: kind, intensity: 1)] }
+            // O fundo magenta não pode vazar perto das bordas do clipe.
+            let edge = render(p, at: 0).color(0.02, 0.5)
+            #expect(!(edge.r > 200 && edge.b > 200 && edge.g < 60), "\(kind) deixou o fundo aparecer")
+        }
+    }
+
     @Test("Animação de entrada começa invisível")
     func fadeIn() throws {
         var p = Project()
