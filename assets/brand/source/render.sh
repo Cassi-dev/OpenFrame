@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Rasteriza o ícone de app e os PNGs da marca. Requer: Chrome (via render_png.py), sips e iconutil.
+# Rasteriza o ícone de app, os PNGs da marca e a prancha. Requer: Chrome (via render_png.py), sips e iconutil.
 # Uso: zsh assets/brand/source/render.sh
 set -euo pipefail
 BRAND="${0:A:h:h}"
@@ -38,6 +38,19 @@ iconutil -c icns "$SET" -o "$BRAND/appicon/AppIcon.icns"
 mkdir -p "$BRAND/png"
 for v in color-on-dark color-on-light mono-black mono-white; do
   python3 "$RENDER" "$BRAND/symbol/openframe-symbol-$v.svg" -o "$BRAND/png/openframe-symbol-$v-512.png" --size 512
-  python3 "$RENDER" "$BRAND/lockup/openframe-lockup-horizontal-$v.svg" -o "$BRAND/png/openframe-lockup-horizontal-$v-1600.png" --width 1600 --height 300
+  lockup="$BRAND/lockup/openframe-lockup-horizontal-$v.svg"
+  h=$(python3 -c 'import re,sys; w,h=map(float,re.search(r"viewBox=\"0 0 ([\d.]+) ([\d.]+)",open(sys.argv[1]).read()).groups()); print(round(1600*h/w))' "$lockup")
+  python3 "$RENDER" "$lockup" -o "$BRAND/png/openframe-lockup-horizontal-$v-1600.png" --width 1600 --height "$h"
 done
+
+# Testes de tamanho do símbolo (corte pequeno) para a prancha
+mkdir -p "$BRAND/board/png"
+for s in 16 32; do
+  python3 "$RENDER" "$BRAND/symbol/openframe-symbol-small-color-on-dark.svg" -o "$BRAND/board/png/symbol-small-color-on-dark-$s.png" --size $s --bg "#17171C"
+  python3 "$RENDER" "$BRAND/symbol/openframe-symbol-small-color-on-light.svg" -o "$BRAND/board/png/symbol-small-color-on-light-$s.png" --size $s --bg "#F4F5F7"
+done
+
+# Prancha (HTML de altura fixa gerado por board.py)
+python3 "$BRAND/source/board.py"
+python3 "$RENDER" "$BRAND/board/openframe-board.html" -o "$BRAND/board/openframe-board.png" --width 1600 --height "$(python3 "$BRAND/source/board.py" --height)"
 echo "ok: $BRAND/appicon/AppIcon.icns"
