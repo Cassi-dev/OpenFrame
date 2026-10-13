@@ -10,6 +10,15 @@ add_library(openframe_core STATIC
     ExportSettings.h ExportSettings.cpp
     ProjectLibrary.h ProjectLibrary.cpp
     FontCatalog.h FontCatalog.cpp
+    FFmpeg.h FFmpeg.cpp
+    MediaProbe.h MediaProbe.cpp
+    VideoDecoder.h VideoDecoder.cpp
+    Thumbnails.h Thumbnails.cpp
+    Waveform.h Waveform.cpp
+    MediaWriter.h MediaWriter.cpp
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)
+
+include(FFmpeg)
+target_link_libraries(openframe_core PRIVATE FFmpeg::FFmpeg)
