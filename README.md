@@ -63,6 +63,14 @@ swift run OpenFrame              # ou rode direto, em modo debug
 Para abrir um projeto pela linha de comando: `OpenFrame -open caminho/projeto.openframe`.
 Com o app empacotado, arquivos `.openframe` também abrem com duplo clique.
 
+## Versionamento
+
+O projeto segue o gitflow: `main` guarda só versões estáveis (com tag `vX.Y.Z`),
+`develop` integra o trabalho, e cada funcionalidade ou correção tem a própria
+branch (`feature/…`, `bugfix/…`, `release/…`, `hotfix/…`). Depois de clonar, rode
+`./scripts/setup-git.sh` para bloquear commits diretos em `main` e `develop`.
+Detalhes e comandos em [docs/GITFLOW.md](docs/GITFLOW.md).
+
 ## Arquitetura
 
 ```
