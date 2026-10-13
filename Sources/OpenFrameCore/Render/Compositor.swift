@@ -28,7 +28,20 @@ public final class OpenFrameCompositor: NSObject, AVVideoCompositing {
 
     private let queue = DispatchQueue(label: "openframe.compositor", qos: .userInitiated)
     private let context = CIContext(options: [.cacheIntermediates: false, .name: "OpenFrame"])
-    private let colorSpace = CGColorSpace(name: CGColorSpace.itur_709)!
+
+    /// Marcas de cor dos quadros gerados: BT.709, como na videoComposition e na exportação.
+    static let colorAttachments: [String: Any] = [
+        kCVImageBufferColorPrimariesKey as String: kCVImageBufferColorPrimaries_ITU_R_709_2,
+        kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_ITU_R_709_2,
+        kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+    ]
+
+    /// Espaço de cor em que o quadro é gravado: o mesmo que o AVFoundation usa
+    /// para ler e exibir um vídeo marcado como BT.709 (o Core Image lê os quadros
+    /// de origem assim). O `CGColorSpace.itur_709` tem outra curva de
+    /// transferência e clareava as sombras e os meios-tons.
+    static let colorSpace: CGColorSpace = CVImageBufferCreateColorSpaceFromAttachments(colorAttachments as CFDictionary)?
+        .takeRetainedValue() ?? CGColorSpace(name: CGColorSpace.itur_709)!
     private let lock = NSLock()
     private var generation = 0
 
@@ -80,7 +93,8 @@ public final class OpenFrameCompositor: NSObject, AVVideoCompositing {
             image = image.transformed(by: CGAffineTransform(scaleX: size.width / plan.renderSize.width,
                                                             y: size.height / plan.renderSize.height))
         }
-        context.render(image, to: buffer, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
+        CVBufferSetAttachments(buffer, Self.colorAttachments as CFDictionary, .shouldPropagate)
+        context.render(image, to: buffer, bounds: CGRect(origin: .zero, size: size), colorSpace: Self.colorSpace)
         request.finish(withComposedVideoFrame: buffer)
     }
 }
