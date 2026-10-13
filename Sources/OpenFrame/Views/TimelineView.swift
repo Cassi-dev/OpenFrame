@@ -10,6 +10,9 @@ struct TimelineView: View {
     static let headerWidth: CGFloat = 58
     static let clipInset: CGFloat = 4
 
+    /// Zoom e ponto sob os dedos no início da pinça.
+    @State private var pinchStart: (zoom: Double, time: Double, x: CGFloat)?
+
     var body: some View {
         VStack(spacing: 0) {
             TimelineToolbar()
@@ -17,8 +20,10 @@ struct TimelineView: View {
             GeometryReader { geo in
                 let order = model.displayTrackOrder()
                 let tracks = order.map { model.project.tracks[$0] }
-                let contentWidth = max(geo.size.width - Self.headerWidth,
-                                       CGFloat((model.duration.seconds + 15) * model.zoom))
+                let viewportWidth = geo.size.width - Self.headerWidth
+                // 15 s depois do fim (e no mínimo 160 pt, para a barra de ações do último clipe).
+                let contentWidth = max(viewportWidth,
+                                       CGFloat(model.duration.seconds * model.zoom) + max(CGFloat(15 * model.zoom), 160))
                 let contentHeight = Self.rulerHeight + CGFloat(tracks.count) * (Self.rowHeight + Self.rowSpacing)
                 ScrollView(.vertical) {
                     HStack(alignment: .top, spacing: 0) {
@@ -39,11 +44,14 @@ struct TimelineView: View {
                                         TrackRow(track: track, width: contentWidth)
                                     }
                                 }
+                                .padding(.bottom, ClipActionBar.reserve)
                                 PlayheadView(height: contentHeight + 8, time: model.playhead)
                                     .offset(x: CGFloat(model.playhead.seconds * model.zoom) - PlayheadView.width / 2)
-                                ClipActionBar(tracks: tracks)
+                                ClipActionBar(tracks: tracks, contentWidth: contentWidth)
                             }
                             .frame(width: contentWidth, alignment: .topLeading)
+                            .background(ScrollViewAccessor(model: model))
+                            .simultaneousGesture(pinch)
                             .padding(.trailing, 24)
                         }
                         .scrollIndicators(.automatic)
@@ -52,7 +60,50 @@ struct TimelineView: View {
                     .frame(minHeight: geo.size.height, alignment: .top)
                 }
                 .scrollIndicators(.never)
+                .onChange(of: viewportWidth, initial: true) { model.timelineViewportWidth = viewportWidth }
             }
+        }
+    }
+}
+
+extension TimelineView {
+    /// Pinça no trackpad: zoom mantendo parado o ponto sob os dedos.
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let start = pinchStart ?? {
+                    let anchor = model.zoomAnchor(contentX: value.startLocation.x)
+                    return (model.zoom, anchor.time, anchor.x)
+                }()
+                pinchStart = start
+                model.setZoom(start.zoom * value.magnification, keeping: start.time, at: start.x)
+            }
+            .onEnded { _ in pinchStart = nil }
+    }
+}
+
+/// Entrega ao modelo o NSScrollView horizontal da timeline, para acompanhar a rolagem.
+private struct ScrollViewAccessor: NSViewRepresentable {
+    let model: EditorModel
+
+    func makeNSView(context: Context) -> NSView { Probe(model: model) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class Probe: NSView {
+        private weak var model: EditorModel?
+
+        init(model: EditorModel) {
+            self.model = model
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let scroll = enclosingScrollView { model?.attachTimelineScroll(scroll) }
         }
     }
 }
@@ -84,13 +135,16 @@ private struct TimelineToolbar: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Button { model.zoom = max(model.zoom / 1.4, 8) } label: { Image(systemName: "minus") }
+            Button { model.zoomToFit() } label: { Image(systemName: "rectangle.arrowtriangle.2.outward") }
+                .buttonStyle(GlyphButtonStyle())
+                .help("Ajustar à janela (⇧Z)")
+                .padding(.trailing, 6)
+            Button { model.zoomOut() } label: { Image(systemName: "minus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Afastar (⌘−)")
-            ThinSlider(value: Binding(get: { log(model.zoom) }, set: { model.zoom = exp($0) }),
-                       range: log(8.0)...log(600.0))
+            ThinSlider(value: zoomFraction, range: 0...1)
                 .frame(width: 120)
-            Button { model.zoom = min(model.zoom * 1.4, 600) } label: { Image(systemName: "plus") }
+            Button { model.zoomIn() } label: { Image(systemName: "plus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Aproximar (⌘=)")
         }
@@ -98,6 +152,13 @@ private struct TimelineToolbar: View {
         .buttonStyle(CircleButtonStyle(size: 28))
         .padding(.horizontal, 12)
         .frame(height: 46)
+    }
+
+    /// Zoom em escala logarítmica, de `minZoom` (projeto inteiro) a `maxZoom`.
+    private var zoomFraction: Binding<Double> {
+        let low = log(model.minZoom), high = log(EditorModel.maxZoom)
+        return Binding(get: { (log(model.zoom) - low) / (high - low) },
+                       set: { model.setZoom(exp(low + $0 * (high - low))) })
     }
 }
 
@@ -161,8 +222,8 @@ private struct RulerView: View {
         Canvas { ctx, size in
             let pill = CGRect(x: 0, y: 4, width: size.width, height: size.height - 8)
             ctx.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Theme.raised))
-            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-            let major = steps.first { $0 * zoom >= 110 } ?? 300
+            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400]
+            let major = steps.first { $0 * zoom >= 110 } ?? 14400
             let minor = major / 4
             var i = 0
             while Double(i) * minor * zoom <= size.width {
@@ -194,6 +255,10 @@ private struct RulerView: View {
     }
 
     static func label(_ t: Double, step: Double) -> String {
+        if t >= 3600 {
+            let s = Int(t)
+            return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+        }
         let minutes = Int(t) / 60
         let seconds = t - Double(minutes * 60)
         return step < 1 ? String(format: "%02d:%04.1f", minutes, seconds) : String(format: "%02d:%02d", minutes, Int(seconds))
@@ -426,10 +491,17 @@ private struct SegmentView: View {
     }
 }
 
-/// Ações do clipe selecionado, flutuando logo acima dele.
+/// Ações do clipe selecionado, flutuando junto dele: acima do clipe ou, na
+/// primeira faixa, abaixo (para não cobrir a régua). A timeline reserva
+/// `reserve` sob a última faixa, para a barra nunca passar do conteúdo,
+/// que o ScrollView recorta; na horizontal ela fica dentro da área visível.
 private struct ClipActionBar: View {
+    static let height: CGFloat = 30
+    static let reserve: CGFloat = height + 6
+
     @Environment(EditorModel.self) private var model
     let tracks: [Track]
+    let contentWidth: CGFloat
 
     var body: some View {
         if let seg = model.selectedSegment,
@@ -438,12 +510,20 @@ private struct ClipActionBar: View {
             let start = CGFloat(seg.targetStart.seconds * zoom)
             let end = CGFloat(seg.targetEnd.seconds * zoom)
             let canSplit = seg.targetRange.contains(model.playhead) && model.playhead > seg.targetStart
-            // Ao lado da linha do playhead (ou no início do clipe); na primeira
-            // faixa fica abaixo do clipe, para não cobrir a régua.
+            let actions = canSplit ? 3 : 2
+            let width = CGFloat(actions) * Self.height + CGFloat(actions - 1) + 8
+            // Ao lado da linha do playhead (ou no início do clipe), dentro da área
+            // visível, sem se afastar do clipe e sem passar das bordas do conteúdo.
             let anchor = canSplit ? CGFloat(model.playhead.seconds * zoom) + 8 : start + 8
+            let visibleLeft = model.timelineScrollX
+            let visibleRight = visibleLeft + model.timelineViewportWidth
+            let inView = model.timelineViewportWidth > 0
+                ? max(min(anchor, visibleRight - width - 8), visibleLeft + 8) : anchor
+            let nearClip = min(max(inView, start - width + 24), end - 24)
+            let x = max(0, min(nearClip, contentWidth - width))
             let rowTop = TimelineView.rulerHeight + TimelineView.rowSpacing
                 + CGFloat(row) * (TimelineView.rowHeight + TimelineView.rowSpacing)
-            let y = row == 0 ? rowTop + TimelineView.rowHeight - 2 : rowTop - 28
+            let y = row == 0 ? rowTop + TimelineView.rowHeight - 2 : rowTop - Self.height + 2
             HStack(spacing: 0) {
                 if canSplit {
                     action("scissors", "Dividir (⌘B)") { model.splitAtPlayhead() }
@@ -454,12 +534,12 @@ private struct ClipActionBar: View {
                 action("trash", "Apagar (⌫)") { model.deleteSelection() }
             }
             .padding(.horizontal, 4)
-            .frame(height: 30)
+            .frame(height: Self.height)
             .background(Theme.raisedHigh, in: Capsule())
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
             .shadow(color: .black.opacity(0.6), radius: 8, y: 3)
             .fixedSize()
-            .offset(x: max(0, min(anchor, end)), y: y)
+            .offset(x: x, y: y)
             .transition(.opacity)
         }
     }
@@ -472,7 +552,7 @@ private struct ClipActionBar: View {
         Button(action: run) {
             Image(systemName: icon)
                 .font(Theme.font(11))
-                .frame(width: 30, height: 30)
+                .frame(width: Self.height, height: Self.height)
         }
         .buttonStyle(GlyphButtonStyle())
         .help(help)

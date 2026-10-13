@@ -454,6 +454,8 @@ private struct ShortcutsPanel: View {
         ("⌘Z", "Desfazer"),
         ("⇧⌘Z", "Refazer"),
         ("⌘ =  ⌘ −", "Zoom da timeline"),
+        ("⌘ + rolar, pinça", "Zoom no cursor"),
+        ("⇧Z", "Ajustar timeline à janela"),
         ("⌘S", "Salvar"),
         ("⌘E", "Exportar"),
     ]
