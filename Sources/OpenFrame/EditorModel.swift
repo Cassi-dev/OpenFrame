@@ -417,10 +417,16 @@ final class EditorModel {
 
     func presentImportPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = MediaProbe.supportedTypes
+        // Sem `allowedContentTypes`: com o filtro de tipos, o painel do sistema
+        // escondia os .mov. Quem decide o que fica habilitado é o delegate, com a
+        // mesma regra do `MediaProbe`.
+        let filter = MediaPanelFilter()
+        panel.delegate = filter
         panel.allowsMultipleSelection = true
         panel.message = "Escolha vídeos, fotos ou áudios"
-        if panel.runModal() == .OK { importMedia(panel.urls) }
+        let response = panel.runModal()
+        withExtendedLifetime(filter) {}
+        if response == .OK { importMedia(panel.urls) }
     }
 
     func importMedia(_ urls: [URL]) {
@@ -1006,4 +1012,15 @@ struct DragPreview: Equatable {
     /// Na faixa principal, quanto os clipes seguintes ficam deslocados enquanto
     /// o início é aparado.
     var following: Micros = 0
+}
+
+/// Habilita no painel de importação só pastas e mídias aceitas pelo `MediaProbe`.
+final class MediaPanelFilter: NSObject, NSOpenSavePanelDelegate {
+    func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+           !NSWorkspace.shared.isFilePackage(atPath: url.path) {
+            return true
+        }
+        return MediaProbe.isSupported(url)
+    }
 }
