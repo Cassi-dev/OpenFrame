@@ -48,14 +48,23 @@ binário, das bibliotecas ou dos recursos da ByteDance foi reaproveitado.
 - macOS 14 ou superior (Apple Silicon ou Intel)
 - Swift 6 (as Command Line Tools bastam; o Xcode não é necessário)
 
+## Instalação
+
+Baixe o `OpenFrame-<versão>.dmg` na página de
+[Releases](https://github.com/talescavalcanti/OpenFrame/releases), abra e arraste o
+OpenFrame para a pasta Aplicativos. O app não é notarizado pela Apple: na primeira
+abertura, se o macOS disser que não pode verificá-lo, vá em Ajustes do Sistema >
+Privacidade e Segurança > "Abrir Mesmo Assim".
+
 ## Uso
 
 ```bash
-./scripts/make-app.sh          # gera build/OpenFrame.app (release)
+./scripts/make-app.sh          # gera build/OpenFrame.app (release, universal)
+./scripts/make-dmg.sh          # ...e o instalador build/OpenFrame-<versão>.dmg
 open build/OpenFrame.app
 
 swift run OpenFrame              # ou rode direto, em modo debug
-./scripts/test.sh              # roda os 46 testes
+./scripts/test.sh              # roda os testes
 ./scripts/make-demo.sh         # cria ~/Desktop/OpenFrame Demo/Demo.openframe com mídia de exemplo
 ./scripts/make-demo.sh --export  # ...e também renderiza Demo.mp4
 ```
