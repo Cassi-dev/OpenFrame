@@ -15,6 +15,14 @@ enum DebugSnapshot {
         Task { @MainActor in
             func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
             await wait(4)
+            // O macOS pode restaurar a janela minimizada da sessão anterior.
+            for window in NSApp.windows where window.isMiniaturized { window.deminiaturize(nil) }
+            await wait(1)
+            if model.screen == .home {
+                await homeScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -193,6 +201,25 @@ enum DebugSnapshot {
 
     /// Arrastes espelhados (mesma distância para a direita e para a esquerda),
     /// capturados no meio do gesto, para comparar os dois sentidos.
+    /// Sem `-open`, o app começa na tela inicial: captura a lista, abre o projeto
+    /// mais recente (ou cria um), volta e captura de novo com a miniatura.
+    private static func homeScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        capture("inicio-1-lista", to: dir)
+        if let first = model.entries.first {
+            model.openLibraryProject(first.id)
+        } else {
+            model.createProject(aspect: .r9x16)
+        }
+        await wait(2)
+        capture("inicio-2-editor", to: dir)
+        model.showHome()
+        await wait(3)
+        model.refreshLibrary()
+        await wait(1)
+        capture("inicio-3-de-volta", to: dir)
+    }
+
     private static func dragScenario(_ model: EditorModel, dir: URL) async {
         func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
         model.setZoom(120)

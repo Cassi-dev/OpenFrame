@@ -66,6 +66,12 @@ Mac com Apple Silicon ou Intel.
 
 ## Funcionalidades
 
+**Projetos**
+- Tela inicial com todos os projetos: miniatura, duração, formato e data da última edição; busca por nome
+- Novo projeto vazio ou num formato pronto: 16:9 (YouTube), 9:16 (Reels, TikTok, Shorts), 1:1 e 4:5
+- Salvamento automático em `~/Movies/OpenFrame/Projetos`, sem janela de salvar
+- Renomear, duplicar, mostrar no Finder e apagar (vai para o Lixo); abrir ou exportar arquivos `.openframe`
+
 **Edição**
 - Importar vídeos, fotos e áudios pelo botão ou arrastando arquivos para a janela
 - Timeline com faixa principal magnética, sobreposições (picture-in-picture), textos e áudios

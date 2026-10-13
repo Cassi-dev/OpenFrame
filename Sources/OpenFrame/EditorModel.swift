@@ -5,6 +5,10 @@ import OpenFrameCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum Screen {
+    case home, editor
+}
+
 enum InspectorTab: String, CaseIterable, Identifiable {
     case basic, adjust, filters, effects, animation, transition, text, audio
 
@@ -92,6 +96,13 @@ final class EditorModel {
     var exportSettings = ExportSettings()
     var showExport = false
     var errorMessage: String?
+    /// Tela inicial (projetos) ou editor.
+    private(set) var screen = Screen.home
+    /// Projetos da biblioteca, para a tela inicial.
+    private(set) var entries: [ProjectEntry] = []
+    /// Projeto da biblioteca aberto no editor (salvo automaticamente).
+    private(set) var libraryID: UUID?
+    /// Arquivo `.openframe` aberto de fora da biblioteca (`-open`), salvo à mão.
     private(set) var documentURL: URL?
     private(set) var isDirty = false
     private(set) var thumbnails: [UUID: [CGImage]] = [:]
@@ -99,6 +110,13 @@ final class EditorModel {
     private(set) var waveforms: [UUID: [Float]] = [:]
 
     @ObservationIgnored let player = AVPlayer()
+    @ObservationIgnored let library: ProjectLibrary
+    @ObservationIgnored private var autosaveTask: Task<Void, Never>?
+    @ObservationIgnored private var thumbnailTask: Task<Void, Never>?
+    @ObservationIgnored private var lastThumbnail = Date.distantPast
+    @ObservationIgnored private var missingThumbnailsTask: Task<Void, Never>?
+    /// Projetos cuja miniatura já foi tentada nesta sessão (mídia ausente não repete).
+    @ObservationIgnored private var thumbnailAttempts = Set<UUID>()
     @ObservationIgnored private var undoStack: [Project] = []
     @ObservationIgnored private var redoStack: [Project] = []
     @ObservationIgnored private var lastCoalesceKey: String?
@@ -125,6 +143,9 @@ final class EditorModel {
     var selectedSegment: Segment? { selection.flatMap { project.segment($0) } }
 
     init() {
+        // `OPENFRAME_LIBRARY_DIR` troca a pasta da biblioteca (capturas e testes manuais).
+        let root = ProcessInfo.processInfo.environment["OPENFRAME_LIBRARY_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        library = ProjectLibrary(root: root ?? ProjectLibrary.defaultRoot)
         player.actionAtItemEnd = .pause
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
             MainActor.assumeIsolated { self?.playerTimeChanged(time) }
@@ -134,9 +155,13 @@ final class EditorModel {
         // `OpenFrame -open caminho.openframe` (argumentos com "-" viram UserDefaults;
         // caminhos soltos seriam tratados pelo AppKit como documentos a abrir).
         if let path = UserDefaults.standard.string(forKey: "open") {
-            open(url: URL(fileURLWithPath: path))
+            openExternal(url: URL(fileURLWithPath: path))
         } else {
-            rebuildPreview()
+            refreshLibrary()
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveNow() }
         }
         DebugSnapshot.runIfRequested(self)
     }
@@ -180,6 +205,7 @@ final class EditorModel {
     private func setProject(_ p: Project) {
         project = p
         isDirty = true
+        scheduleAutosave()
         if let id = selection, p.segment(id) == nil { selection = nil }
         if playhead > p.duration { playhead = p.duration }
         projectDidChange()
@@ -198,6 +224,7 @@ final class EditorModel {
         guard copy != project else { return }
         project = copy
         isDirty = true
+        scheduleAutosave()
         projectDidChange()
     }
 
@@ -731,6 +758,7 @@ final class EditorModel {
         change(&copy)
         guard copy != project else { return }
         project = copy
+        scheduleAutosave()
         projectDidChange()
     }
 
@@ -744,57 +772,263 @@ final class EditorModel {
         return Array(texts) + Array(overlays) + main + audios
     }
 
-    // MARK: - Arquivo
+    // MARK: - Projetos
 
-    func newProject() {
-        guard confirmDiscardChanges() else { return }
-        if isPlaying { togglePlay() }
-        project = Project()
-        undoStack.removeAll()
-        redoStack.removeAll()
-        selection = nil
-        documentURL = nil
-        isDirty = false
-        playhead = 0
-        projectDidChange()
+    func refreshLibrary() {
+        entries = library.list()
+        fillMissingThumbnails()
     }
 
-    func openProject() {
+    /// Projetos sem miniatura (criados antes dela existir ou fechados sem voltar à
+    /// tela inicial) ganham uma em segundo plano, um por vez.
+    private func fillMissingThumbnails() {
+        guard screen == .home, missingThumbnailsTask == nil else { return }
+        let pending = entries.filter { $0.thumbnailModified == nil && $0.duration > 0 && !thumbnailAttempts.contains($0.id) }
+        guard !pending.isEmpty else { return }
+        missingThumbnailsTask = Task { [weak self] in
+            for entry in pending {
+                guard let self, self.screen == .home, !Task.isCancelled else { break }
+                self.thumbnailAttempts.insert(entry.id)
+                guard let project = try? self.library.load(entry.id) else { continue }
+                await self.writeThumbnail(of: project, id: entry.id)
+                self.entries = self.library.list()
+            }
+            self?.missingThumbnailsTask = nil
+        }
+    }
+
+    /// Cria um projeto na biblioteca com o formato escolhido e abre o editor.
+    func createProject(aspect: AspectRatio = .original) {
+        do {
+            let (entry, created) = try library.create(aspect: aspect)
+            load(created, libraryID: entry.id, documentURL: nil)
+        } catch {
+            errorMessage = "Não foi possível criar o projeto: \(error.localizedDescription)"
+        }
+    }
+
+    func openLibraryProject(_ id: UUID) {
+        do {
+            load(try library.load(id), libraryID: id, documentURL: nil)
+        } catch {
+            errorMessage = "Não foi possível abrir o projeto: \(error.localizedDescription)"
+            refreshLibrary()
+        }
+    }
+
+    /// Volta para a tela inicial, gravando o projeto e a miniatura.
+    func showHome() {
         guard confirmDiscardChanges() else { return }
+        if isPlaying { togglePlay() }
+        saveNow()
+        let id = libraryID
+        let snapshot = project
+        rebuildTask?.cancel()
+        player.replaceCurrentItem(with: nil)
+        structureKey = nil
+        planBox = nil
+        libraryID = nil
+        documentURL = nil
+        isDirty = false
+        selection = nil
+        screen = .home
+        refreshLibrary()
+        if let id {
+            thumbnailTask?.cancel()
+            thumbnailTask = Task { [weak self] in
+                await self?.writeThumbnail(of: snapshot, id: id)
+                self?.refreshLibrary()
+            }
+        }
+    }
+
+    func renameProject(_ id: UUID, to name: String) {
+        do {
+            try library.rename(id, to: name)
+            refreshLibrary()
+        } catch {
+            errorMessage = "Não foi possível renomear: \(error.localizedDescription)"
+        }
+    }
+
+    /// Nome do projeto aberto, editado na barra superior.
+    func renameCurrentProject(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != project.name else { return }
+        project.name = trimmed
+        isDirty = true
+        scheduleAutosave()
+    }
+
+    func duplicateProject(_ id: UUID) {
+        do {
+            try library.duplicate(id)
+            refreshLibrary()
+        } catch {
+            errorMessage = "Não foi possível duplicar: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteProject(_ id: UUID) {
+        do {
+            try library.delete(id)
+            refreshLibrary()
+        } catch {
+            errorMessage = "Não foi possível apagar: \(error.localizedDescription)"
+        }
+    }
+
+    func revealProject(_ id: UUID) {
+        NSWorkspace.shared.activateFileViewerSelecting([library.folder(for: id).appendingPathComponent(ProjectLibrary.projectFile)])
+    }
+
+    /// ⌘N: projeto novo direto no editor.
+    func newProject() {
+        guard confirmDiscardChanges() else { return }
+        saveNow()
+        createProject()
+    }
+
+    /// ⌘O: escolhe um `.openframe`, traz para a biblioteca e abre.
+    func openProject() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: ProjectStore.fileExtension) ?? .json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url: url)
     }
 
-    /// Abre um projeto `.openframe` (menu, Finder ou linha de comando).
+    /// `.openframe` vindo do Finder ou do menu: importado para a biblioteca e aberto.
     func open(url: URL) {
-        if documentURL?.standardizedFileURL == url.standardizedFileURL, !isDirty { return }
+        guard confirmDiscardChanges() else { return }
+        saveNow()
         do {
-            let loaded = try ProjectStore.load(from: url)
-            if isPlaying { togglePlay() }
-            project = loaded
-            undoStack.removeAll()
-            redoStack.removeAll()
-            selection = nil
-            documentURL = url
-            isDirty = false
-            playhead = 0
-            thumbnails.removeAll()
-            waveforms.removeAll()
-            loaded.materials.forEach(loadThumbnails)
-            projectDidChange()
-            let missing = loaded.materials.filter { !FileManager.default.fileExists(atPath: $0.path) }
-            if !missing.isEmpty {
-                errorMessage = "Arquivos não encontrados:\n" + missing.map(\.path).joined(separator: "\n")
-            }
+            let entry = try library.importProject(from: url)
+            openLibraryProject(entry.id)
         } catch {
             errorMessage = "Não foi possível abrir o projeto: \(error.localizedDescription)"
         }
     }
 
+    /// `-open caminho`: abre o arquivo direto, fora da biblioteca (desenvolvimento e capturas).
+    func openExternal(url: URL) {
+        do {
+            load(try ProjectStore.load(from: url), libraryID: nil, documentURL: url)
+        } catch {
+            errorMessage = "Não foi possível abrir o projeto: \(error.localizedDescription)"
+        }
+    }
+
+    private func load(_ loaded: Project, libraryID: UUID?, documentURL: URL?) {
+        missingThumbnailsTask?.cancel()
+        missingThumbnailsTask = nil
+        if isPlaying { togglePlay() }
+        autosaveTask?.cancel()
+        project = loaded
+        undoStack.removeAll()
+        redoStack.removeAll()
+        selection = nil
+        self.libraryID = libraryID
+        self.documentURL = documentURL
+        isDirty = false
+        playhead = 0
+        thumbnails.removeAll()
+        waveforms.removeAll()
+        loaded.materials.forEach(loadThumbnails)
+        screen = .editor
+        lastThumbnail = Date()
+        projectDidChange()
+        let missing = loaded.materials.filter { !FileManager.default.fileExists(atPath: $0.path) }
+        if !missing.isEmpty {
+            errorMessage = "Arquivos não encontrados:\n" + missing.map(\.path).joined(separator: "\n")
+        }
+    }
+
+    // MARK: - Salvar
+
+    /// Projetos da biblioteca se salvam sozinhos, um instante depois da última alteração.
+    private func scheduleAutosave() {
+        guard libraryID != nil else { return }
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    /// Grava já o projeto da biblioteca; a miniatura acompanha no máximo a cada 10 s.
+    func saveNow() {
+        autosaveTask?.cancel()
+        guard let id = libraryID, isDirty else { return }
+        do {
+            try library.save(project, id: id)
+            isDirty = false
+        } catch {
+            errorMessage = "Não foi possível salvar: \(error.localizedDescription)"
+            return
+        }
+        if Date().timeIntervalSince(lastThumbnail) > 10 {
+            lastThumbnail = Date()
+            let snapshot = project
+            thumbnailTask?.cancel()
+            thumbnailTask = Task { [weak self] in await self?.writeThumbnail(of: snapshot, id: id) }
+        }
+    }
+
+    /// Quadro do projeto (a 1/3 da duração, até 2 s) gravado como miniatura da tela inicial.
+    private func writeThumbnail(of snapshot: Project, id: UUID) async {
+        guard snapshot.duration > 0 else { return }
+        do {
+            let built = try await CompositionBuilder.build(project: snapshot, renderSize: snapshot.canvasSize(shortSide: 360),
+                                                           frameDuration: CMTime(value: 1, timescale: 30),
+                                                           includeAudio: false)
+            built.box.update(project: snapshot)
+            let generator = AVAssetImageGenerator(asset: built.composition)
+            generator.videoComposition = built.videoComposition
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            let time = Micros(min(Double(snapshot.duration) / 3, 2_000_000))
+            let (image, _) = try await generator.image(at: time.cmTime)
+            guard !Task.isCancelled else { return }
+            let data = NSMutableData()
+            guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+            guard CGImageDestinationFinalize(dest) else { return }
+            try library.writeThumbnail(data as Data, id: id)
+        } catch {
+            // Sem miniatura, a tela inicial mostra o formato do projeto.
+        }
+    }
+
+    /// ⌘S: grava já (biblioteca) ou no arquivo aberto de fora.
     @discardableResult
-    func saveProject(as saveAs: Bool = false) -> Bool {
+    func saveProject() -> Bool {
+        if libraryID != nil {
+            saveNow()
+            return true
+        }
+        return saveDocument(saveAs: false)
+    }
+
+    /// ⇧⌘S: grava uma cópia `.openframe` onde o usuário escolher.
+    func exportProjectFile() {
+        if libraryID == nil {
+            saveDocument(saveAs: true)
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: ProjectStore.fileExtension) ?? .json]
+        panel.nameFieldStringValue = "\(project.name).\(ProjectStore.fileExtension)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try ProjectStore.save(project, to: url)
+        } catch {
+            errorMessage = "Não foi possível exportar o projeto: \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    private func saveDocument(saveAs: Bool) -> Bool {
         var url = documentURL
         if url == nil || saveAs {
             let panel = NSSavePanel()
@@ -818,8 +1052,10 @@ final class EditorModel {
         }
     }
 
+    /// Só arquivos de fora da biblioteca pedem confirmação; a biblioteca se salva sozinha.
     private func confirmDiscardChanges() -> Bool {
-        guard isDirty, project.duration > 0 || !project.materials.isEmpty else { return true }
+        guard libraryID == nil, documentURL != nil || screen == .editor, isDirty,
+              project.duration > 0 || !project.materials.isEmpty else { return true }
         let alert = NSAlert()
         alert.messageText = "Salvar as alterações em “\(project.name)”?"
         alert.addButton(withTitle: "Salvar")
@@ -970,6 +1206,7 @@ final class EditorModel {
     }
 
     private func handleKey(_ keyCode: UInt16, _ flags: NSEvent.ModifierFlags) -> Bool {
+        guard screen == .editor else { return false }
         if NSApp.keyWindow?.firstResponder is NSText { return false }
         if !flags.intersection([.command, .control, .option]).isEmpty { return false }
         guard NSApp.keyWindow?.sheetParent == nil, NSApp.keyWindow?.attachedSheet == nil else { return false }

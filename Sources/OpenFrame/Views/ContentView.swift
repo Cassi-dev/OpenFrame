@@ -12,6 +12,33 @@ struct ContentView: View {
 
     var body: some View {
         @Bindable var model = model
+        Group {
+            if model.screen == .home {
+                HomeView()
+            } else {
+                editor
+            }
+        }
+        .background(Theme.background)
+        .ignoresSafeArea()
+        .background(WindowConfigurator(barHeight: Self.barHeight))
+        .font(Theme.font(12))
+        .foregroundStyle(Theme.textPrimary)
+        .tint(Theme.accent)
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $model.showExport) {
+            ExportSheet()
+                .environment(model)
+        }
+        .alert("OpenFrame", isPresented: Binding(get: { model.errorMessage != nil },
+                                               set: { if !$0 { model.errorMessage = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
+    }
+
+    private var editor: some View {
         GeometryReader { geo in
             VStack(spacing: 0) {
                 TopBar()
@@ -38,24 +65,7 @@ struct ContentView: View {
             }
             .padding([.horizontal, .bottom], 8)
         }
-        .background(Theme.background)
-        .ignoresSafeArea()
-        .background(WindowConfigurator(barHeight: Self.barHeight))
-        .font(Theme.font(12))
-        .foregroundStyle(Theme.textPrimary)
-        .tint(Theme.accent)
-        .preferredColorScheme(.dark)
         .animation(.easeOut(duration: 0.2), value: model.libraryVisible)
-        .sheet(isPresented: $model.showExport) {
-            ExportSheet()
-                .environment(model)
-        }
-        .alert("OpenFrame", isPresented: Binding(get: { model.errorMessage != nil },
-                                               set: { if !$0 { model.errorMessage = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
     }
 
     private func clampedTimelineHeight(total: CGFloat) -> CGFloat {
@@ -116,12 +126,20 @@ struct TopBar: View {
         ZStack {
             WindowDragArea()
             HStack(spacing: 10) {
-                LogoMark()
-                    .frame(width: 22, height: 22)
-                Text(project.name)
-                    .font(Theme.font(13))
-                    .lineLimit(1)
-                if model.isDirty {
+                Button { model.showHome() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.left")
+                            .font(Theme.font(11, .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                        LogoMark()
+                            .frame(width: 22, height: 22)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Voltar aos projetos (⇧⌘P)")
+                ProjectNameField()
+                if model.isDirty, model.libraryID == nil {
                     Circle()
                         .fill(Theme.textTertiary)
                         .frame(width: 5, height: 5)
@@ -167,5 +185,47 @@ struct TopBar: View {
                 .help("Tamanho de saída (largura × altura)")
             }
         }
+    }
+}
+
+/// Nome do projeto na barra superior: clique para renomear (Enter confirma, Esc desiste).
+private struct ProjectNameField: View {
+    @Environment(EditorModel.self) private var model
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if editing {
+            TextField("Nome do projeto", text: $draft)
+                .textFieldStyle(.plain)
+                .font(Theme.font(13))
+                .frame(width: 220)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .field(radius: 7)
+                .focused($focused)
+                .onSubmit(commit)
+                .onExitCommand { editing = false }
+                .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+                .onAppear { focused = true }
+        } else {
+            Text(model.project.name)
+                .font(Theme.font(13))
+                .lineLimit(1)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard model.libraryID != nil else { return }
+                    draft = model.project.name
+                    editing = true
+                }
+                .help(model.libraryID != nil ? "Clique para renomear" : "")
+        }
+    }
+
+    private func commit() {
+        guard editing else { return }
+        model.renameCurrentProject(draft)
+        editing = false
     }
 }
