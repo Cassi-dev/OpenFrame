@@ -14,7 +14,6 @@ struct InspectorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Theme.panel)
     }
 }
 
@@ -32,47 +31,51 @@ private let percent: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
 private let signedPercent: (Double) -> String = { String(format: "%+.0f", $0 * 100) }
 private let secondsFormat: (Double) -> String = { String(format: "%.1fs", $0) }
 
-private struct TabButton: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.callout.weight(selected ? .semibold : .regular))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(selected ? Theme.accent.opacity(0.25) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                .foregroundStyle(selected ? Theme.accent : .primary)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Tile selecionável usado nas grades de filtros, efeitos e transições.
+/// Cartão selecionável usado nas grades de filtros, efeitos e transições.
 private struct ChoiceTile<Preview: View>: View {
     let title: String
     let selected: Bool
     let action: () -> Void
     @ViewBuilder let preview: () -> Preview
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 preview()
-                    .frame(height: 48)
+                    .frame(height: 50)
                     .frame(maxWidth: .infinity)
-                    .background(Theme.panelRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Theme.accent : .clear, lineWidth: 2))
+                    .background(Theme.raised)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(selected ? Theme.accent : (hovering ? Color.white.opacity(0.22) : Theme.hairline),
+                                      lineWidth: selected ? 1.5 : 1))
                 Text(title)
-                    .font(.caption)
+                    .font(Theme.font(11, selected ? .medium : .regular))
                     .lineLimit(1)
-                    .foregroundStyle(selected ? Theme.accent : .primary)
+                    .foregroundStyle(selected ? Theme.accent : (hovering ? Theme.textPrimary : Theme.textSecondary))
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private let tileColumns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
+
+/// Campo de texto de uma linha com a aparência dos campos do tema.
+private struct InputField: View {
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(Theme.font(12))
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .field()
     }
 }
 
@@ -84,19 +87,23 @@ private struct SegmentInspector: View {
 
     var body: some View {
         let tabs = model.availableTabs(for: segment)
-        VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(tabs) { tab in
-                        TabButton(title: tab.title, selected: model.inspectorTab == tab) { model.inspectorTab = tab }
-                    }
-                }
-                .padding(8)
+        let current = tabs.contains(model.inspectorTab) ? model.inspectorTab : (tabs.first ?? .basic)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding([.horizontal, .top], 14)
+            if tabs.count > 1 {
+                PillPicker(selection: Binding(get: { current }, set: { model.inspectorTab = $0 }),
+                           options: tabs, title: \.title, icon: \.icon)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
             }
-            Divider()
+            Text(current.title)
+                .font(Theme.font(16, .light))
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    switch tabs.contains(model.inspectorTab) ? model.inspectorTab : (tabs.first ?? .basic) {
+                    switch current {
                     case .basic: BasicTab(segment: segment)
                     case .adjust: AdjustTab(id: segment.id)
                     case .filters: FiltersTab(segment: segment)
@@ -107,8 +114,37 @@ private struct SegmentInspector: View {
                     case .audio: AudioTab(segment: segment)
                     }
                 }
-                .padding(14)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
             }
+            .scrollIndicators(.never)
+        }
+    }
+
+    /// Ícone do tipo, nome e intervalo na timeline.
+    private var header: some View {
+        let material = model.project.material(segment.materialId)
+        let icon = segment.text != nil ? "textformat"
+            : material?.kind == .audio ? "music.note" : material?.kind == .photo ? "photo" : "film"
+        let name = segment.text.map { $0.text.replacingOccurrences(of: "\n", with: " ") } ?? material?.name ?? "Clipe"
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(Theme.font(12, .light))
+                .frame(width: 30, height: 30)
+                .field(radius: 9)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(Theme.font(13))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(Time.format(segment.targetStart)) – \(Time.format(segment.targetEnd)) · \(segment.targetDuration.shortSeconds)")
+                    .font(Theme.mono(10))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Spacer(minLength: 0)
+            Button { model.selection = nil } label: { Image(systemName: "xmark") }
+                .buttonStyle(CircleButtonStyle(size: 24))
+                .help("Fechar (mostra o projeto)")
         }
     }
 }
@@ -130,20 +166,25 @@ private struct BasicTab: View {
         ParamSlider(title: "Opacidade", value: model.binding(id, \.opacity), range: 0...1, defaultValue: 1, format: percent)
 
         SectionHeader(title: "Velocidade")
+        SpeedPresets(id: id, speed: segment.speed)
         ParamSlider(title: "Velocidade", value: model.binding(id, \.speed), range: 0.1...4, defaultValue: 1,
                     format: { String(format: "%.2fx", $0) })
-        HStack {
-            ForEach([0.5, 1, 1.5, 2, 3], id: \.self) { s in
-                Button(String(format: "%gx", s)) {
-                    model.mutate { TimelineEditor.setSpeed(&$0, segment: id, speed: s) }
-                }
-                .controlSize(.small)
-            }
-        }
 
         if model.project.material(segment.materialId)?.hasAudio == true {
             AudioControls(id: id)
         }
+    }
+}
+
+private struct SpeedPresets: View {
+    @Environment(EditorModel.self) private var model
+    let id: UUID
+    let speed: Double
+
+    var body: some View {
+        PillPicker(selection: Binding(get: { speed }, set: { s in
+            model.mutate { TimelineEditor.setSpeed(&$0, segment: id, speed: s) }
+        }), options: [0.5, 1, 1.5, 2, 3], title: { String(format: "%gx", $0) })
     }
 }
 
@@ -166,11 +207,12 @@ private struct AudioTab: View {
     var body: some View {
         AudioControls(id: segment.id)
         SectionHeader(title: "Velocidade")
+        SpeedPresets(id: segment.id, speed: segment.speed)
         ParamSlider(title: "Velocidade", value: model.binding(segment.id, \.speed), range: 0.25...4, defaultValue: 1,
                     format: { String(format: "%.2fx", $0) })
         Text("O tom é preservado ao mudar a velocidade.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(Theme.font(11))
+            .foregroundStyle(Theme.textTertiary)
     }
 }
 
@@ -179,7 +221,7 @@ private struct AdjustTab: View {
     let id: UUID
 
     var body: some View {
-        SectionHeader(title: "Ajustar") {
+        SectionHeader(title: "Luz e cor") {
             model.mutate { TimelineEditor.update(&$0, segment: id) { $0.adjust = Adjust() } }
         }
         ParamSlider(title: "Brilho", value: model.binding(id, \.adjust.brightness), format: signedPercent)
@@ -207,8 +249,7 @@ private struct FiltersTab: View {
     var body: some View {
         let id = segment.id
         let current = segment.filter?.preset ?? .none
-        SectionHeader(title: "Filtros")
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
+        LazyVGrid(columns: tileColumns, spacing: 12) {
             ForEach(FilterPreset.allCases) { preset in
                 ChoiceTile(title: preset.displayName, selected: current == preset) {
                     model.mutate {
@@ -220,15 +261,17 @@ private struct FiltersTab: View {
                     if let image = previews[preset] {
                         Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fill)
                     } else {
-                        Image(systemName: "camera.filters").foregroundStyle(.secondary)
+                        Image(systemName: "camera.filters").foregroundStyle(Theme.textTertiary)
                     }
                 }
             }
         }
+        .padding(.top, 8)
         .task(id: segment.materialId) { await makePreviews() }
         if segment.filter != nil {
             ParamSlider(title: "Intensidade", value: model.binding(id, \.filter!.intensity), range: 0...1,
                         defaultValue: 1, format: percent)
+                .padding(.top, 6)
         }
     }
 
@@ -251,12 +294,12 @@ private struct EffectsTab: View {
 
     private func icon(_ kind: VideoEffectKind) -> String {
         switch kind {
-        case .blur: "drop.fill"
-        case .pixelate: "square.grid.3x3.fill"
+        case .blur: "drop"
+        case .pixelate: "square.grid.3x3"
         case .rgbSplit: "camera.filters"
         case .mirror: "rectangle.split.2x1"
         case .shake: "waveform.path"
-        case .flash: "bolt.fill"
+        case .flash: "bolt"
         case .zoomPulse: "plus.magnifyingglass"
         case .kaleidoscope: "hexagon"
         case .comic: "pencil.and.outline"
@@ -266,8 +309,7 @@ private struct EffectsTab: View {
 
     var body: some View {
         let id = segment.id
-        SectionHeader(title: "Efeitos de vídeo")
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
+        LazyVGrid(columns: tileColumns, spacing: 12) {
             ForEach(VideoEffectKind.allCases) { kind in
                 let active = segment.effects.contains { $0.kind == kind }
                 ChoiceTile(title: kind.displayName, selected: active) {
@@ -281,10 +323,13 @@ private struct EffectsTab: View {
                         }
                     }
                 } preview: {
-                    Image(systemName: icon(kind)).font(.title3).foregroundStyle(active ? Theme.accent : .secondary)
+                    Image(systemName: icon(kind))
+                        .font(Theme.font(17, .light))
+                        .foregroundStyle(active ? Theme.accent : Theme.textSecondary)
                 }
             }
         }
+        .padding(.top, 8)
         if !segment.effects.isEmpty {
             SectionHeader(title: "Aplicados") {
                 model.mutate { TimelineEditor.update(&$0, segment: id) { $0.effects = [] } }
@@ -298,7 +343,6 @@ private struct EffectsTab: View {
 }
 
 private struct AnimationTab: View {
-    @Environment(EditorModel.self) private var model
     let segment: Segment
 
     var body: some View {
@@ -319,13 +363,14 @@ private struct AnimationPicker: View {
     var body: some View {
         let anim = model.binding(id, keyPath)
         SectionHeader(title: title)
-        Picker("Tipo", selection: Binding<AnimationKind?>(
-            get: { anim.wrappedValue?.kind },
-            set: { kind in
-                anim.wrappedValue = kind.map { SegmentAnimation(kind: $0, duration: anim.wrappedValue?.duration ?? 500_000) }
-            })) {
-            Text("Nenhuma").tag(AnimationKind?.none)
-            ForEach(kinds) { kind in Text(kind.displayName).tag(AnimationKind?.some(kind)) }
+        FieldRow(label: "Tipo") {
+            MenuField(selection: Binding<AnimationKind?>(
+                get: { anim.wrappedValue?.kind },
+                set: { kind in
+                    anim.wrappedValue = kind.map { SegmentAnimation(kind: $0, duration: anim.wrappedValue?.duration ?? 500_000) }
+                }),
+                      options: [nil] + kinds.map(Optional.some),
+                      title: { $0?.displayName ?? "Nenhuma" })
         }
         if anim.wrappedValue != nil {
             ParamSlider(title: "Duração",
@@ -343,12 +388,14 @@ private struct TransitionTab: View {
     var body: some View {
         let id = segment.id
         let current = segment.transition?.kind
-        SectionHeader(title: "Transição para o próximo clipe")
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
+        Text("Para o próximo clipe da faixa principal.")
+            .font(Theme.font(11))
+            .foregroundStyle(Theme.textTertiary)
+        LazyVGrid(columns: tileColumns, spacing: 12) {
             ChoiceTile(title: "Nenhuma", selected: current == nil) {
                 model.mutate { TimelineEditor.update(&$0, segment: id) { $0.transition = nil } }
             } preview: {
-                Image(systemName: "nosign").foregroundStyle(.secondary)
+                Image(systemName: "nosign").font(Theme.font(15, .light)).foregroundStyle(Theme.textTertiary)
             }
             ForEach(TransitionKind.allCases) { kind in
                 ChoiceTile(title: kind.displayName, selected: current == kind) {
@@ -358,7 +405,9 @@ private struct TransitionTab: View {
                         }
                     }
                 } preview: {
-                    Image(systemName: "arrow.left.arrow.right").foregroundStyle(current == kind ? Theme.accent : .secondary)
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(Theme.font(15, .light))
+                        .foregroundStyle(current == kind ? Theme.accent : Theme.textSecondary)
                 }
             }
         }
@@ -371,9 +420,10 @@ private struct TransitionTab: View {
                                            }
                                        }),
                         range: 0.1...2, defaultValue: 0.5, format: secondsFormat)
+                .padding(.top, 6)
             Text("A transição sobrepõe o fim deste clipe ao início do próximo.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Theme.font(11))
+                .foregroundStyle(Theme.textTertiary)
         }
     }
 }
@@ -389,58 +439,50 @@ private struct TextTab: View {
     var body: some View {
         let text = model.binding(id, \.text!.text)
         let style = model.binding(id, \.text!.style)
-        SectionHeader(title: "Texto")
         TextEditor(text: text)
-            .font(.body)
-            .frame(height: 70)
+            .font(Theme.font(13))
+            .frame(height: 72)
             .scrollContentBackground(.hidden)
-            .padding(4)
-            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 6))
+            .padding(6)
+            .field()
 
         SectionHeader(title: "Estilos prontos")
         HStack(spacing: 6) {
-            presetButton("Clássico", style) { _ in }
-            presetButton("Contorno", style) { $0.strokeWidth = 4; $0.shadow = false }
-            presetButton("Destaque", style) {
-                $0.color = .black
-                $0.backgroundEnabled = true
-                $0.backgroundColor = .yellow
-                $0.shadow = false
-            }
-            presetButton("Neon", style) {
-                $0.color = RGBA(0.3, 1, 0.95)
-                $0.strokeWidth = 2
-                $0.strokeColor = RGBA(0.05, 0.2, 0.4)
+            ForEach(TextStylePreset.allCases) { preset in
+                Button(preset.title) { style.wrappedValue = preset.applied(to: style.wrappedValue) }
+                    .buttonStyle(PillButtonStyle(compact: true))
             }
         }
 
         SectionHeader(title: "Fonte")
-        Picker("Fonte", selection: model.binding(id, \.text!.style.fontName)) {
-            ForEach(Self.fonts, id: \.self) { Text($0).font(.custom($0, size: 13)).tag($0) }
+        FieldRow(label: "Família") {
+            MenuField(selection: model.binding(id, \.text!.style.fontName), options: Self.fonts, title: { $0 })
         }
         ParamSlider(title: "Tamanho", value: model.binding(id, \.text!.style.fontSize), range: 0.02...0.25,
                     defaultValue: 0.07, format: { String(format: "%.0f", $0 * 1000) })
-        HStack {
-            Toggle("Negrito", isOn: model.binding(id, \.text!.style.bold))
-            Toggle("Itálico", isOn: model.binding(id, \.text!.style.italic))
+        HStack(spacing: 8) {
+            PillPicker(selection: model.binding(id, \.text!.style.alignment),
+                       options: TextAlignmentKind.allCases,
+                       title: { ["left": "Esquerda", "center": "Centro", "right": "Direita"][$0.rawValue] ?? "" },
+                       icon: { "text.align\($0.rawValue)" })
+            Toggle(isOn: model.binding(id, \.text!.style.bold)) { Image(systemName: "bold") }
+                .toggleStyle(IconToggleStyle())
+                .help("Negrito")
+            Toggle(isOn: model.binding(id, \.text!.style.italic)) { Image(systemName: "italic") }
+                .toggleStyle(IconToggleStyle())
+                .help("Itálico")
         }
-        Picker("Alinhamento", selection: model.binding(id, \.text!.style.alignment)) {
-            Image(systemName: "text.alignleft").tag(TextAlignmentKind.left)
-            Image(systemName: "text.aligncenter").tag(TextAlignmentKind.center)
-            Image(systemName: "text.alignright").tag(TextAlignmentKind.right)
-        }
-        .pickerStyle(.segmented)
 
         SectionHeader(title: "Cores")
-        ColorPicker("Cor do texto", selection: color(model.binding(id, \.text!.style.color)))
+        ColorRow(title: "Texto", color: color(model.binding(id, \.text!.style.color)))
         ParamSlider(title: "Contorno", value: model.binding(id, \.text!.style.strokeWidth), range: 0...10,
                     format: { String(format: "%.1f", $0) })
-        ColorPicker("Cor do contorno", selection: color(model.binding(id, \.text!.style.strokeColor)))
-        Toggle("Fundo", isOn: model.binding(id, \.text!.style.backgroundEnabled))
+        ColorRow(title: "Contorno", color: color(model.binding(id, \.text!.style.strokeColor)))
+        SwitchRow(title: "Fundo", isOn: model.binding(id, \.text!.style.backgroundEnabled))
         if style.wrappedValue.backgroundEnabled {
-            ColorPicker("Cor do fundo", selection: color(model.binding(id, \.text!.style.backgroundColor)))
+            ColorRow(title: "Cor do fundo", color: color(model.binding(id, \.text!.style.backgroundColor)))
         }
-        Toggle("Sombra", isOn: model.binding(id, \.text!.style.shadow))
+        SwitchRow(title: "Sombra", isOn: model.binding(id, \.text!.style.shadow))
 
         SectionHeader(title: "Posição") {
             model.mutate {
@@ -460,20 +502,13 @@ private struct TextTab: View {
         ParamSlider(title: "Largura máxima", value: model.binding(id, \.text!.style.maxWidth), range: 0.2...1,
                     defaultValue: 0.9, format: percent)
     }
+}
 
-    private func presetButton(_ title: String, _ style: Binding<TextStyle>, _ apply: @escaping (inout TextStyle) -> Void) -> some View {
-        Button(title) {
-            var s = TextStyle()
-            let old = style.wrappedValue
-            s.fontName = old.fontName
-            s.fontSize = old.fontSize
-            s.x = old.x
-            s.y = old.y
-            s.alignment = old.alignment
-            apply(&s)
-            style.wrappedValue = s
-        }
-        .controlSize(.small)
+/// Liga/desliga em forma de botão redondo; ligado fica em ciano.
+private struct IconToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: { configuration.label }
+            .buttonStyle(CircleButtonStyle(size: 28, prominent: configuration.isOn))
     }
 }
 
@@ -497,23 +532,27 @@ private struct ProjectInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "Projeto")
-                TextField("Nome", text: model.projectBinding(\.name))
-                    .textFieldStyle(.roundedBorder)
-                LabeledContent("Duração", value: Time.format(model.duration))
-                LabeledContent("Clipes", value: "\(model.project.tracks.flatMap(\.segments).count)")
+                PanelHeader(title: "Projeto")
+                FieldRow(label: "Nome") {
+                    InputField(placeholder: "Nome", text: model.projectBinding(\.name))
+                }
+                FieldRow(label: "Duração") {
+                    Text(Time.format(model.duration)).font(Theme.mono(12))
+                }
+                FieldRow(label: "Clipes") {
+                    Text("\(model.project.tracks.flatMap(\.segments).count)").font(Theme.mono(12))
+                }
 
                 SectionHeader(title: "Canvas")
-                Picker("Proporção", selection: model.projectBinding(\.canvas.aspect)) {
-                    ForEach(AspectRatio.allCases) { Text($0.label).tag($0) }
+                FieldRow(label: "Proporção") {
+                    MenuField(selection: model.projectBinding(\.canvas.aspect), options: AspectRatio.allCases, title: \.label)
                 }
-                Picker("Fundo", selection: backgroundKind) {
-                    ForEach(BackgroundKind.allCases) { Text($0.title).tag($0) }
+                FieldRow(label: "Fundo") {
+                    PillPicker(selection: backgroundKind, options: BackgroundKind.allCases, title: \.title)
                 }
-                .pickerStyle(.segmented)
                 switch model.project.canvas.background {
                 case .color(let c):
-                    ColorPicker("Cor do fundo", selection: Binding(
+                    ColorRow(title: "Cor do fundo", color: Binding(
                         get: { c.color },
                         set: { new in model.mutate(coalesce: "bgcolor") { $0.canvas.background = .color(RGBA(new)) } }))
                 case .blur(let amount):
@@ -524,24 +563,18 @@ private struct ProjectInspector: View {
                 case .black:
                     EmptyView()
                 }
-                Text("O fundo aparece onde o vídeo não cobre o canvas — útil ao converter 16:9 para 9:16.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("O fundo aparece onde o vídeo não cobre o canvas, por exemplo ao converter 16:9 para 9:16.")
+                    .font(Theme.font(11))
+                    .foregroundStyle(Theme.textTertiary)
 
-                SectionHeader(title: "Atalhos")
-                VStack(alignment: .leading, spacing: 4) {
-                    shortcut("Espaço", "Reproduzir / pausar")
-                    shortcut("⌘B", "Dividir no cursor")
-                    shortcut("⌫", "Apagar clipe")
-                    shortcut("⌘D", "Duplicar")
-                    shortcut("← →", "Quadro a quadro (⇧ = 10)")
-                    shortcut("⌘Z / ⇧⌘Z", "Desfazer / refazer")
-                    shortcut("⌘E", "Exportar")
-                }
-                .font(.caption)
+                SectionHeader(title: "Dica")
+                Text("Selecione um clipe na timeline para ajustar transformação, cor, filtros, efeitos, animações e transições.")
+                    .font(Theme.font(11))
+                    .foregroundStyle(Theme.textTertiary)
             }
             .padding(14)
         }
+        .scrollIndicators(.never)
     }
 
     private var backgroundKind: Binding<BackgroundKind> {
@@ -562,12 +595,5 @@ private struct ProjectInspector: View {
                     }
                 }
             })
-    }
-
-    private func shortcut(_ keys: String, _ action: String) -> some View {
-        HStack {
-            Text(keys).monospaced().frame(width: 90, alignment: .leading)
-            Text(action).foregroundStyle(.secondary)
-        }
     }
 }

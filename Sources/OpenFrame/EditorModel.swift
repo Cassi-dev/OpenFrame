@@ -22,6 +22,44 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .audio: "Áudio"
         }
     }
+
+    var icon: String {
+        switch self {
+        case .basic: "arrow.up.and.down.and.arrow.left.and.right"
+        case .adjust: "slider.horizontal.3"
+        case .filters: "camera.filters"
+        case .effects: "sparkles"
+        case .animation: "wand.and.stars"
+        case .transition: "arrow.left.arrow.right"
+        case .text: "textformat"
+        case .audio: "waveform"
+        }
+    }
+}
+
+/// Painel da biblioteca, escolhido na barra de ferramentas da esquerda.
+enum LibraryPanel: String, CaseIterable, Identifiable {
+    case media, text, captions, shortcuts
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .media: "Mídia"
+        case .text: "Texto"
+        case .captions: "Legendas"
+        case .shortcuts: "Atalhos"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .media: "photo.on.rectangle"
+        case .text: "textformat"
+        case .captions: "captions.bubble"
+        case .shortcuts: "keyboard"
+        }
+    }
 }
 
 /// Estado do editor. Toda alteração no projeto passa por `mutate` (com
@@ -34,6 +72,10 @@ final class EditorModel {
         didSet { if selection != oldValue { ensureValidTab() } }
     }
     var inspectorTab = InspectorTab.basic
+    var libraryPanel = LibraryPanel.media
+    var libraryVisible = true
+    /// Grade dos terços sobre o preview.
+    var showGrid = false
     private(set) var playhead: Micros = 0
     private(set) var isPlaying = false
     /// Pontos por segundo na timeline.
@@ -44,6 +86,8 @@ final class EditorModel {
     private(set) var documentURL: URL?
     private(set) var isDirty = false
     private(set) var thumbnails: [UUID: [CGImage]] = [:]
+    /// Picos de áudio por material (`Waveform.peaksPerSecond` por segundo).
+    private(set) var waveforms: [UUID: [Float]] = [:]
 
     @ObservationIgnored let player = AVPlayer()
     @ObservationIgnored private var undoStack: [Project] = []
@@ -360,6 +404,7 @@ final class EditorModel {
             p.materials.removeAll { $0.id == m.id }
         }
         thumbnails[m.id] = nil
+        waveforms[m.id] = nil
     }
 
     func usageCount(_ m: Material) -> Int {
@@ -368,6 +413,9 @@ final class EditorModel {
 
     private func loadThumbnails(_ m: Material) {
         guard thumbnails[m.id] == nil else { return }
+        if m.hasAudio {
+            Task { waveforms[m.id] = try? await Waveform.peaks(url: m.url) }
+        }
         Task {
             switch m.kind {
             case .video:
@@ -425,9 +473,9 @@ final class EditorModel {
         selection = copy
     }
 
-    func addText() {
+    func addText(style: TextStyle = TextStyle()) {
         var id: UUID?
-        mutate { id = TimelineEditor.addText(TextContent(text: "Digite seu texto"), to: &$0, at: playhead) }
+        mutate { id = TimelineEditor.addText(TextContent(text: "Digite seu texto", style: style), to: &$0, at: playhead) }
         selection = id
         inspectorTab = .text
     }
@@ -583,6 +631,7 @@ final class EditorModel {
             isDirty = false
             playhead = 0
             thumbnails.removeAll()
+            waveforms.removeAll()
             loaded.materials.forEach(loadThumbnails)
             projectDidChange()
             let missing = loaded.materials.filter { !FileManager.default.fileExists(atPath: $0.path) }
@@ -638,20 +687,25 @@ final class EditorModel {
     /// Espaço, Delete e setas funcionam em qualquer lugar, exceto ao digitar texto.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self else { return event }
-                if NSApp.keyWindow?.firstResponder is NSText { return event }
-                if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return event }
-                guard NSApp.keyWindow?.sheetParent == nil, NSApp.keyWindow?.attachedSheet == nil else { return event }
-                switch event.keyCode {
-                case 49: self.togglePlay()
-                case 51, 117: self.deleteSelection()
-                case 123: self.step(frames: event.modifierFlags.contains(.shift) ? -10 : -1)
-                case 124: self.step(frames: event.modifierFlags.contains(.shift) ? 10 : 1)
-                default: return event
-                }
-                return nil
-            }
+            // O NSEvent não é Sendable: só o código e os modificadores entram no MainActor.
+            let keyCode = event.keyCode
+            let flags = event.modifierFlags
+            let handled = MainActor.assumeIsolated { self?.handleKey(keyCode, flags) ?? false }
+            return handled ? nil : event
         }
+    }
+
+    private func handleKey(_ keyCode: UInt16, _ flags: NSEvent.ModifierFlags) -> Bool {
+        if NSApp.keyWindow?.firstResponder is NSText { return false }
+        if !flags.intersection([.command, .control, .option]).isEmpty { return false }
+        guard NSApp.keyWindow?.sheetParent == nil, NSApp.keyWindow?.attachedSheet == nil else { return false }
+        switch keyCode {
+        case 49: togglePlay()
+        case 51, 117: deleteSelection()
+        case 123: step(frames: flags.contains(.shift) ? -10 : -1)
+        case 124: step(frames: flags.contains(.shift) ? 10 : 1)
+        default: return false
+        }
+        return true
     }
 }

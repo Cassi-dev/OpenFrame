@@ -6,15 +6,17 @@ struct TimelineView: View {
 
     static let rowHeight: CGFloat = 50
     static let rowSpacing: CGFloat = 6
-    static let rulerHeight: CGFloat = 26
-    static let headerWidth: CGFloat = 78
+    static let rulerHeight: CGFloat = 30
+    static let headerWidth: CGFloat = 58
+    static let clipInset: CGFloat = 4
 
     var body: some View {
         VStack(spacing: 0) {
             TimelineToolbar()
-            Divider()
+            Rectangle().fill(Theme.hairline).frame(height: 1)
             GeometryReader { geo in
-                let tracks = model.displayTrackOrder().map { model.project.tracks[$0] }
+                let order = model.displayTrackOrder()
+                let tracks = order.map { model.project.tracks[$0] }
                 let contentWidth = max(geo.size.width - Self.headerWidth,
                                        CGFloat((model.duration.seconds + 15) * model.zoom))
                 let contentHeight = Self.rulerHeight + CGFloat(tracks.count) * (Self.rowHeight + Self.rowSpacing)
@@ -28,7 +30,6 @@ struct TimelineView: View {
                             }
                         }
                         .frame(width: Self.headerWidth)
-                        .padding(.horizontal, 4)
 
                         ScrollView(.horizontal) {
                             ZStack(alignment: .topLeading) {
@@ -38,55 +39,69 @@ struct TimelineView: View {
                                         TrackRow(track: track, width: contentWidth)
                                     }
                                 }
-                                PlayheadView(height: contentHeight)
-                                    .offset(x: CGFloat(model.playhead.seconds * model.zoom) - 6)
+                                PlayheadView(height: contentHeight + 8, time: model.playhead)
+                                    .offset(x: CGFloat(model.playhead.seconds * model.zoom) - PlayheadView.width / 2)
+                                ClipActionBar(tracks: tracks)
                             }
                             .frame(width: contentWidth, alignment: .topLeading)
-                            .padding(.trailing, 20)
+                            .padding(.trailing, 24)
                         }
+                        .scrollIndicators(.automatic)
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 8)
                     .frame(minHeight: geo.size.height, alignment: .top)
                 }
+                .scrollIndicators(.never)
             }
         }
-        .background(Theme.panel)
     }
 }
+
+// MARK: - Barra de ferramentas
 
 private struct TimelineToolbar: View {
     @Environment(EditorModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 6) {
             Button { model.splitAtPlayhead() } label: { Image(systemName: "scissors") }
                 .help("Dividir no cursor (⌘B)")
-            Button { model.deleteSelection() } label: { Image(systemName: "trash") }
-                .disabled(model.selection == nil)
-                .help("Apagar (⌫)")
             Button { model.duplicateSelection() } label: { Image(systemName: "plus.square.on.square") }
                 .disabled(model.selection == nil)
                 .help("Duplicar (⌘D)")
-            Divider().frame(height: 16)
+            Button { model.deleteSelection() } label: { Image(systemName: "trash") }
+                .disabled(model.selection == nil)
+                .help("Apagar (⌫)")
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 18).padding(.horizontal, 6)
             Button { model.addText() } label: { Label("Texto", systemImage: "textformat") }
+                .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                .help("Adicionar texto (⌘T)")
             Spacer()
             if let seg = model.selectedSegment {
-                Text("\(Time.format(seg.targetStart)) – \(Time.format(seg.targetEnd))  (\(seg.targetDuration.shortSeconds))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                Text("\(Time.format(seg.targetStart)) – \(Time.format(seg.targetEnd))")
+                    .foregroundStyle(Theme.textSecondary)
+                Text(seg.targetDuration.shortSeconds)
+                    .foregroundStyle(Theme.textTertiary)
             }
-            Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
-            Slider(value: Binding(get: { log(model.zoom) }, set: { model.zoom = exp($0) }),
-                   in: log(8.0)...log(600.0))
-                .frame(width: 140)
-                .controlSize(.small)
-            Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+            Spacer()
+            Button { model.zoom = max(model.zoom / 1.4, 8) } label: { Image(systemName: "minus") }
+                .buttonStyle(GlyphButtonStyle())
+                .help("Afastar (⌘−)")
+            ThinSlider(value: Binding(get: { log(model.zoom) }, set: { model.zoom = exp($0) }),
+                       range: log(8.0)...log(600.0))
+                .frame(width: 120)
+            Button { model.zoom = min(model.zoom * 1.4, 600) } label: { Image(systemName: "plus") }
+                .buttonStyle(GlyphButtonStyle())
+                .help("Aproximar (⌘=)")
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .font(Theme.mono(11))
+        .buttonStyle(CircleButtonStyle(size: 28))
+        .padding(.horizontal, 12)
+        .frame(height: 46)
     }
 }
+
+// MARK: - Cabeçalho das faixas
 
 private struct TrackHeader: View {
     @Environment(EditorModel.self) private var model
@@ -94,34 +109,37 @@ private struct TrackHeader: View {
 
     private var icon: String {
         switch track.kind {
-        case .video: track.isMain ? "film" : "rectangle.on.rectangle"
+        case .video: track.isMain ? "film" : "square.on.square"
         case .audio: "waveform"
         case .text: "textformat"
         }
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(spacing: 7) {
             Image(systemName: icon)
-                .foregroundStyle(track.isMain ? Theme.accent : .secondary)
+                .font(Theme.font(11, .light))
+                .foregroundStyle(track.isMain ? Theme.textSecondary : Theme.textTertiary)
                 .help(track.isMain ? "Faixa principal" : "")
-            if track.kind != .text {
-                Button { toggle(\.muted) } label: {
-                    Image(systemName: track.muted ? "speaker.slash.fill" : "speaker.wave.2")
+            HStack(spacing: 9) {
+                if track.kind != .text {
+                    Button { toggle(\.muted) } label: {
+                        Image(systemName: track.muted ? "speaker.slash" : "speaker.wave.2")
+                    }
+                    .buttonStyle(GlyphButtonStyle(active: track.muted))
+                    .help(track.muted ? "Ativar som" : "Silenciar faixa")
                 }
-                .help(track.muted ? "Ativar som" : "Silenciar faixa")
-            }
-            if track.kind != .audio {
-                Button { toggle(\.hidden) } label: {
-                    Image(systemName: track.hidden ? "eye.slash" : "eye")
+                if track.kind != .audio {
+                    Button { toggle(\.hidden) } label: {
+                        Image(systemName: track.hidden ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(GlyphButtonStyle(active: track.hidden))
+                    .help(track.hidden ? "Mostrar faixa" : "Ocultar faixa")
                 }
-                .help(track.hidden ? "Mostrar faixa" : "Ocultar faixa")
             }
+            .font(Theme.font(10))
         }
-        .buttonStyle(.borderless)
-        .font(.caption)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.panelRaised.opacity(0.7), in: RoundedRectangle(cornerRadius: 5))
     }
 
     private func toggle(_ keyPath: WritableKeyPath<Track, Bool>) {
@@ -132,6 +150,8 @@ private struct TrackHeader: View {
     }
 }
 
+// MARK: - Régua e playhead
+
 private struct RulerView: View {
     @Environment(EditorModel.self) private var model
     let width: CGFloat
@@ -139,20 +159,27 @@ private struct RulerView: View {
     var body: some View {
         let zoom = model.zoom
         Canvas { ctx, size in
+            let pill = CGRect(x: 0, y: 4, width: size.width, height: size.height - 8)
+            ctx.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Theme.raised))
             let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-            let major = steps.first { $0 * zoom >= 80 } ?? 300
-            let minor = major / 5
+            let major = steps.first { $0 * zoom >= 110 } ?? 300
+            let minor = major / 4
             var i = 0
             while Double(i) * minor * zoom <= size.width {
                 let t = Double(i) * minor
                 let x = t * zoom
-                let isMajor = i % 5 == 0
-                ctx.fill(Path(CGRect(x: x, y: isMajor ? 12 : 19, width: 1, height: isMajor ? 14 : 7)),
-                         with: .color(.white.opacity(isMajor ? 0.55 : 0.25)))
-                if isMajor {
-                    ctx.draw(Text(Self.label(t, step: major)).font(.system(size: 10).monospacedDigit())
-                                .foregroundColor(.secondary),
-                             at: CGPoint(x: x + 3, y: 6), anchor: .leading)
+                if i % 4 == 0 {
+                    let label = Text(Self.label(t, step: major))
+                        .font(Theme.mono(10))
+                        .foregroundColor(Theme.textTertiary)
+                    if i == 0 {
+                        ctx.draw(label, at: CGPoint(x: 12, y: size.height / 2), anchor: .leading)
+                    } else {
+                        ctx.draw(label, at: CGPoint(x: x, y: size.height / 2), anchor: .center)
+                    }
+                } else {
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: size.height / 2 - 2.5, width: 1, height: 5)),
+                             with: .color(Color.white.opacity(0.18)))
                 }
                 i += 1
             }
@@ -173,21 +200,36 @@ private struct RulerView: View {
     }
 }
 
+/// Playhead com a cabeça da agulha da marca, que leva o tempo atual.
 private struct PlayheadView: View {
+    static let width: CGFloat = 60
     let height: CGFloat
+    let time: Micros
 
     var body: some View {
         VStack(spacing: 0) {
-            Image(systemName: "arrowtriangle.down.fill")
-                .font(.system(size: 12))
-                .frame(height: 12)
-            Rectangle().frame(width: 1.5)
+            ZStack(alignment: .top) {
+                NeedleHead(taper: 5, line: 1.5)
+                    .fill(Theme.accent)
+                    .shadow(color: Theme.accent.opacity(0.45), radius: 6)
+                Text(Time.format(time))
+                    .font(Theme.mono(9.5, .medium))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(height: 16)
+            }
+            .frame(width: Self.width, height: 21)
+            .padding(.top, 4)
+            Rectangle()
+                .fill(Theme.accent)
+                .frame(width: 1.5)
+                .shadow(color: Theme.accent.opacity(0.5), radius: 3)
         }
-        .foregroundStyle(Theme.playhead)
-        .frame(width: 12, height: height)
+        .frame(width: Self.width, height: height, alignment: .top)
         .allowsHitTesting(false)
     }
 }
+
+// MARK: - Faixas e clipes
 
 private struct TrackRow: View {
     @Environment(EditorModel.self) private var model
@@ -196,8 +238,8 @@ private struct TrackRow: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.white.opacity(track.isMain ? 0.06 : 0.03))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(track.isMain ? 0.035 : 0.018))
                 .contentShape(Rectangle())
                 .onTapGesture(coordinateSpace: .local) { location in
                     model.selection = nil
@@ -205,7 +247,7 @@ private struct TrackRow: View {
                 }
             ForEach(track.segments) { seg in
                 SegmentView(segment: seg, track: track)
-                    .offset(x: CGFloat(seg.targetStart.seconds * model.zoom), y: 3)
+                    .offset(x: CGFloat(seg.targetStart.seconds * model.zoom), y: TimelineView.clipInset)
             }
             if track.isMain {
                 ForEach(Array(track.segments.dropLast().enumerated()), id: \.element.id) { index, seg in
@@ -214,25 +256,29 @@ private struct TrackRow: View {
             }
         }
         .frame(width: width, height: TimelineView.rowHeight)
-        .opacity(track.hidden ? 0.45 : 1)
+        .opacity(track.hidden ? 0.4 : 1)
     }
 
-    /// Botão na junção entre dois clipes, como no CapCut.
+    /// Botão na junção entre dois clipes.
     private func transitionButton(_ seg: Segment, next: Segment) -> some View {
         let junction = Double(seg.targetEnd + next.targetStart) / 2 / 1_000_000
+        let has = seg.transition != nil
         return Button {
             model.selection = seg.id
             model.inspectorTab = .transition
         } label: {
-            Image(systemName: seg.transition == nil ? "plus" : "arrow.left.arrow.right")
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 18, height: 18)
-                .background(seg.transition == nil ? Theme.panelRaised : Theme.accent, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.4), lineWidth: 1))
+            Image(systemName: has ? "arrow.left.arrow.right" : "plus")
+                .font(Theme.font(9, .medium))
+                .foregroundStyle(has ? Theme.onAccent : Theme.textPrimary)
+                .frame(width: 20, height: 20)
+                .background(has ? Theme.accent : Theme.raisedHigh, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.white.opacity(has ? 0 : 0.18)))
+                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
         }
         .buttonStyle(.plain)
         .help(seg.transition.map { "Transição: \($0.kind.displayName)" } ?? "Adicionar transição")
-        .offset(x: CGFloat(junction * model.zoom) - 9, y: TimelineView.rowHeight / 2 - 9)
+        // Abaixo do nome do clipe, para não cobri-lo.
+        .offset(x: CGFloat(junction * model.zoom) - 10, y: TimelineView.rowHeight - TimelineView.clipInset - 24)
     }
 }
 
@@ -241,24 +287,25 @@ private struct SegmentView: View {
     let segment: Segment
     let track: Track
 
+    private static let radius: CGFloat = 9
     private var material: Material? { model.project.material(segment.materialId) }
     private var width: CGFloat { max(4, CGFloat(segment.targetDuration.seconds * model.zoom)) }
-    private var height: CGFloat { TimelineView.rowHeight - 6 }
+    private var height: CGFloat { TimelineView.rowHeight - TimelineView.clipInset * 2 }
     private var isSelected: Bool { model.selection == segment.id }
     private static let rowStride = TimelineView.rowHeight + TimelineView.rowSpacing
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Self.radius, style: .continuous) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
-            badges
+            if width > 46 { titleChip }
         }
         .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.15), lineWidth: isSelected ? 2 : 1))
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(isSelected ? Theme.accent : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1))
         .overlay(alignment: .leading) { if isSelected { handle(leading: true) } }
         .overlay(alignment: .trailing) { if isSelected { handle(leading: false) } }
+        .shadow(color: isSelected ? Theme.accent.opacity(0.35) : .clear, radius: 10)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 4, coordinateSpace: .global)
@@ -286,48 +333,68 @@ private struct SegmentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let text = segment.text {
-            ZStack(alignment: .leading) {
-                Theme.textClip
-                Label(text.text.replacingOccurrences(of: "\n", with: " "), systemImage: "textformat")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-            }
+        if segment.text != nil {
+            Theme.clipText
         } else if let m = material, m.kind == .audio {
-            ZStack(alignment: .leading) {
-                Theme.audioClip
-                // Linha de volume
-                Rectangle()
-                    .fill(.white.opacity(0.35))
-                    .frame(height: 1)
-                    .offset(y: height * (0.5 - CGFloat(min(segment.volume, 1)) * 0.35))
-                Label(m.name, systemImage: "music.note")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
+            ZStack(alignment: .bottomLeading) {
+                Theme.clipAudio
+                if let peaks = model.waveforms[m.id] {
+                    WaveformBars(peaks: peaks, from: segment.source.start.seconds,
+                                 to: (segment.source.start + segment.source.duration).seconds,
+                                 color: isSelected ? Theme.accent.opacity(0.7) : Theme.waveform)
+                        .frame(height: height * 0.5)
+                        .padding(.horizontal, 6)
+                        .padding(.bottom, 5)
+                        .opacity(0.4 + 0.6 * min(segment.volume, 1))
+                }
             }
         } else if let m = material {
-            ThumbnailStrip(material: m, segment: segment, images: model.thumbnails[m.id] ?? [])
+            ZStack {
+                Theme.clipVideo
+                ThumbnailStrip(material: m, segment: segment, images: model.thumbnails[m.id] ?? [])
+                    .clipShape(RoundedRectangle(cornerRadius: Self.radius - 2, style: .continuous))
+                    .padding(2)
+            }
         } else {
-            Color.gray
+            Theme.raised
         }
     }
 
-    @ViewBuilder
-    private var badges: some View {
-        let items = badgeItems
-        if !items.isEmpty, width > 40 {
-            HStack(spacing: 3) {
-                ForEach(items, id: \.self) { item in
-                    Text(item)
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 3)
-                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 3))
-                }
+    /// Ícone e nome dentro do clipe, mais os indicadores de ajustes.
+    private var titleChip: some View {
+        HStack(spacing: 5) {
+            Image(systemName: iconName)
+                .font(Theme.font(9, .medium))
+            Text(title)
+                .font(Theme.font(10, .medium))
+                .lineLimit(1)
+            ForEach(badgeItems, id: \.self) { item in
+                Text(item)
+                    .font(Theme.font(9, .medium))
+                    .foregroundStyle(Theme.textSecondary)
             }
-            .padding(4)
         }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 7)
+        .frame(height: 18)
+        .background(.black.opacity(segment.text != nil ? 0 : 0.55), in: Capsule())
+        .padding(6)
+        .frame(maxWidth: width - 4, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var iconName: String {
+        if segment.text != nil { return "textformat" }
+        switch material?.kind {
+        case .audio: return "music.note"
+        case .photo: return "photo"
+        default: return track.isMain ? "film" : "square.on.square"
+        }
+    }
+
+    private var title: String {
+        if let text = segment.text { return text.text.replacingOccurrences(of: "\n", with: " ") }
+        return material?.name ?? ""
     }
 
     private var badgeItems: [String] {
@@ -341,12 +408,13 @@ private struct SegmentView: View {
     }
 
     private func handle(leading: Bool) -> some View {
-        Rectangle()
-            .fill(Color.white)
-            .frame(width: 7)
-            .overlay(Image(systemName: leading ? "chevron.compact.left" : "chevron.compact.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.black))
+        UnevenRoundedRectangle(cornerRadii: leading
+                               ? .init(topLeading: Self.radius, bottomLeading: Self.radius)
+                               : .init(bottomTrailing: Self.radius, topTrailing: Self.radius),
+                               style: .continuous)
+            .fill(Theme.accent)
+            .frame(width: 9)
+            .overlay(Capsule().fill(Theme.onAccent.opacity(0.75)).frame(width: 2, height: 14))
             .contentShape(Rectangle())
             .onHover { inside in
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
@@ -358,6 +426,59 @@ private struct SegmentView: View {
     }
 }
 
+/// Ações do clipe selecionado, flutuando logo acima dele.
+private struct ClipActionBar: View {
+    @Environment(EditorModel.self) private var model
+    let tracks: [Track]
+
+    var body: some View {
+        if let seg = model.selectedSegment,
+           let row = tracks.firstIndex(where: { $0.segments.contains { $0.id == seg.id } }) {
+            let zoom = model.zoom
+            let start = CGFloat(seg.targetStart.seconds * zoom)
+            let end = CGFloat(seg.targetEnd.seconds * zoom)
+            let canSplit = seg.targetRange.contains(model.playhead) && model.playhead > seg.targetStart
+            // Ao lado da linha do playhead (ou no início do clipe); na primeira
+            // faixa fica abaixo do clipe, para não cobrir a régua.
+            let anchor = canSplit ? CGFloat(model.playhead.seconds * zoom) + 8 : start + 8
+            let rowTop = TimelineView.rulerHeight + TimelineView.rowSpacing
+                + CGFloat(row) * (TimelineView.rowHeight + TimelineView.rowSpacing)
+            let y = row == 0 ? rowTop + TimelineView.rowHeight - 2 : rowTop - 28
+            HStack(spacing: 0) {
+                if canSplit {
+                    action("scissors", "Dividir (⌘B)") { model.splitAtPlayhead() }
+                    separator
+                }
+                action("plus.square.on.square", "Duplicar (⌘D)") { model.duplicateSelection() }
+                separator
+                action("trash", "Apagar (⌫)") { model.deleteSelection() }
+            }
+            .padding(.horizontal, 4)
+            .frame(height: 30)
+            .background(Theme.raisedHigh, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
+            .shadow(color: .black.opacity(0.6), radius: 8, y: 3)
+            .fixedSize()
+            .offset(x: max(0, min(anchor, end)), y: y)
+            .transition(.opacity)
+        }
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: 16)
+    }
+
+    private func action(_ icon: String, _ help: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Image(systemName: icon)
+                .font(Theme.font(11))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(GlyphButtonStyle())
+        .help(help)
+    }
+}
+
 /// Miniaturas repetidas ao longo do clipe, escolhidas pelo tempo de origem.
 private struct ThumbnailStrip: View {
     let material: Material
@@ -366,8 +487,6 @@ private struct ThumbnailStrip: View {
 
     var body: some View {
         Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(material.kind == .photo ? Theme.photoClip : Theme.videoClip))
             guard !images.isEmpty else { return }
             let aspect = material.height > 0 ? CGFloat(material.width) / CGFloat(material.height) : 16 / 9
             let tile = max(20, size.height * aspect)

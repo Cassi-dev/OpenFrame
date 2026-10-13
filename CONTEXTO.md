@@ -239,6 +239,7 @@ Sources/OpenFrameCore/
                            moveToTrack, trimStart/End, setSpeed, update, snap)
   Media/MediaProbe.swift   lê vídeo/foto/áudio → Material
   Media/Subtitles.swift    SRT parse/serialize/import/cues
+  Media/Waveform.swift     picos de áudio (50 por segundo) para a forma de onda
   Render/ImageEffects.swift ajustes, filtros, efeitos, geometria de efeitos
   Render/Motion.swift      Animations (entrada/saída), Transitions
   Render/TextRenderer.swift Core Text → CIImage com cache
@@ -255,16 +256,18 @@ Sources/OpenFrame/
   EditorModel.swift        estado @Observable, undo por snapshot, gestos, preview,
                            importação, arquivos, monitor de teclado
   DebugSnapshot.swift      OPENFRAME_SNAPSHOT_DIR: captura as próprias janelas
-  Views/Theme.swift        cores, ParamSlider, SectionHeader, typealias Material
-  Views/ContentView.swift  layout + TopBar
-  Views/MediaBinView.swift biblioteca de mídia
-  Views/PreviewPanel.swift AVPlayerLayer + transporte
-  Views/TimelineView.swift régua, faixas, segmentos, aparar, transições
-  Views/InspectorView.swift abas Básico/Ajustar/Filtros/Efeitos/Animação/
-                           Transição/Texto/Áudio + inspetor do projeto
+  Views/Theme.swift        tokens (cores, pesos 200–500, raios), botões, campos,
+                           ParamSlider/ThinSlider, LogoMark, NeedleHead, janela
+  Views/ContentView.swift  layout em painéis flutuantes + TopBar
+  Views/LibraryView.swift  barra da esquerda + painéis Mídia/Texto/Legendas/Atalhos
+  Views/PreviewPanel.swift AVPlayerLayer arredondado, cápsula de transporte, grade
+  Views/TimelineView.swift régua em pílula, playhead-agulha, clipes, forma de onda,
+                           barra de ações do clipe, transições
+  Views/InspectorView.swift abas por ícone (Básico/Ajustar/Filtros/Efeitos/Animação/
+                           Transição/Texto/Áudio) + inspetor do projeto
   Views/ExportSheet.swift  janela de exportação
 Tests/OpenFrameCoreTests/    TestMedia (gerador sintético), Timeline, Model,
-                           Render, Export — 44 testes
+                           Render, Export, Waveform — 46 testes
 scripts/                   test.sh, make-app.sh, make-demo.sh, demo/main.swift
 docs/REFERENCIA-REA.md     CapCut (evidência) → OpenFrame (decisão)
 README.md
@@ -307,9 +310,9 @@ README.md
 
 ## 7. OpenFrame: verificação
 
-- `./scripts/test.sh` → **44 testes passando**, em 6 suítes: Timeline (15),
+- `./scripts/test.sh` → **46 testes passando**, em 7 suítes: Timeline (15),
   Legendas (3), Projeto (2), Configurações de exportação (6), Renderização (11),
-  Exportação (7).
+  Exportação (7), Forma de onda (2).
 - Os testes de exportação geram arquivos reais e conferem dimensões, fps, codec
   (HEVC, H.264, ProRes), duração, áudio a 48 kHz estéreo, progresso monotônico,
   conteúdo renderizado no arquivo, M4A sem vídeo, cancelamento que apaga o
@@ -360,7 +363,8 @@ encerre com `pkill -f debug/OpenFrame`.
 Git: repositório local em `~/Desktop/opencut`, sem remoto.
 - `394d7db` Núcleo (ainda como OpenCut)
 - `bec66a2` App SwiftUI, demo, empacotamento e documentação
-- A renomeação para OpenFrame e este `CONTEXTO.md` ainda não foram commitados.
+- `0e22857` Renomeação para OpenFrame (commit do usuário)
+- A marca (`assets/brand/`) e a remodelação da interface ainda não foram commitadas.
 
 ---
 
@@ -370,14 +374,13 @@ Git: repositório local em `~/Desktop/opencut`, sem remoto.
 - Teste manual das interações: arrastar entre faixas, aparar, scrub, atalhos,
   importar arrastando arquivos.
 - Rolagem automática da timeline durante a reprodução.
-- Forma de onda nas faixas de áudio.
 - Volume acima de 100% (exigiria processamento de áudio próprio, já que o
   `AVAudioMix` limita a 1,0).
-- Ícone do app; exportação em GIF (o CapCut tem `GifExportViewModel`).
+- Exportação em GIF (o CapCut tem `GifExportViewModel`).
+- Animação por keyframes (as referências de UI mostram trilhas de keyframe; ficaram
+  de fora da interface até a função existir).
 - Leitura e gravação do `draft_content.json` do CapCut (exigiria levantar o
   schema; não foi pedida).
-- Aviso remanescente de compilação: `NSEvent` não é `Sendable` no monitor de
-  teclado (`EditorModel.installKeyMonitor`), inofensivo no modo Swift 5.
 
 **Análise do CapCut**
 - Decompilar `BrowserDeepAgentHostBridge::ModelGenerate` para descobrir qual
@@ -385,3 +388,44 @@ Git: repositório local em `~/Desktop/opencut`, sem remoto.
 - Ler o `AgentChannelRouter` (divisão entre canal local e Nuro).
 - Atualizar a memória `rea-no-decompiler-provider.md`: o Ghidra agora está
   configurado.
+
+---
+
+## 10. Marca e remodelação da interface (13/10/2026)
+
+**Logo** (feita pelo agente 05 do Maestri com a skill `/logo-design`, em
+`assets/brand/`): moldura de vídeo arredondada aberta pela "agulha" da timeline
+(o playhead). Paleta: Playhead Cyan `#00C2CC`, Deep Cyan `#00838A` (fundo claro),
+Night `#17171C`, Panel `#212126`, Paper `#F4F5F7`. `source/build.py` regenera tudo.
+O `make-app.sh` copia `appicon/AppIcon.icns` e define `CFBundleIconFile`.
+
+**Interface** a partir de 4 referências do usuário (editor verde-limão com painéis
+flutuantes; timeline escura com destaque único; app web claro em 3 colunas; timeline
+com faixas grossas e barra de ações). Decisões do usuário: **preto puro**, **clipes
+em cinza** (o tipo é dado pelo ícone), ciano só no que está ativo, **SF Pro entre
+os pesos 200 e 500**.
+- Janela sem barra de título (`.hiddenTitleBar` + `WindowConfigurator`, que centraliza
+  os botões de fechar/minimizar/zoom na barra de 52 pt e os recoloca a cada resize).
+- Painéis flutuantes sobre preto (`.panel()`): barra de ferramentas vertical →
+  painel da biblioteca (recolhível) → preview → inspetor; timeline embaixo, com
+  altura ajustável por arraste (`@AppStorage("timelineHeight")`).
+- Barra superior: símbolo, nome do projeto, proporções em pílula, chip L × A do
+  tamanho de saída, desfazer/refazer redondos, **Exportar** (único botão ciano).
+- Preview com cantos de 10 pt (na `CALayer` do `AVPlayerLayer`), cápsula de
+  transporte e grade dos terços opcional (`model.showGrid`).
+- Timeline: régua em pílula; playhead com a cabeça da agulha da marca levando o
+  tempo (`NeedleHead`); clipes com cantos de 9 pt, nome e indicadores dentro do clipe;
+  seleção com borda e brilho ciano e alças de aparar ciano; barra flutuante
+  dividir/duplicar/apagar junto ao clipe selecionado; forma de onda no áudio.
+- Inspetor: cabeçalho do clipe, abas por ícone (`PillPicker`), campos
+  "rótulo → valor" (`FieldRow`, `MenuField`), sliders finos com preenchimento
+  a partir do zero.
+- Novidades de interface (sem mudar o núcleo de edição): painel Texto com
+  estilos prontos que inserem texto no cursor, painel Legendas com a lista de
+  textos (clique seleciona e vai ao tempo), painel Atalhos.
+- `DebugSnapshot` passou a capturar a moldura da janela (inclui os botões do
+  sistema) e também o clipe de áudio, os painéis Texto (com grade) e Legendas.
+- **Não verificado:** cliques e arrastes reais (sem permissão de acessibilidade);
+  em especial, os botões da barra superior ficam sob a área da barra de título
+  transparente e o arraste da janela depende do `WindowDragArea`.
+

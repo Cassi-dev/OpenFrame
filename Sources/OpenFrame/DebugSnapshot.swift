@@ -39,7 +39,21 @@ enum DebugSnapshot {
                 await wait(1)
                 capture("5-texto", to: dir)
             }
+            if let audio = p.tracks.first(where: { $0.kind == .audio })?.segments.first {
+                model.selection = audio.id
+                await wait(1)
+                capture("7-audio", to: dir)
+            }
             model.selection = nil
+            model.showGrid = true
+            model.libraryPanel = .text
+            await wait(1)
+            capture("8-painel-texto-grade", to: dir)
+            model.showGrid = false
+            model.libraryPanel = .captions
+            await wait(1)
+            capture("9-painel-legendas", to: dir)
+            model.libraryPanel = .media
             model.showExport = true
             await wait(1.5)
             capture("6-exportar", to: dir)
@@ -79,7 +93,8 @@ enum DebugSnapshot {
     private static func capture(_ name: String, to dir: URL) {
         let windows = NSApp.windows.filter { $0.isVisible && $0.frame.height > 150 }
         for (index, window) in windows.enumerated() {
-            guard let view = window.contentView,
+            // A moldura da janela (superview) inclui os botões de fechar/minimizar/zoom.
+            guard let view = window.contentView?.superview ?? window.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
             view.cacheDisplay(in: view.bounds, to: rep)
             let suffix = windows.count > 1 ? "-\(index)" : ""

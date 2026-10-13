@@ -15,7 +15,7 @@ struct OpenFrameApp: App {
         WindowGroup("OpenFrame") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 1100, minHeight: 720)
+                .frame(minWidth: 1180, minHeight: 740)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
                 .onOpenURL { url in
                     if url.pathExtension == ProjectStore.fileExtension { model.open(url: url) }
@@ -24,6 +24,7 @@ struct OpenFrameApp: App {
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .defaultSize(width: 1440, height: 900)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Novo projeto") { model.newProject() }

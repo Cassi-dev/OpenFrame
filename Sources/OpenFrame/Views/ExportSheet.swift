@@ -20,12 +20,13 @@ struct ExportSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Exportar").font(.title2.bold())
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Exportar").font(Theme.font(22, .light))
+                Text(model.project.name).foregroundStyle(Theme.textTertiary)
                 Spacer()
             }
-            .padding([.horizontal, .top], 20)
-            .padding(.bottom, 10)
+            .padding([.horizontal, .top], 24)
+            .padding(.bottom, 14)
 
             switch phase {
             case .configuring:
@@ -39,52 +40,64 @@ struct ExportSheet: View {
                 failedView(message)
             }
         }
-        .frame(width: 560)
-        .frame(minHeight: 520)
-        .background(Theme.panel)
+        .frame(width: 680)
+        .frame(minHeight: 540)
+        .background(Theme.surface)
+        .font(Theme.font(12))
+        .foregroundStyle(Theme.textPrimary)
+        .tint(Theme.accent)
+        .preferredColorScheme(.dark)
     }
 
     private var footer: some View {
         let error = model.exportSettings.validationError(for: model.project)
         return HStack {
             if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.callout)
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.35))
                     .lineLimit(2)
             }
             Spacer()
             Button("Cancelar") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+                .buttonStyle(PillButtonStyle(kind: .quiet))
             Button("Exportar…") { start() }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
+                .buttonStyle(PillButtonStyle(kind: .primary))
                 .disabled(error != nil)
         }
-        .padding(20)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 1) }
     }
 
     private func exportingView(_ progress: Double) -> some View {
         VStack(spacing: 16) {
             Spacer()
-            ProgressView(value: progress)
-                .progressViewStyle(.linear)
-                .tint(Theme.accent)
+            Text(String(format: "%.0f%%", progress * 100))
+                .font(Theme.mono(44, .thin))
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1))
+                    Capsule().fill(Theme.accent).frame(width: geo.size.width * progress)
+                        .shadow(color: Theme.accent.opacity(0.5), radius: 6)
+                }
+            }
+            .frame(height: 4)
             HStack {
-                Text(String(format: "%.0f%%", progress * 100)).monospacedDigit()
+                Text("Renderizando").foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if progress > 0.02 {
                     let elapsed = Date().timeIntervalSince(startedAt)
                     let remaining = elapsed / progress * (1 - progress)
-                    Text("Restam ~\(Int(remaining.rounded())) s").foregroundStyle(.secondary)
+                    Text("Restam ~\(Int(remaining.rounded())) s").foregroundStyle(Theme.textTertiary)
                 }
             }
-            .font(.callout)
             Spacer()
             HStack {
                 Spacer()
                 Button("Cancelar exportação") { exporter?.cancel() }
+                    .buttonStyle(PillButtonStyle())
             }
         }
         .padding(24)
@@ -93,12 +106,12 @@ struct ExportSheet: View {
     private func finishedView(_ url: URL, _ bytes: Int64) -> some View {
         VStack(spacing: 14) {
             Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
+            Image(systemName: "checkmark.circle")
+                .font(Theme.font(46, .thin))
                 .foregroundStyle(Theme.accent)
-            Text("Exportação concluída").font(.title3.bold())
-            Text("\(url.lastPathComponent) — \(bytes.formattedFileSize)")
-                .foregroundStyle(.secondary)
+            Text("Exportação concluída").font(Theme.font(18, .light))
+            Text("\(url.lastPathComponent) · \(bytes.formattedFileSize)")
+                .foregroundStyle(Theme.textSecondary)
             Spacer()
             HStack {
                 Button("Mostrar no Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -106,7 +119,9 @@ struct ExportSheet: View {
                 Spacer()
                 Button("Fechar") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(PillButtonStyle(kind: .primary))
             }
+            .buttonStyle(PillButtonStyle())
         }
         .padding(24)
     }
@@ -114,12 +129,12 @@ struct ExportSheet: View {
     private func failedView(_ message: String) -> some View {
         VStack(spacing: 14) {
             Spacer()
-            Image(systemName: "xmark.octagon.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.red)
-            Text("A exportação falhou").font(.title3.bold())
+            Image(systemName: "xmark.octagon")
+                .font(Theme.font(42, .thin))
+                .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.4))
+            Text("A exportação falhou").font(Theme.font(18, .light))
             Text(message)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
             Spacer()
             HStack {
@@ -127,6 +142,7 @@ struct ExportSheet: View {
                 Spacer()
                 Button("Fechar") { dismiss() }
             }
+            .buttonStyle(PillButtonStyle())
         }
         .padding(24)
     }
@@ -170,100 +186,165 @@ private struct SettingsForm: View {
     var body: some View {
         @Bindable var model = model
         let settings = model.exportSettings
-        let project = model.project
-        let size = settings.outputSize(for: project)
         let audioOnly = settings.container.isAudioOnly
 
-        Form {
-            Section("Arquivo") {
-                Picker("Formato", selection: $model.exportSettings.container) {
-                    ForEach(ContainerFormat.allCases) { Text($0.label).tag($0) }
-                }
-            }
+        HStack(alignment: .top, spacing: 20) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeader(title: "Arquivo")
+                    FieldRow(label: "Formato") {
+                        MenuField(selection: $model.exportSettings.container, options: ContainerFormat.allCases, title: \.label)
+                    }
 
-            if !audioOnly {
-                Section("Vídeo") {
-                    Picker("Resolução", selection: $model.exportSettings.resolution) {
-                        ForEach(ResolutionPreset.allCases) { Text($0.label).tag($0) }
-                    }
-                    if settings.resolution == .custom {
-                        HStack {
-                            TextField("Largura", value: $model.exportSettings.customWidth, format: .number)
-                            Text("×")
-                            TextField("Altura", value: $model.exportSettings.customHeight, format: .number)
-                            Text("px").foregroundStyle(.secondary)
+                    if !audioOnly {
+                        SectionHeader(title: "Vídeo")
+                        FieldRow(label: "Resolução") {
+                            MenuField(selection: $model.exportSettings.resolution, options: ResolutionPreset.allCases, title: \.label)
                         }
-                        .textFieldStyle(.roundedBorder)
-                    }
-                    Picker("Taxa de quadros", selection: $model.exportSettings.frameRate) {
-                        ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
-                    }
-                    Picker("Codificador", selection: $model.exportSettings.codec) {
-                        ForEach(VideoCodec.allCases) { Text($0.label).tag($0) }
-                    }
-                    if settings.codec != .proRes422 {
-                        Picker("Qualidade", selection: $model.exportSettings.bitrateMode) {
-                            ForEach(BitrateMode.allCases) { Text($0.label).tag($0) }
-                        }
-                        switch settings.bitrateMode {
-                        case .custom:
-                            HStack {
-                                Slider(value: $model.exportSettings.customMbps, in: 0.5...150)
-                                TextField("Mbps", value: $model.exportSettings.customMbps,
-                                          format: .number.precision(.fractionLength(1)))
-                                    .frame(width: 64)
-                                    .textFieldStyle(.roundedBorder)
-                                Text("Mbps").foregroundStyle(.secondary)
+                        if settings.resolution == .custom {
+                            FieldRow(label: "Tamanho") {
+                                HStack(spacing: 6) {
+                                    NumberField(value: $model.exportSettings.customWidth)
+                                    Text("×").foregroundStyle(Theme.textTertiary)
+                                    NumberField(value: $model.exportSettings.customHeight)
+                                    Text("px").foregroundStyle(Theme.textTertiary)
+                                }
                             }
-                        case .targetSize:
-                            HStack {
-                                TextField("MB", value: $model.exportSettings.targetMegabytes,
-                                          format: .number.precision(.fractionLength(0)))
-                                    .frame(width: 80)
-                                    .textFieldStyle(.roundedBorder)
-                                Stepper("MB", value: $model.exportSettings.targetMegabytes, in: 1...20000, step: 5)
+                        }
+                        FieldRow(label: "Quadros/s") {
+                            MenuField(selection: $model.exportSettings.frameRate, options: FrameRate.allCases, title: \.label)
+                        }
+                        FieldRow(label: "Codificador") {
+                            MenuField(selection: $model.exportSettings.codec, options: VideoCodec.allCases, title: \.label)
+                        }
+                        if settings.codec != .proRes422 {
+                            FieldRow(label: "Qualidade") {
+                                MenuField(selection: $model.exportSettings.bitrateMode, options: BitrateMode.allCases, title: \.label)
                             }
-                        default:
-                            EmptyView()
+                            switch settings.bitrateMode {
+                            case .custom:
+                                FieldRow(label: "Bitrate") {
+                                    HStack(spacing: 8) {
+                                        ThinSlider(value: $model.exportSettings.customMbps, range: 0.5...150)
+                                        DecimalField(value: $model.exportSettings.customMbps, digits: 1)
+                                            .frame(width: 58)
+                                        Text("Mbps").foregroundStyle(Theme.textTertiary)
+                                    }
+                                }
+                            case .targetSize:
+                                FieldRow(label: "Tamanho alvo") {
+                                    HStack(spacing: 8) {
+                                        DecimalField(value: $model.exportSettings.targetMegabytes, digits: 0)
+                                            .frame(width: 80)
+                                        Text("MB").foregroundStyle(Theme.textTertiary)
+                                        Stepper("", value: $model.exportSettings.targetMegabytes, in: 1...20000, step: 5)
+                                            .labelsHidden()
+                                    }
+                                }
+                            default:
+                                EmptyView()
+                            }
+                            FieldRow(label: "Quadro-chave") {
+                                HStack(spacing: 8) {
+                                    Text(String(format: "a cada %.1f s", settings.keyframeInterval))
+                                    Stepper("", value: $model.exportSettings.keyframeInterval, in: 0.5...10, step: 0.5)
+                                        .labelsHidden()
+                                }
+                            }
                         }
-                        Stepper(value: $model.exportSettings.keyframeInterval, in: 0.5...10, step: 0.5) {
-                            LabeledContent("Quadro-chave a cada", value: String(format: "%.1f s", settings.keyframeInterval))
+                    }
+
+                    SectionHeader(title: "Áudio")
+                    SwitchRow(title: "Incluir áudio", isOn: $model.exportSettings.audioEnabled)
+                    if settings.audioEnabled {
+                        FieldRow(label: "Bitrate") {
+                            MenuField(selection: $model.exportSettings.audioKbps, options: ExportSettings.audioBitrates,
+                                      title: { "\($0) kbps" })
+                        }
+                        FieldRow(label: "Amostragem") {
+                            MenuField(selection: $model.exportSettings.audioSampleRate, options: ExportSettings.sampleRates,
+                                      title: { "\($0) Hz" })
                         }
                     }
                 }
+                .padding(.bottom, 16)
             }
+            .scrollIndicators(.never)
 
-            Section("Áudio") {
-                Toggle("Incluir áudio", isOn: $model.exportSettings.audioEnabled)
-                if settings.audioEnabled {
-                    Picker("Bitrate", selection: $model.exportSettings.audioKbps) {
-                        ForEach(ExportSettings.audioBitrates, id: \.self) { Text("\($0) kbps").tag($0) }
-                    }
-                    Picker("Taxa de amostragem", selection: $model.exportSettings.audioSampleRate) {
-                        ForEach(ExportSettings.sampleRates, id: \.self) { Text("\($0) Hz").tag($0) }
-                    }
-                }
-            }
-
-            Section("Resumo") {
-                if !audioOnly {
-                    LabeledContent("Dimensões", value: "\(Int(size.width)) × \(Int(size.height))")
-                    if settings.codec != .proRes422 {
-                        let bps = settings.videoBitrate(size: size, duration: project.duration)
-                        LabeledContent("Bitrate de vídeo", value: String(format: "%.2f Mbps", Double(bps) / 1_000_000))
-                    } else {
-                        LabeledContent("Bitrate de vídeo", value: "variável (ProRes)")
-                    }
-                }
-                LabeledContent("Duração", value: Time.format(project.duration))
-                LabeledContent("Tamanho estimado") {
-                    Text("≈ \(settings.estimatedBytes(for: project).formattedFileSize)")
-                        .foregroundStyle(Theme.accent)
-                        .bold()
-                }
-            }
+            SummaryCard()
+                .frame(width: 210)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
+        .padding(.horizontal, 24)
+    }
+}
+
+/// Resumo à direita: o tamanho estimado em destaque.
+private struct SummaryCard: View {
+    @Environment(EditorModel.self) private var model
+
+    var body: some View {
+        let settings = model.exportSettings
+        let project = model.project
+        let size = settings.outputSize(for: project)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Tamanho estimado").foregroundStyle(Theme.textSecondary)
+                Text(settings.estimatedBytes(for: project).formattedFileSize)
+                    .font(Theme.font(28, .thin))
+                    .foregroundStyle(Theme.accent)
+            }
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            if !settings.container.isAudioOnly {
+                row("Dimensões", "\(Int(size.width)) × \(Int(size.height))")
+                row("Quadros/s", settings.frameRate.label)
+                if settings.codec != .proRes422 {
+                    let bps = settings.videoBitrate(size: size, duration: project.duration)
+                    row("Vídeo", String(format: "%.2f Mbps", Double(bps) / 1_000_000))
+                } else {
+                    row("Vídeo", "variável (ProRes)")
+                }
+            }
+            row("Áudio", settings.audioEnabled ? "\(settings.audioKbps) kbps" : "sem áudio")
+            row("Duração", Time.format(project.duration))
+        }
+        .padding(16)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).strokeBorder(Theme.hairline))
+        .padding(.top, 10)
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(Theme.textTertiary)
+            Spacer()
+            Text(value).font(Theme.mono(12))
+        }
+    }
+}
+
+private struct NumberField: View {
+    @Binding var value: Int
+
+    var body: some View {
+        TextField("", value: $value, format: .number.grouping(.never))
+            .textFieldStyle(.plain)
+            .font(Theme.mono(12))
+            .padding(.horizontal, 8)
+            .frame(width: 70, height: 28)
+            .field()
+    }
+}
+
+private struct DecimalField: View {
+    @Binding var value: Double
+    let digits: Int
+
+    var body: some View {
+        TextField("", value: $value, format: .number.precision(.fractionLength(digits)).grouping(.never))
+            .textFieldStyle(.plain)
+            .font(Theme.mono(12))
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .field()
     }
 }

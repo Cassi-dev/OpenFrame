@@ -3,28 +3,47 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(EditorModel.self) private var model
+    @AppStorage("timelineHeight") private var timelineHeight: Double = 340
+    @State private var dragStartHeight: Double?
+
+    static let barHeight: CGFloat = 52
 
     var body: some View {
         @Bindable var model = model
-        VStack(spacing: 0) {
-            TopBar()
-            Divider()
-            VSplitView {
-                HSplitView {
-                    MediaBinView()
-                        .frame(minWidth: 220, idealWidth: 270, maxWidth: 400)
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                TopBar()
+                    .frame(height: Self.barHeight)
+                HStack(spacing: 8) {
+                    LibraryRail()
+                    if model.libraryVisible {
+                        LibraryView()
+                            .frame(width: 272)
+                            .panel()
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
                     PreviewPanel()
-                        .frame(minWidth: 420, maxWidth: .infinity)
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                        .panel()
                     InspectorView()
-                        .frame(minWidth: 290, idealWidth: 330, maxWidth: 460)
+                        .frame(width: 308)
+                        .panel()
                 }
-                .frame(minHeight: 340, idealHeight: 520)
+                resizeHandle(total: geo.size.height)
                 TimelineView()
-                    .frame(minHeight: 200, idealHeight: 300)
+                    .frame(height: clampedTimelineHeight(total: geo.size.height))
+                    .panel()
             }
+            .padding([.horizontal, .bottom], 8)
         }
         .background(Theme.background)
+        .ignoresSafeArea()
+        .background(WindowConfigurator(barHeight: Self.barHeight))
+        .font(Theme.font(12))
+        .foregroundStyle(Theme.textPrimary)
+        .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .animation(.easeOut(duration: 0.2), value: model.libraryVisible)
         .sheet(isPresented: $model.showExport) {
             ExportSheet()
                 .environment(model)
@@ -36,60 +55,91 @@ struct ContentView: View {
             Text(model.errorMessage ?? "")
         }
     }
+
+    private func clampedTimelineHeight(total: CGFloat) -> CGFloat {
+        min(max(CGFloat(timelineHeight), 190), max(190, total - Self.barHeight - 360))
+    }
+
+    /// Faixa fina entre o preview e a timeline; arrastar muda a altura da timeline.
+    private func resizeHandle(total: CGFloat) -> some View {
+        Capsule()
+            .fill(Color.white.opacity(0.12))
+            .frame(width: 36, height: 3)
+            .frame(maxWidth: .infinity)
+            .frame(height: 10)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(coordinateSpace: .global)
+                .onChanged { value in
+                    let start = dragStartHeight ?? Double(clampedTimelineHeight(total: total))
+                    dragStartHeight = start
+                    timelineHeight = start - Double(value.translation.height)
+                }
+                .onEnded { _ in dragStartHeight = nil })
+    }
 }
 
 struct TopBar: View {
     @Environment(EditorModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 6) {
-                Image(systemName: "scissors")
-                    .foregroundStyle(Theme.accent)
-                Text("OpenFrame").font(.headline)
-                Text("— \(model.project.name)\(model.isDirty ? " •" : "")")
-                    .foregroundStyle(.secondary)
+        let project = model.project
+        let size = model.exportSettings.outputSize(for: project)
+        ZStack {
+            WindowDragArea()
+            HStack(spacing: 10) {
+                LogoMark()
+                    .frame(width: 22, height: 22)
+                Text(project.name)
+                    .font(Theme.font(13))
                     .lineLimit(1)
-            }
-            Divider().frame(height: 18)
-            Button { model.presentImportPanel() } label: { Label("Importar", systemImage: "square.and.arrow.down") }
-            Button { model.addText() } label: { Label("Texto", systemImage: "textformat") }
-            Menu {
-                Button("Importar legendas (SRT)…") { model.importSubtitles() }
-                Button("Exportar legendas (SRT)…") { model.exportSubtitles() }
-            } label: {
-                Label("Legendas", systemImage: "captions.bubble")
-            }
-            .fixedSize()
-            Divider().frame(height: 18)
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(!model.canUndo)
-                .help("Desfazer (⌘Z)")
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(!model.canRedo)
-                .help("Refazer (⇧⌘Z)")
-            Spacer()
-            Menu {
-                ForEach(AspectRatio.allCases) { ratio in
-                    Button(ratio.label) { model.mutate { $0.canvas.aspect = ratio } }
+                if model.isDirty {
+                    Circle()
+                        .fill(Theme.textTertiary)
+                        .frame(width: 5, height: 5)
+                        .help("Alterações não salvas")
                 }
-            } label: {
-                Label("Proporção: \(model.project.canvas.aspect.label)", systemImage: "aspectratio")
+                Spacer(minLength: 16)
+                HStack(spacing: 6) {
+                    Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                        .disabled(!model.canUndo)
+                        .help("Desfazer (⌘Z)")
+                    Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                        .disabled(!model.canRedo)
+                        .help("Refazer (⇧⌘Z)")
+                }
+                .buttonStyle(CircleButtonStyle(size: 30))
+                Button {
+                    model.showExport = true
+                } label: {
+                    Label("Exportar", systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary))
+                .disabled(model.duration == 0)
+                .help("Exportar vídeo (⌘E)")
             }
-            .fixedSize()
-            Button {
-                model.showExport = true
-            } label: {
-                Label("Exportar", systemImage: "square.and.arrow.up")
-                    .padding(.horizontal, 6)
+            .padding(.leading, 84)
+            .padding(.trailing, 12)
+
+            // Centro: proporção do canvas e tamanho de saída.
+            HStack(spacing: 8) {
+                PillPicker(selection: model.projectBinding(\.canvas.aspect),
+                           options: AspectRatio.allCases, title: \.label)
+                    .fixedSize()
+                HStack(spacing: 4) {
+                    Text("L").foregroundStyle(Theme.textTertiary)
+                    Text(verbatim: "\(Int(size.width))")
+                    Text("A").foregroundStyle(Theme.textTertiary).padding(.leading, 4)
+                    Text(verbatim: "\(Int(size.height))")
+                }
+                .font(Theme.mono(11))
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .field(radius: 14)
+                .help("Tamanho de saída (largura × altura)")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.accent)
-            .disabled(model.duration == 0)
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Theme.panel)
     }
 }

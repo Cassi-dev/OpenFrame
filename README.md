@@ -31,6 +31,7 @@ binário, das bibliotecas ou dos recursos da ByteDance foi reaproveitado.
 
 **Áudio**
 - Faixas de música, volume, fade de entrada/saída, silenciar faixa
+- Forma de onda nos clipes de áudio e nas miniaturas da biblioteca
 - Crossfade automático nas transições da faixa principal
 
 **Exportação**
@@ -54,7 +55,7 @@ binário, das bibliotecas ou dos recursos da ByteDance foi reaproveitado.
 open build/OpenFrame.app
 
 swift run OpenFrame              # ou rode direto, em modo debug
-./scripts/test.sh              # roda os 44 testes
+./scripts/test.sh              # roda os 46 testes
 ./scripts/make-demo.sh         # cria ~/Desktop/OpenFrame Demo/Demo.openframe com mídia de exemplo
 ./scripts/make-demo.sh --export  # ...e também renderiza Demo.mp4
 ```
@@ -76,7 +77,7 @@ Sources/
   OpenFrame/                  app SwiftUI
     EditorModel.swift       estado, desfazer por snapshot, preview com AVPlayer
     Views/                  mídia, preview, timeline, inspetor, exportação
-Tests/OpenFrameCoreTests/     44 testes (Swift Testing), incluindo exportações reais
+Tests/OpenFrameCoreTests/     46 testes (Swift Testing), incluindo exportações reais
 scripts/                    empacotar, testar e gerar demo
 ```
 
