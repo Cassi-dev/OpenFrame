@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Editor de vídeo nativo para Mac. Leve, offline e com controle total da exportação.</strong>
+  <strong>Editor de vídeo nativo para Mac. Leve e offline.</strong>
 </p>
 
 <p align="center">
