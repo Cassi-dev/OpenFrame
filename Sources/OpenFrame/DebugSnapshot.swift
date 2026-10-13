@@ -88,6 +88,38 @@ enum DebugSnapshot {
             await wait(1)
             logZoom("ajustar à janela", model)
             capture("13-zoom-ajustado", to: dir)
+            // Arraste vertical: o clipe mostra a faixa de destino antes de soltar.
+            let order = model.displayTrackOrder()
+            if let main = p.mainTrackIndex, let row = order.firstIndex(of: main), row > 0,
+               let first = p.tracks[main].segments.first {
+                model.dragMove(first.id, dx: 120, rows: -1)
+                await wait(1)
+                log("arraste: destino \(String(describing: model.dragTarget))")
+                capture("14-arraste-outra-faixa", to: dir)
+                model.endDragMove(first.id)
+                await wait(1)
+                capture("15-apos-soltar", to: dir)
+                model.undo()
+            }
+            // Navegação pelos cortes e rolagem automática na reprodução.
+            model.seek(to: 0)
+            for _ in 0..<3 { model.jumpToEdit(forward: true) }
+            log("cortes: 3× próximo → \(Time.format(model.playhead))")
+            model.jumpToEdit(forward: false)
+            log("cortes: anterior → \(Time.format(model.playhead))")
+            model.setZoom(500)
+            model.goToStart()
+            await wait(1)
+            model.togglePlay()
+            await wait(4)
+            if model.isPlaying { model.togglePlay() }
+            await wait(0.5)
+            logZoom("reprodução a 500 pt/s por 4 s", model)
+            capture("16-reproducao-rolagem", to: dir)
+            model.goToEnd()
+            await wait(0.5)
+            logZoom("fim (End)", model)
+            model.zoomToFit()
             model.selection = nil
             model.showGrid = true
             model.libraryPanel = .text
