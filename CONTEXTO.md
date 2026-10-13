@@ -441,4 +441,8 @@ Pedido do usuário (13/10/2026): `main` é sempre a versão mais atual e sem bug
   `scripts/setup-git.sh` ativa (`core.hooksPath`), e precisa rodar em cada clone.
 - Sem a ferramenta `git-flow` instalada: o fluxo usa git puro, merges `--no-ff`.
 - A versão do app fica em `scripts/make-app.sh` (`CFBundleShortVersionString`).
+- A `main` é protegida no GitHub (regra do usuário: mudanças só por pull request).
+  Releases e hotfixes chegam a ela por PR com "Create a merge commit"; a tag é
+  criada depois do merge, na `main` atualizada.
+- `v0.1.0` aponta para `833edee`; o PR `release/0.1.0 → main` leva esse commit à `main`.
 
