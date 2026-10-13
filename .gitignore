@@ -3,3 +3,6 @@
 *.xcodeproj
 build/
 .DS_Store
+
+# Contexto local das sessões (não versionado)
+CONTEXTO.md
