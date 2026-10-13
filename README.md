@@ -43,11 +43,6 @@ para o Mac, em Swift, com a experiência dos editores populares de timeline
 - **O que se vê é o que se exporta.** O preview e a exportação usam o mesmo
   compositor, e as cores originais de vídeos e fotos são preservadas.
 
-O conjunto de funcionalidades foi levantado estudando o CapCut para Mac por
-engenharia reversa (análise estática, com o [REA](docs/REFERENCIA-REA.md)). O
-código do OpenFrame é original: nada do binário, das bibliotecas ou dos recursos
-da ByteDance foi reaproveitado.
-
 ## Baixar e instalar
 
 1. Baixe o **`OpenFrame-<versão>.dmg`** na [página da última versão](https://github.com/talescavalcanti/OpenFrame/releases/latest).
