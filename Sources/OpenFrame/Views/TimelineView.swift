@@ -10,6 +10,9 @@ struct TimelineView: View {
     static let headerWidth: CGFloat = 58
     static let clipInset: CGFloat = 4
 
+    /// Zoom e ponto sob os dedos no início da pinça.
+    @State private var pinchStart: (zoom: Double, time: Double, x: CGFloat)?
+
     var body: some View {
         VStack(spacing: 0) {
             TimelineToolbar()
@@ -48,6 +51,7 @@ struct TimelineView: View {
                             }
                             .frame(width: contentWidth, alignment: .topLeading)
                             .background(ScrollViewAccessor(model: model))
+                            .simultaneousGesture(pinch)
                             .padding(.trailing, 24)
                         }
                         .scrollIndicators(.automatic)
@@ -59,6 +63,22 @@ struct TimelineView: View {
                 .onChange(of: viewportWidth, initial: true) { model.timelineViewportWidth = viewportWidth }
             }
         }
+    }
+}
+
+extension TimelineView {
+    /// Pinça no trackpad: zoom mantendo parado o ponto sob os dedos.
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let start = pinchStart ?? {
+                    let anchor = model.zoomAnchor(contentX: value.startLocation.x)
+                    return (model.zoom, anchor.time, anchor.x)
+                }()
+                pinchStart = start
+                model.setZoom(start.zoom * value.magnification, keeping: start.time, at: start.x)
+            }
+            .onEnded { _ in pinchStart = nil }
     }
 }
 
@@ -115,13 +135,16 @@ private struct TimelineToolbar: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Button { model.zoom = max(model.zoom / 1.4, 8) } label: { Image(systemName: "minus") }
+            Button { model.zoomToFit() } label: { Image(systemName: "rectangle.arrowtriangle.2.outward") }
+                .buttonStyle(GlyphButtonStyle())
+                .help("Ajustar à janela (⇧Z)")
+                .padding(.trailing, 6)
+            Button { model.zoomOut() } label: { Image(systemName: "minus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Afastar (⌘−)")
-            ThinSlider(value: Binding(get: { log(model.zoom) }, set: { model.zoom = exp($0) }),
-                       range: log(8.0)...log(600.0))
+            ThinSlider(value: zoomFraction, range: 0...1)
                 .frame(width: 120)
-            Button { model.zoom = min(model.zoom * 1.4, 600) } label: { Image(systemName: "plus") }
+            Button { model.zoomIn() } label: { Image(systemName: "plus") }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Aproximar (⌘=)")
         }
@@ -129,6 +152,13 @@ private struct TimelineToolbar: View {
         .buttonStyle(CircleButtonStyle(size: 28))
         .padding(.horizontal, 12)
         .frame(height: 46)
+    }
+
+    /// Zoom em escala logarítmica, de `minZoom` (projeto inteiro) a `maxZoom`.
+    private var zoomFraction: Binding<Double> {
+        let low = log(model.minZoom), high = log(EditorModel.maxZoom)
+        return Binding(get: { (log(model.zoom) - low) / (high - low) },
+                       set: { model.setZoom(exp(low + $0 * (high - low))) })
     }
 }
 
@@ -192,8 +222,8 @@ private struct RulerView: View {
         Canvas { ctx, size in
             let pill = CGRect(x: 0, y: 4, width: size.width, height: size.height - 8)
             ctx.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Theme.raised))
-            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-            let major = steps.first { $0 * zoom >= 110 } ?? 300
+            let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400]
+            let major = steps.first { $0 * zoom >= 110 } ?? 14400
             let minor = major / 4
             var i = 0
             while Double(i) * minor * zoom <= size.width {
@@ -225,6 +255,10 @@ private struct RulerView: View {
     }
 
     static func label(_ t: Double, step: Double) -> String {
+        if t >= 3600 {
+            let s = Int(t)
+            return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+        }
         let minutes = Int(t) / 60
         let seconds = t - Double(minutes * 60)
         return step < 1 ? String(format: "%02d:%04.1f", minutes, seconds) : String(format: "%02d:%02d", minutes, Int(seconds))

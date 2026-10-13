@@ -71,10 +71,11 @@ struct OpenFrameApp: App {
                 Button("Quadro anterior  ←") { model.step(frames: -1) }
                 Button("Próximo quadro  →") { model.step(frames: 1) }
                 Divider()
-                Button("Aproximar timeline") { model.zoom = min(model.zoom * 1.4, 600) }
+                Button("Aproximar timeline") { model.zoomIn() }
                     .keyboardShortcut("=")
-                Button("Afastar timeline") { model.zoom = max(model.zoom / 1.4, 8) }
+                Button("Afastar timeline") { model.zoomOut() }
                     .keyboardShortcut("-")
+                Button("Ajustar timeline à janela  ⇧Z") { model.zoomToFit() }
             }
         }
     }
