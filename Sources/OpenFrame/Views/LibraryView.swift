@@ -98,9 +98,12 @@ private struct MediaPanel: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 10)], spacing: 14) {
                         ForEach(materials) { MaterialTile(material: $0) }
                     }
+                    .padding(.top, Theme.scrollFade)
                     .padding(.bottom, 8)
                 }
                 .scrollIndicators(.never)
+                .scrollFadeTop()
+                .padding(.top, -Theme.scrollFade / 2)
             }
         }
         .padding(14)
@@ -456,8 +459,11 @@ private struct CaptionsPanel: View {
                     VStack(spacing: 2) {
                         ForEach(cues) { CueRow(segment: $0) }
                     }
+                    .padding(.top, Theme.scrollFade)
                 }
                 .scrollIndicators(.never)
+                .scrollFadeTop()
+                .padding(.top, -Theme.scrollFade / 2)
             }
         }
         .padding(14)

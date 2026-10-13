@@ -101,6 +101,7 @@ private struct SegmentInspector: View {
                 .font(Theme.font(16, .light))
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
+                .padding(.bottom, 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     switch current {
@@ -115,9 +116,11 @@ private struct SegmentInspector: View {
                     }
                 }
                 .padding(.horizontal, 14)
+                .padding(.top, Theme.scrollFade)
                 .padding(.bottom, 16)
             }
             .scrollIndicators(.never)
+            .scrollFadeTop()
         }
     }
 
@@ -511,9 +514,9 @@ private struct TextTab: View {
                 .toggleStyle(IconToggleStyle())
                 .help("Sublinhado")
         }
-        FieldRow(label: "Maiúsculas") {
-            PillPicker(selection: value(\.textCase), options: TextCase.allCases, title: { Self.caseTitles[$0] ?? "" })
-        }
+        // Na largura toda: ao lado de um rótulo, "Normal" não cabia na pílula.
+        PillPicker(selection: value(\.textCase), options: TextCase.allCases, title: { Self.caseTitles[$0] ?? "" })
+            .help("Maiúsculas e minúsculas")
     }
 
     /// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
@@ -681,7 +684,11 @@ private struct ProjectInspector: View {
                 FieldRow(label: "Proporção") {
                     MenuField(selection: model.projectBinding(\.canvas.aspect), options: AspectRatio.allCases, title: \.label)
                 }
-                FieldRow(label: "Fundo") {
+                // Rótulo em cima: ao lado dele, "Desfoque" não cabia na pílula.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Fundo")
+                        .font(Theme.font(12))
+                        .foregroundStyle(Theme.textSecondary)
                     PillPicker(selection: backgroundKind, options: BackgroundKind.allCases, title: \.title)
                 }
                 switch model.project.canvas.background {
