@@ -1,139 +1,53 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<title>OpenFrame — marca</title>
-<style>
-  :root { --night:#17171C; --panel:#212126; --raised:#2E2E35; --paper:#F4F5F7; --cyan:#00C2CC; --deep:#00838A; --mute:#8A8A96; }
-  * { box-sizing:border-box; margin:0; }
-  body { width:1600px; background:var(--night); color:var(--paper); font:15px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; padding:64px; }
-  h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--mute); font-weight:600; margin:0 0 18px; }
-  section { margin-top:56px; }
-  .hero { display:grid; grid-template-columns:420px 1fr; gap:56px; align-items:center; background:var(--panel); border-radius:28px; padding:48px; }
-  .hero img.icon { width:420px; height:420px; }
-  .hero .lockup { width:100%; max-width:900px; }
-  .hero p { color:#C8C8D0; font-size:18px; max-width:820px; margin-top:28px; }
-  .hero b { color:var(--cyan); font-weight:600; }
-  .row { display:flex; gap:24px; }
-  .card { border-radius:20px; padding:28px; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:220px; }
-  .card small { font-size:12px; letter-spacing:.06em; opacity:.6; }
-  .dark { background:var(--panel); } .black { background:#000; } .light { background:var(--paper); color:#17171C; } .white { background:#fff; color:#17171C; } .cyanbg { background:var(--cyan); color:#17171C; }
-  .sw { flex:1; border-radius:18px; padding:20px; height:150px; display:flex; flex-direction:column; justify-content:flex-end; font-size:13px; }
-  .sw b { font-size:15px; }
-  .ladder { display:flex; align-items:flex-end; gap:28px; }
-  .ladder figure { display:flex; flex-direction:column; align-items:center; gap:8px; font-size:11px; color:var(--mute); }
-  .pix { image-rendering:pixelated; }
-  .menubar { background:#2A2A30; border-radius:10px; height:28px; padding:0 14px; display:flex; align-items:center; gap:16px; font-size:13px; color:#ddd; width:100%; }
-  .dock { background:rgba(255,255,255,.12); border-radius:22px; padding:10px 14px; display:flex; gap:10px; align-items:flex-end; }
-  .dock span { width:64px; height:64px; border-radius:15px; background:#3a3a44; display:block; }
-  .note { color:var(--mute); font-size:13px; margin-top:12px; }
-</style>
-</head>
-<body>
-
+<html lang="pt-BR"><head><meta charset="utf-8"><title>OpenFrame — marca</title><style>
+:root{--night:#17171C;--panel:#212126;--paper:#F4F5F7;--cyan:#00C2CC;--deep:#00838A;--mute:#8A8A96}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:1600px;background:var(--night);color:var(--paper);font:15px/1.5 "Helvetica Neue",Arial,sans-serif}
+section{padding:0 64px;overflow:hidden}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:18px}
+.row{display:flex;gap:24px}
+.card{border-radius:20px;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;position:relative}
+.card small{font-size:12px;letter-spacing:.06em;opacity:.6}
+.dark{background:var(--panel)}.black{background:#000}.light{background:var(--paper);color:#17171C}
+.white{background:#fff;color:#17171C}.cyanbg{background:var(--cyan);color:#17171C}
+.hero{display:grid;grid-template-columns:380px 1fr;gap:56px;align-items:center;background:var(--panel);border-radius:28px;padding:44px;height:100%}
+.hero p{color:#C8C8D0;font-size:18px;max-width:820px;margin-top:28px}
+.hero b{color:var(--cyan);font-weight:600}
+.sw{flex:1;border-radius:18px;padding:20px;height:140px;display:flex;flex-direction:column;justify-content:flex-end;font-size:13px}
+.sw b{font-size:15px}
+.ladder{display:flex;align-items:flex-end;gap:28px}
+.ladder figure{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:11px;color:var(--mute)}
+.pix{image-rendering:pixelated}
+.menubar{background:#2A2A30;border-radius:10px;height:28px;padding:0 14px;display:flex;align-items:center;gap:16px;font-size:13px;color:#ddd;width:100%}
+.dock{background:rgba(255,255,255,.14);border-radius:22px;padding:10px 14px;display:flex;gap:10px;align-items:flex-end}
+.dock span{width:64px;height:64px;border-radius:15px;background:#3a3a44;display:block}
+.note{color:var(--mute);font-size:13px}
+</style></head><body><section style="height:520px;margin-top:64px">
 <div class="hero">
-  <img class="icon" src="../appicon/png/openframe-appicon-1024.png" alt="Ícone do app OpenFrame">
+  <img src="../appicon/png/openframe-appicon-1024.png" width="380" height="380" alt="Ícone do app OpenFrame">
   <div>
-    <img class="lockup" src="../lockup/openframe-lockup-horizontal-color-on-dark.svg" alt="OpenFrame">
-    <p>Um quadro de vídeo <b>aberto pela agulha da timeline</b>. A moldura é o vídeo; o playhead ciano é o instante da edição, e é ele que abre o quadro: o nome OpenFrame em um único sinal. As letras do wordmark foram desenhadas para a marca, com bojos em retângulo arredondado como o quadro. A caixa-alta tem a mesma altura do quadro.</p>
+    <img src="../lockup/openframe-lockup-horizontal-color-on-dark.svg" style="width:760px" alt="OpenFrame">
+    <p>Quatro quadros em cata-vento <b>abrem um quadro vazio no centro</b>, como uma íris quadrada: o quadro aberto
+    do nome OpenFrame. Só um dos quatro está aceso em ciano, a mesma regra da interface, onde o ciano marca só o que
+    está ativo. A wordmark é a Inter Display SemiBold (SIL OFL 1.1) com tracking −10, convertida em contornos.</p>
   </div>
-</div>
-
-<section>
-  <h2>Paleta</h2>
-  <div class="row">
-    <div class="sw" style="background:#00C2CC;color:#17171C"><b>Playhead Cyan</b>#00C2CC · rgb 0 194 204</div>
-    <div class="sw" style="background:#00838A"><b>Deep Cyan</b>#00838A · ciano sobre fundo claro</div>
-    <div class="sw" style="background:#17171C;outline:1px solid #333"><b>Night</b>#17171C · fundo do app</div>
-    <div class="sw" style="background:#212126;outline:1px solid #333"><b>Panel</b>#212126</div>
-    <div class="sw" style="background:#F4F5F7;color:#17171C"><b>Paper</b>#F4F5F7 · quadro / texto</div>
-  </div>
-</section>
-
-<section>
-  <h2>Teste de tamanho — ícone do app em pixels reais (16 e 32 usam o corte simplificado)</h2>
-  <div class="row">
-    <div class="card dark" style="flex:2">
-      <div class="ladder">
-        <figure><img src="../appicon/png/openframe-appicon-16.png" width="16" height="16">16</figure>
-        <figure><img src="../appicon/png/openframe-appicon-32.png" width="32" height="32">32</figure>
-        <figure><img src="../appicon/png/openframe-appicon-64.png" width="64" height="64">64</figure>
-        <figure><img src="../appicon/png/openframe-appicon-128.png" width="128" height="128">128</figure>
-        <figure><img src="../appicon/png/openframe-appicon-256.png" width="256" height="256">256</figure>
-      </div>
-    </div>
-    <div class="card dark">
-      <div class="ladder">
-        <figure><img class="pix" src="../appicon/png/openframe-appicon-16.png" width="128" height="128">16 px ×8</figure>
-        <figure><img class="pix" src="../appicon/png/openframe-appicon-32.png" width="128" height="128">32 px ×4</figure>
-      </div>
-    </div>
-  </div>
-  <div class="row" style="margin-top:24px">
-    <div class="card dark" style="align-items:stretch">
-      <div class="menubar"><img src="../symbol/openframe-symbol-small-mono-white.svg" width="16" height="16"><b>OpenFrame</b><span>Arquivo</span><span>Editar</span><span>Clipe</span><span>Exportar</span></div>
-      <small style="text-align:center">símbolo 16 px (corte pequeno, uma cor) na barra de menus</small>
-    </div>
-    <div class="card" style="background:linear-gradient(135deg,#3b4a6b,#6b4a5e)">
-      <div class="dock"><span></span><span></span><img src="../appicon/png/openframe-appicon-128.png" width="64" height="64"><span></span></div>
-      <small>Dock, 64 pt</small>
-    </div>
-  </div>
-</section>
-
-<section>
-  <h2>Símbolo — escala (arte completa ≥ 48 px · corte pequeno ≤ 32 px)</h2>
-  <div class="row">
-    <div class="card dark"><div class="ladder">
-      <figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="16">16</figure>
-      <figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="24">24</figure>
-      <figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="32">32</figure>
-      <figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="48">48</figure>
-      <figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="96">96</figure>
-      <figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="180">180</figure>
-    </div></div>
-    <div class="card white"><div class="ladder">
-      <figure><img src="../symbol/openframe-symbol-small-mono-black.svg" width="16">16</figure>
-      <figure><img src="../symbol/openframe-symbol-small-mono-black.svg" width="24">24</figure>
-      <figure><img src="../symbol/openframe-symbol-small-mono-black.svg" width="32">32</figure>
-      <figure><img src="../symbol/openframe-symbol-mono-black.svg" width="48">48</figure>
-      <figure><img src="../symbol/openframe-symbol-mono-black.svg" width="96">96</figure>
-      <figure><img src="../symbol/openframe-symbol-mono-black.svg" width="180">180</figure>
-    </div></div>
-  </div>
-</section>
-
-<section>
-  <h2>Uma cor</h2>
-  <div class="row">
-    <div class="card white"><img src="../symbol/openframe-symbol-mono-black.svg" width="150"><small>preto</small></div>
-    <div class="card black"><img src="../symbol/openframe-symbol-mono-white.svg" width="150"><small>branco</small></div>
-    <div class="card dark"><img src="../symbol/openframe-symbol-mono-cyan.svg" width="150"><small>ciano</small></div>
-    <div class="card cyanbg"><img src="../symbol/openframe-symbol-mono-black.svg" width="150"><small>preto sobre ciano</small></div>
-  </div>
-</section>
-
-<section>
-  <h2>Invertida — fundo escuro × fundo claro</h2>
-  <div class="row">
-    <div class="card dark"><img src="../lockup/openframe-lockup-horizontal-color-on-dark.svg" width="640"><small>colorida · fundo escuro (principal)</small></div>
-    <div class="card light"><img src="../lockup/openframe-lockup-horizontal-color-on-light.svg" width="640"><small>colorida · fundo claro</small></div>
-  </div>
-  <div class="row" style="margin-top:24px">
-    <div class="card black"><img src="../lockup/openframe-lockup-horizontal-mono-white.svg" width="640"><small>monocromática branca</small></div>
-    <div class="card white"><img src="../lockup/openframe-lockup-horizontal-mono-black.svg" width="640"><small>monocromática preta</small></div>
-  </div>
-</section>
-
-<section>
-  <h2>Lockup empilhado e wordmark</h2>
-  <div class="row">
-    <div class="card dark"><img src="../lockup/openframe-lockup-stacked-color-on-dark.svg" width="340"></div>
-    <div class="card light"><img src="../lockup/openframe-lockup-stacked-color-on-light.svg" width="340"></div>
-    <div class="card dark" style="flex:1.4"><img src="../wordmark/openframe-wordmark-color-on-dark.svg" width="520"><small>wordmark sozinho</small></div>
-  </div>
-  <p class="note">Área de proteção: a largura da agulha com a cabeça (≈ ⅛ da altura do símbolo) em volta de todo o lockup. Tamanho mínimo: símbolo 16 px (corte pequeno) · lockup horizontal 96 px de largura.</p>
-</section>
-
-</body>
-</html>
+</div></section><section style="height:200px;margin-top:48px"><h2>Paleta</h2><div class="row"><div class="sw" style="background:#00C2CC;color:#17171C;box-shadow:inset 0 0 0 1px #2C2C34"><b>Playhead Cyan</b>#00C2CC · 0 194 204 · quadro aceso, destaque</div><div class="sw" style="background:#00838A;color:#F4F5F7;box-shadow:inset 0 0 0 1px #2C2C34"><b>Deep Cyan</b>#00838A · 0 131 138 · quadro aceso sobre claro</div><div class="sw" style="background:#17171C;color:#F4F5F7;box-shadow:inset 0 0 0 1px #2C2C34"><b>Night</b>#17171C · 23 23 28 · fundo do app, texto sobre claro</div><div class="sw" style="background:#212126;color:#F4F5F7;box-shadow:inset 0 0 0 1px #2C2C34"><b>Panel</b>#212126 · 33 33 38 · superfícies</div><div class="sw" style="background:#F4F5F7;color:#17171C;box-shadow:inset 0 0 0 1px #2C2C34"><b>Paper</b>#F4F5F7 · 244 245 247 · quadros e texto sobre escuro</div></div></section><section style="height:400px;margin-top:48px"><h2>Ícone do app em pixels reais (16 e 32 usam o corte simplificado)</h2>
+<div class="row" style="height:330px">
+  <div class="card dark" style="flex:1.3;justify-content:flex-end;padding-bottom:28px"><div class="ladder"><figure><img src="../appicon/png/openframe-appicon-16.png" width="16" height="16">16</figure><figure><img src="../appicon/png/openframe-appicon-32.png" width="32" height="32">32</figure><figure><img src="../appicon/png/openframe-appicon-64.png" width="64" height="64">64</figure><figure><img src="../appicon/png/openframe-appicon-128.png" width="128" height="128">128</figure><figure><img src="../appicon/png/openframe-appicon-256.png" width="256" height="256">256</figure></div></div>
+  <div class="card dark"><div class="ladder" style="flex-wrap:wrap;justify-content:center;gap:20px"><figure><img class="pix" src="../appicon/png/openframe-appicon-16.png" width="128" height="128">16 px ×8</figure><figure><img class="pix" src="../appicon/png/openframe-appicon-32.png" width="128" height="128">32 px ×4</figure><figure><img class="pix" src="png/symbol-small-color-on-dark-16.png" width="128" height="128">símbolo 16 ×8</figure><figure><img class="pix" src="png/symbol-small-color-on-light-16.png" width="128" height="128">sobre claro ×8</figure></div></div>
+</div></section><section style="height:220px;margin-top:48px"><h2>Em uso</h2>
+<div class="row" style="height:150px">
+  <div class="card dark" style="padding:0 28px"><div class="menubar"><img src="../symbol/openframe-symbol-small-mono-white.svg" width="16">
+    <b>OpenFrame</b><span>Arquivo</span><span>Editar</span><span>Clipe</span><span>Exportar</span></div>
+    <small>símbolo 16 px (corte pequeno, uma cor) na barra de menus</small></div>
+  <div class="card" style="background:linear-gradient(135deg,#3B4256,#6A4A5E)"><div class="dock"><span></span><span></span>
+    <img src="../appicon/png/openframe-appicon-128.png" width="64" height="64"><span></span></div><small style="color:#fff">Dock, 64 pt</small></div>
+</div></section><section style="height:340px;margin-top:48px"><h2>Símbolo: escala (arte completa ≥ 48 px · corte pequeno ≤ 32 px)</h2><div class="row" style="height:270px"><div class="card dark" style="justify-content:flex-end;padding-bottom:24px"><div class="ladder"><figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="16" height="16">16</figure><figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="24" height="24">24</figure><figure><img src="../symbol/openframe-symbol-small-color-on-dark.svg" width="32" height="32">32</figure><figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="48" height="48">48</figure><figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="96" height="96">96</figure><figure><img src="../symbol/openframe-symbol-color-on-dark.svg" width="180" height="180">180</figure></div></div><div class="card white" style="justify-content:flex-end;padding-bottom:24px"><div class="ladder"><figure><img src="../symbol/openframe-symbol-small-color-on-light.svg" width="16" height="16">16</figure><figure><img src="../symbol/openframe-symbol-small-color-on-light.svg" width="24" height="24">24</figure><figure><img src="../symbol/openframe-symbol-small-color-on-light.svg" width="32" height="32">32</figure><figure><img src="../symbol/openframe-symbol-color-on-light.svg" width="48" height="48">48</figure><figure><img src="../symbol/openframe-symbol-color-on-light.svg" width="96" height="96">96</figure><figure><img src="../symbol/openframe-symbol-color-on-light.svg" width="180" height="180">180</figure></div></div></div></section><section style="height:290px;margin-top:48px"><h2>Uma cor</h2><div class="row" style="height:220px"><div class="card white"><img src="../symbol/openframe-symbol-mono-black.svg" width="120"><small>preto</small></div><div class="card black"><img src="../symbol/openframe-symbol-mono-white.svg" width="120"><small>branco</small></div><div class="card dark"><img src="../symbol/openframe-symbol-mono-cyan.svg" width="120"><small>ciano</small></div><div class="card cyanbg"><img src="../symbol/openframe-symbol-mono-black.svg" width="120"><small>preto sobre ciano</small></div></div></section><section style="height:520px;margin-top:48px"><h2>Lockup horizontal: fundo escuro × fundo claro</h2>
+<div class="row" style="height:210px"><div class="card dark"><img src="../lockup/openframe-lockup-horizontal-color-on-dark.svg" style="width:560px"><small>colorida · fundo escuro (principal)</small></div><div class="card light"><img src="../lockup/openframe-lockup-horizontal-color-on-light.svg" style="width:560px"><small>colorida · fundo claro</small></div></div>
+<div class="row" style="height:210px;margin-top:24px"><div class="card black"><img src="../lockup/openframe-lockup-horizontal-mono-white.svg" style="width:560px"><small>monocromática branca</small></div><div class="card white"><img src="../lockup/openframe-lockup-horizontal-mono-black.svg" style="width:560px"><small>monocromática preta</small></div></div></section><section style="height:420px;margin-top:48px"><h2>Lockup empilhado e wordmark</h2>
+<div class="row" style="height:330px">
+  <div class="card dark"><img src="../lockup/openframe-lockup-stacked-color-on-dark.svg" style="height:260px"></div>
+  <div class="card light"><img src="../lockup/openframe-lockup-stacked-color-on-light.svg" style="height:260px"></div>
+  <div class="card dark" style="flex:1.4"><img src="../wordmark/openframe-wordmark-color-on-dark.svg" style="width:440px">
+    <small>wordmark sozinha · Inter Display SemiBold, tracking −10</small></div>
+</div></section><section style="height:90px;margin-top:48px"><p class="note">Área de proteção: a altura de um quadro (≈ ¼ do símbolo) em volta de toda a marca. Tamanho mínimo: símbolo com 16 px (corte pequeno em 32 px ou menos); lockup horizontal com 120 px de largura. Não troque o quadro aceso de posição, não acenda mais de um quadro e não feche o vão do centro.</p></section></body></html>
