@@ -432,14 +432,34 @@ private struct TextTab: View {
     @Environment(EditorModel.self) private var model
     let id: UUID
 
-    private static let fonts = ["Helvetica Neue", "Avenir Next", "Futura", "Gill Sans", "Arial Rounded MT Bold",
-                                "Impact", "Georgia", "Didot", "Times New Roman", "American Typewriter",
-                                "Menlo", "Marker Felt", "Chalkboard SE", "Noteworthy", "Copperplate"]
+    /// Famílias à mão no topo do menu; as demais instaladas vêm depois.
+    private static let suggested = ["Helvetica Neue", "Avenir Next", "Futura", "Gill Sans", "Arial Rounded MT Bold",
+                                    "Impact", "Georgia", "Didot", "Times New Roman", "American Typewriter",
+                                    "Menlo", "Marker Felt", "Chalkboard SE", "Noteworthy", "Copperplate"]
+    private static let installed = FontCatalog.families()
+    @MainActor private static var faceCache: [String: [String]] = [:]
+
+    @MainActor private static func faces(of family: String) -> [String] {
+        if let cached = faceCache[family] { return cached }
+        let faces = FontCatalog.faces(of: family)
+        faceCache[family] = faces
+        return faces
+    }
+
+    private static let caseTitles: [TextCase: String] = [.none: "Normal", .upper: "AA", .lower: "aa", .title: "Título"]
+    /// Medidas em em mostradas como % do tamanho da fonte.
+    private static let em: (Double) -> String = { String(format: "%.0f", $0 * 100) }
+    private static let signedEm: (Double) -> String = { $0 == 0 ? "0" : String(format: "%+.0f", $0 * 100) }
+
+    private var style: Binding<TextStyle> { model.binding(id, \.text!.style) }
+
+    private func value<T: Equatable>(_ keyPath: WritableKeyPath<TextStyle, T>) -> Binding<T> {
+        let path = (\Segment.text!.style).appending(path: keyPath)
+        return model.binding(id, path)
+    }
 
     var body: some View {
-        let text = model.binding(id, \.text!.text)
-        let style = model.binding(id, \.text!.style)
-        TextEditor(text: text)
+        TextEditor(text: model.binding(id, \.text!.text))
             .font(Theme.font(13))
             .frame(height: 72)
             .scrollContentBackground(.hidden)
@@ -447,43 +467,157 @@ private struct TextTab: View {
             .field()
 
         SectionHeader(title: "Estilos prontos")
-        HStack(spacing: 6) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
             ForEach(TextStylePreset.allCases) { preset in
                 Button(preset.title) { style.wrappedValue = preset.applied(to: style.wrappedValue) }
                     .buttonStyle(PillButtonStyle(compact: true))
             }
         }
 
+        fontSection
+        spacingSection
+        colorSection
+        backgroundSection
+        shadowSection
+        positionSection
+    }
+
+    @ViewBuilder private var fontSection: some View {
         SectionHeader(title: "Fonte")
-        FieldRow(label: "Família") {
-            MenuField(selection: model.binding(id, \.text!.style.fontName), options: Self.fonts, title: { $0 })
+        FieldRow(label: "Família") { familyMenu }
+        FieldRow(label: "Estilo") {
+            // Um estilo da família ("Light", "Medium"…) substitui o negrito/itálico ligados.
+            MenuField(selection: Binding(get: { style.wrappedValue.fontFace }, set: { face in
+                var s = style.wrappedValue
+                s.fontFace = face
+                if !face.isEmpty { s.bold = false; s.italic = false }
+                style.wrappedValue = s
+            }), options: [""] + Self.faces(of: style.wrappedValue.fontName), title: { $0.isEmpty ? "Padrão" : $0 })
         }
-        ParamSlider(title: "Tamanho", value: model.binding(id, \.text!.style.fontSize), range: 0.02...0.25,
+        ParamSlider(title: "Tamanho", value: value(\.fontSize), range: 0.02...0.25,
                     defaultValue: 0.07, format: { String(format: "%.0f", $0 * 1000) })
-        HStack(spacing: 8) {
-            PillPicker(selection: model.binding(id, \.text!.style.alignment),
+        HStack(spacing: 6) {
+            PillPicker(selection: value(\.alignment),
                        options: TextAlignmentKind.allCases,
                        title: { ["left": "Esquerda", "center": "Centro", "right": "Direita"][$0.rawValue] ?? "" },
                        icon: { "text.align\($0.rawValue)" })
-            Toggle(isOn: model.binding(id, \.text!.style.bold)) { Image(systemName: "bold") }
+            Toggle(isOn: value(\.bold)) { Image(systemName: "bold") }
                 .toggleStyle(IconToggleStyle())
                 .help("Negrito")
-            Toggle(isOn: model.binding(id, \.text!.style.italic)) { Image(systemName: "italic") }
+            Toggle(isOn: value(\.italic)) { Image(systemName: "italic") }
                 .toggleStyle(IconToggleStyle())
                 .help("Itálico")
+            Toggle(isOn: value(\.underline)) { Image(systemName: "underline") }
+                .toggleStyle(IconToggleStyle())
+                .help("Sublinhado")
         }
+        FieldRow(label: "Maiúsculas") {
+            PillPicker(selection: value(\.textCase), options: TextCase.allCases, title: { Self.caseTitles[$0] ?? "" })
+        }
+    }
 
-        SectionHeader(title: "Cores")
-        ColorRow(title: "Texto", color: color(model.binding(id, \.text!.style.color)))
-        ParamSlider(title: "Contorno", value: model.binding(id, \.text!.style.strokeWidth), range: 0...10,
-                    format: { String(format: "%.1f", $0) })
-        ColorRow(title: "Contorno", color: color(model.binding(id, \.text!.style.strokeColor)))
-        SwitchRow(title: "Fundo", isOn: model.binding(id, \.text!.style.backgroundEnabled))
+    /// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
+    private var familyMenu: some View {
+        let current = style.wrappedValue.fontName
+        let pick: (String) -> Void = { family in
+            var s = style.wrappedValue
+            s.fontName = family
+            if !Self.faces(of: family).contains(s.fontFace) { s.fontFace = "" }
+            style.wrappedValue = s
+        }
+        return Menu {
+            Section("Sugeridas") {
+                ForEach(Self.suggested.filter(Self.installed.contains), id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+            Section("Todas") {
+                ForEach(Self.installed, id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(current)
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(Theme.font(9, .medium))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity)
+            .field()
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+
+    @ViewBuilder private var spacingSection: some View {
+        SectionHeader(title: "Espaçamento") {
+            model.mutate {
+                TimelineEditor.update(&$0, segment: id) {
+                    $0.text?.style.letterSpacing = 0
+                    $0.text?.style.lineSpacing = 0
+                }
+            }
+        }
+        ParamSlider(title: "Entre letras", value: value(\.letterSpacing), range: -0.5...2, format: Self.signedEm)
+        ParamSlider(title: "Entre linhas", value: value(\.lineSpacing), range: -0.5...3, format: Self.signedEm)
+    }
+
+    @ViewBuilder private var colorSection: some View {
+        SectionHeader(title: "Cor")
+        ColorRow(title: "Texto", color: color(value(\.color)))
+        ParamSlider(title: "Opacidade", value: value(\.opacity), range: 0...1, defaultValue: 1, format: percent)
+
+        SectionHeader(title: "Contorno")
+        ParamSlider(title: "Espessura", value: value(\.strokeWidth), range: 0...20, format: { String(format: "%.1f", $0) })
+        if style.wrappedValue.strokeWidth > 0 {
+            ColorRow(title: "Cor", color: color(value(\.strokeColor)))
+        }
+    }
+
+    @ViewBuilder private var backgroundSection: some View {
+        let d = TextStyle()
+        SectionHeader(title: "Fundo")
+        SwitchRow(title: "Mostrar fundo", isOn: value(\.backgroundEnabled))
         if style.wrappedValue.backgroundEnabled {
-            ColorRow(title: "Cor do fundo", color: color(model.binding(id, \.text!.style.backgroundColor)))
+            ColorRow(title: "Cor", color: color(value(\.backgroundColor)))
+            ParamSlider(title: "Opacidade", value: value(\.backgroundColor.a), range: 0...1,
+                        defaultValue: d.backgroundColor.a, format: percent)
+            ParamSlider(title: "Arredondamento", value: value(\.backgroundRadius), range: 0...1,
+                        defaultValue: d.backgroundRadius, format: Self.em)
+            ParamSlider(title: "Margem lateral", value: value(\.backgroundPaddingX), range: 0...1,
+                        defaultValue: d.backgroundPaddingX, format: Self.em)
+            ParamSlider(title: "Margem vertical", value: value(\.backgroundPaddingY), range: 0...1,
+                        defaultValue: d.backgroundPaddingY, format: Self.em)
         }
-        SwitchRow(title: "Sombra", isOn: model.binding(id, \.text!.style.shadow))
+    }
 
+    @ViewBuilder private var shadowSection: some View {
+        let d = TextStyle()
+        SectionHeader(title: "Sombra")
+        SwitchRow(title: "Mostrar sombra", isOn: value(\.shadow))
+        if style.wrappedValue.shadow {
+            ColorRow(title: "Cor", color: color(value(\.shadowColor)))
+            ParamSlider(title: "Opacidade", value: value(\.shadowColor.a), range: 0...1,
+                        defaultValue: d.shadowColor.a, format: percent)
+            ParamSlider(title: "Distância", value: value(\.shadowDistance), range: 0...1,
+                        defaultValue: d.shadowDistance, format: Self.em)
+            ParamSlider(title: "Ângulo", value: value(\.shadowAngle), range: -180...180,
+                        defaultValue: d.shadowAngle, format: { String(format: "%.0f°", $0) })
+            ParamSlider(title: "Desfoque", value: value(\.shadowBlur), range: 0...1,
+                        defaultValue: d.shadowBlur, format: Self.em)
+        }
+    }
+
+    @ViewBuilder private var positionSection: some View {
         SectionHeader(title: "Posição") {
             model.mutate {
                 TimelineEditor.update(&$0, segment: id) {
@@ -494,12 +628,12 @@ private struct TextTab: View {
                 }
             }
         }
-        ParamSlider(title: "Posição X", value: model.binding(id, \.text!.style.x), format: signedPercent)
-        ParamSlider(title: "Posição Y", value: model.binding(id, \.text!.style.y), defaultValue: -0.7, format: signedPercent)
-        ParamSlider(title: "Escala", value: model.binding(id, \.text!.style.scale), range: 0.2...3, defaultValue: 1, format: percent)
-        ParamSlider(title: "Rotação", value: model.binding(id, \.text!.style.rotation), range: -180...180,
+        ParamSlider(title: "Posição X", value: value(\.x), format: signedPercent)
+        ParamSlider(title: "Posição Y", value: value(\.y), defaultValue: -0.7, format: signedPercent)
+        ParamSlider(title: "Escala", value: value(\.scale), range: 0.2...3, defaultValue: 1, format: percent)
+        ParamSlider(title: "Rotação", value: value(\.rotation), range: -180...180,
                     format: { String(format: "%.0f°", $0) })
-        ParamSlider(title: "Largura máxima", value: model.binding(id, \.text!.style.maxWidth), range: 0.2...1,
+        ParamSlider(title: "Largura máxima", value: value(\.maxWidth), range: 0.2...1,
                     defaultValue: 0.9, format: percent)
     }
 }
