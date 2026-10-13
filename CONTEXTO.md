@@ -429,3 +429,16 @@ os pesos 200 e 500**.
   em especial, os botões da barra superior ficam sob a área da barra de título
   transparente e o arraste da janela depende do `WindowDragArea`.
 
+---
+
+## 11. Versionamento (gitflow)
+
+Pedido do usuário (13/10/2026): `main` é sempre a versão mais atual e sem bugs;
+`develop` integra; uma branch por feature ou bug. Guia em `docs/GITFLOW.md`.
+- Remoto: `origin` = `https://github.com/talescavalcanti/OpenFrame.git`.
+- `main` marcada como `v0.1.0` (estado após a remodelação da interface).
+- `.githooks/pre-commit` bloqueia commits diretos em `main`/`develop`;
+  `scripts/setup-git.sh` ativa (`core.hooksPath`), e precisa rodar em cada clone.
+- Sem a ferramenta `git-flow` instalada: o fluxo usa git puro, merges `--no-ff`.
+- A versão do app fica em `scripts/make-app.sh` (`CFBundleShortVersionString`).
+
