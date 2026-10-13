@@ -152,6 +152,65 @@ struct TimelineEditorTests {
         #expect(mainSegments(p).map(\.targetStart) == [0, Time.seconds(2)])
     }
 
+    /// Faixa principal com clipes das durações dadas, sem transições.
+    private func mainProject(_ seconds: [Double]) -> (Project, [UUID]) {
+        var p = Project()
+        let ids = seconds.enumerated().map { i, s in
+            TimelineEditor.addMedia(video(s, name: "\(i).mov"), to: &p)
+        }
+        return (p, ids)
+    }
+
+    @Test("Reordenar é simétrico: direita e esquerda trocam na mesma distância")
+    func reorderIsSymmetric() {
+        // [2, 3, 5] arrastando o do meio para a direita espelha [5, 3, 2] para a esquerda.
+        // Os centros ficam a 4 s: troca só depois disso, nos dois sentidos (empate não troca).
+        for step in 0...40 {
+            let d = Double(step) * 0.25
+            var right = mainProject([2, 3, 5])
+            let rightCenter = (Time.seconds(2) + Time.seconds(5)) / 2
+            TimelineEditor.reorderMain(&right.0, segment: right.1[1], toCenter: rightCenter + Time.seconds(d))
+            var left = mainProject([5, 3, 2])
+            let leftCenter = (Time.seconds(5) + Time.seconds(8)) / 2
+            TimelineEditor.reorderMain(&left.0, segment: left.1[1], toCenter: leftCenter - Time.seconds(d))
+
+            let movedRight = mainSegments(right.0).firstIndex { $0.id == right.1[1] } != 1
+            let movedLeft = mainSegments(left.0).firstIndex { $0.id == left.1[1] } != 1
+            #expect(movedRight == movedLeft, "d = \(d) s")
+            #expect(movedRight == (d > 4), "d = \(d) s")
+        }
+    }
+
+    @Test("Reordenar passa vários vizinhos com a mesma regra nos dois sentidos")
+    func reorderAcrossSeveral() {
+        var right = mainProject([2, 2, 2, 2, 2])
+        TimelineEditor.reorderMain(&right.0, segment: right.1[0], toCenter: Time.seconds(1 + 6.5))
+        #expect(mainSegments(right.0).map(\.id) == [right.1[1], right.1[2], right.1[3], right.1[0], right.1[4]])
+        var left = mainProject([2, 2, 2, 2, 2])
+        TimelineEditor.reorderMain(&left.0, segment: left.1[4], toCenter: Time.seconds(9 - 6.5))
+        #expect(mainSegments(left.0).map(\.id) == [left.1[0], left.1[4], left.1[1], left.1[2], left.1[3]])
+    }
+
+    @Test("Ímã ao mover: a borda mais perto vence, nos dois sentidos")
+    func snapMoveIsSymmetric() {
+        let length = Time.seconds(20)
+        let threshold = Time.seconds(0.1)
+        let duration = Time.seconds(2)
+        let points = [Time.seconds(5), Time.seconds(7.03), Time.seconds(12), Time.seconds(14.5)]
+        let mirrored = points.map { length - $0 }
+        for step in 0...1400 {
+            let start = Time.seconds(Double(step) * 0.01)
+            let right = TimelineEditor.snapMove(start: start, duration: duration, to: points,
+                                                threshold: threshold, forward: true)
+            let left = TimelineEditor.snapMove(start: length - start - duration, duration: duration,
+                                               to: mirrored, threshold: threshold, forward: false)
+            #expect(right + duration == length - left, "início \(start.seconds) s")
+        }
+        // Início a 0,04 s de um ponto e fim a 0,01 s de outro: o fim vence.
+        #expect(TimelineEditor.snapMove(start: Time.seconds(5.04), duration: duration, to: points,
+                                        threshold: threshold, forward: false) == Time.seconds(5.03))
+    }
+
     @Test("Mover para cima de outro clipe manda para nova faixa")
     func resolveOverlap() {
         var p = Project()

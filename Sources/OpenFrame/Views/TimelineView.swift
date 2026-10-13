@@ -101,7 +101,7 @@ extension TimelineView {
     }
 
     private func isDragSource(_ track: Track) -> Bool {
-        guard let id = model.dragTarget?.segment else { return false }
+        guard let id = model.dragPreview?.segment else { return false }
         return track.segments.contains { $0.id == id }
     }
 
@@ -427,11 +427,16 @@ private struct TrackRow: View {
                     model.selection = nil
                     model.seek(to: Micros(location.x / model.zoom * 1_000_000))
                 }
-            ForEach(track.segments) { seg in
+            ForEach(Array(track.segments.enumerated()), id: \.element.id) { index, seg in
+                let isDragged = model.dragPreview?.segment == seg.id
                 SegmentView(segment: seg, track: track)
-                    .offset(x: CGFloat(seg.targetStart.seconds * model.zoom), y: TimelineView.clipInset)
+                    .offset(x: CGFloat(displayStart(seg, index: index).seconds * model.zoom), y: TimelineView.clipInset)
+                    // O clipe do gesto (ou o selecionado) fica por cima dos vizinhos nos dois sentidos.
+                    .zIndex(isDragged ? 2 : model.selection == seg.id ? 1 : 0)
+                    // Ele segue o cursor; só os outros deslizam.
+                    .transaction { if isDragged { $0.animation = nil } }
             }
-            if track.isMain {
+            if track.isMain && !hasGesture {
                 ForEach(Array(track.segments.dropLast().enumerated()), id: \.element.id) { index, seg in
                     transitionButton(seg, next: track.segments[index + 1], index: index)
                 }
@@ -448,6 +453,24 @@ private struct TrackRow: View {
             }
             if nearest != hoveredJunction { hoveredJunction = nearest }
         }
+    }
+
+    /// Algum clipe desta faixa está sendo arrastado ou aparado pelo início.
+    private var hasGesture: Bool {
+        guard let id = model.dragPreview?.segment else { return false }
+        return track.segments.contains { $0.id == id }
+    }
+
+    /// Início desenhado: o clipe do gesto segue o cursor; na faixa principal,
+    /// ao aparar o início, os clipes seguintes ficam onde estavam até soltar.
+    private func displayStart(_ seg: Segment, index: Int) -> Micros {
+        guard let preview = model.dragPreview else { return seg.targetStart }
+        if preview.segment == seg.id { return preview.start }
+        if preview.following != 0, track.isMain,
+           let dragged = track.segments.firstIndex(where: { $0.id == preview.segment }), index > dragged {
+            return seg.targetStart + preview.following
+        }
+        return seg.targetStart
     }
 
     /// Posição x de cada junção entre clipes da faixa principal.
@@ -535,11 +558,11 @@ private struct SegmentView: View {
         }
     }
 
-    /// Deslocamento até a faixa de destino enquanto o clipe é arrastado para outra linha.
+    /// Deslocamento até a faixa de destino enquanto o clipe é arrastado para outra linha
+    /// (o horizontal vem de `dragPreview`, na linha).
     private var dragShift: CGSize {
-        guard let target = model.dragTarget, target.segment == segment.id else { return .zero }
-        return CGSize(width: CGFloat((target.start - segment.targetStart).seconds * model.zoom),
-                      height: CGFloat(target.rows) * TimelineView.rowStride)
+        guard let preview = model.dragPreview, preview.segment == segment.id else { return .zero }
+        return CGSize(width: 0, height: CGFloat(preview.rows) * TimelineView.rowStride)
     }
 
     @ViewBuilder
@@ -633,7 +656,7 @@ private struct SegmentView: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in model.dragTrim(segment.id, leading: leading, dx: value.translation.width) }
-                    .onEnded { _ in model.endGesture() })
+                    .onEnded { _ in model.endDragTrim() })
     }
 }
 
@@ -650,7 +673,7 @@ private struct ClipActionBar: View {
     let contentWidth: CGFloat
 
     var body: some View {
-        if model.dragTarget == nil, let seg = model.selectedSegment,
+        if model.dragPreview == nil, let seg = model.selectedSegment,
            let row = tracks.firstIndex(where: { $0.segments.contains { $0.id == seg.id } }) {
             let zoom = model.zoom
             let start = CGFloat(seg.targetStart.seconds * zoom)
