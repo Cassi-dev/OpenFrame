@@ -431,48 +431,41 @@ struct ThinSlider: View {
 
 // MARK: - Marca
 
-/// O símbolo do OpenFrame (moldura aberta pela agulha), desenhado a partir
-/// da geometria de `assets/brand/symbol` (caixa de 256 × 256).
+/// O símbolo do OpenFrame (Quatro Quadros: quatro quadros em cata-vento em volta
+/// de um quadro vazio), com a geometria de `assets/brand/source/build.py`
+/// (caixa de 256 × 256). Até 32 pt usa o corte pequeno, de folgas mais largas.
 struct LogoMark: View {
     var frameColor = Theme.textPrimary
-    var needleColor = Theme.accent
+    var litColor = Theme.accent
 
     var body: some View {
         Canvas { ctx, size in
-            let s = min(size.width, size.height) / 256
-            ctx.translateBy(x: (size.width - 256 * s) / 2, y: (size.height - 256 * s) / 2)
+            let side = min(size.width, size.height)
+            let s = side / 256
+            ctx.translateBy(x: (size.width - side) / 2, y: (size.height - side) / 2)
             ctx.scaleBy(x: s, y: s)
-            var ring = Path(roundedRect: CGRect(x: 30, y: 60, width: 196, height: 136), cornerRadius: 36)
-            ring.addPath(Path(roundedRect: CGRect(x: 54, y: 84, width: 148, height: 88), cornerRadius: 12))
-            var left = ctx
-            left.clip(to: Path(CGRect(x: 0, y: 0, width: 130, height: 256)))
-            left.fill(ring, with: .color(frameColor), style: FillStyle(eoFill: true))
-            var right = ctx
-            right.clip(to: Path(CGRect(x: 170, y: 0, width: 86, height: 256)))
-            right.fill(ring, with: .color(frameColor), style: FillStyle(eoFill: true))
-            ctx.fill(NeedleShape.needle, with: .color(needleColor))
+            for (i, piece) in Self.pieces(small: side <= 32).enumerated() {
+                ctx.fill(piece, with: .color(i == 0 ? litColor : frameColor))
+            }
         }
     }
-}
 
-/// A agulha da logo, também usada como cabeça do playhead.
-enum NeedleShape {
-    static var needle: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 140, y: 26))
-        p.addLine(to: CGPoint(x: 160, y: 26))
-        p.addArc(tangent1End: CGPoint(x: 166, y: 26), tangent2End: CGPoint(x: 166, y: 32), radius: 6)
-        p.addLine(to: CGPoint(x: 166, y: 46))
-        p.addLine(to: CGPoint(x: 158, y: 56))
-        p.addLine(to: CGPoint(x: 158, y: 222))
-        p.addArc(tangent1End: CGPoint(x: 158, y: 230), tangent2End: CGPoint(x: 150, y: 230), radius: 8)
-        p.addArc(tangent1End: CGPoint(x: 142, y: 230), tangent2End: CGPoint(x: 142, y: 222), radius: 8)
-        p.addLine(to: CGPoint(x: 142, y: 56))
-        p.addLine(to: CGPoint(x: 134, y: 46))
-        p.addLine(to: CGPoint(x: 134, y: 32))
-        p.addArc(tangent1End: CGPoint(x: 134, y: 26), tangent2End: CGPoint(x: 140, y: 26), radius: 6)
-        p.closeSubpath()
-        return p
+    /// Topo (o quadro aceso), direita, base e esquerda. Cada peça tem o canto de fora mais redondo.
+    static func pieces(small: Bool) -> [Path] {
+        let (side, hole, gap, outer, inner): (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat) =
+            small ? (220, 56, 22, 30, 6) : (204, 60, 12, 30, 8)
+        let a = side / 2, b = hole / 2, g = gap / 2
+        let boxes: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (-a, -a, b, -b), (b, -a, a, b), (-b, b, a, a), (-a, -b, -b, a),
+        ]
+        return boxes.enumerated().map { i, box in
+            let r = CGRect(x: 128 + box.0 + g, y: 128 + box.1 + g,
+                           width: box.2 - box.0 - gap, height: box.3 - box.1 - gap)
+            func radius(_ corner: Int) -> CGFloat { corner == i ? outer : inner }
+            let radii = RectangleCornerRadii(topLeading: radius(0), bottomLeading: radius(3),
+                                             bottomTrailing: radius(2), topTrailing: radius(1))
+            return Path(roundedRect: r, cornerRadii: radii, style: .circular)
+        }
     }
 }
 
