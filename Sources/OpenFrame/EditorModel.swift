@@ -85,6 +85,8 @@ final class EditorModel {
     private(set) var timelineScrollX: CGFloat = 0
     /// Destino do clipe sendo arrastado na vertical (outra faixa).
     private(set) var dragTarget: DragTarget?
+    /// Onde o clipe arrastado (ou aparado pelo início) é desenhado durante o gesto.
+    private(set) var dragPreview: DragPreview?
     /// Material da biblioteca sendo arrastado, para prever onde ele cai.
     var draggingMaterial: UUID?
     var exportSettings = ExportSettings()
@@ -600,7 +602,12 @@ final class EditorModel {
 
     // MARK: - Arrastar na timeline
 
+    /// Animação dos clipes que abrem espaço ou voltam ao lugar.
+    static let slide = Animation.easeOut(duration: 0.18)
+
     /// Arraste do clipe: `dx` em pontos; `rows`, deslocamento vertical em linhas.
+    /// O clipe segue o cursor nos dois sentidos (`dragPreview`); na faixa
+    /// principal, os vizinhos deslizam para abrir espaço.
     func dragMove(_ id: UUID, dx: CGFloat, rows: Int) {
         beginGesture()
         selection = id
@@ -608,47 +615,59 @@ final class EditorModel {
         let row = dragTargetRow(id, rows: rows, in: base)
         let delta = Micros(Double(dx) / zoom * 1_000_000)
         if base.tracks[loc.track].isMain {
-            if let row {
+            let start = max(0, seg.targetStart + delta)
+            setDragTarget(row.map { DragTarget(segment: id, rows: rows, row: $0, start: start) })
+            setDragPreview(DragPreview(segment: id, start: start, rows: row == nil ? 0 : rows))
+            if row != nil {
                 // Saindo da faixa principal: ela fica como estava até soltar.
-                setDragTarget(DragTarget(segment: id, rows: rows, row: row, start: max(0, seg.targetStart + delta)))
-                updateGesture { _ in }
+                slideGesture { _ in }
             } else {
-                setDragTarget(nil)
-                let center = (seg.targetStart + seg.targetEnd) / 2 + delta
-                updateGesture { TimelineEditor.reorderMain(&$0, segment: id, toCenter: center) }
+                let center = start + seg.targetDuration / 2
+                slideGesture { TimelineEditor.reorderMain(&$0, segment: id, toCenter: center) }
             }
             return
         }
         let points = TimelineEditor.snapPoints(base, excluding: id, extra: [playhead])
         let threshold = Micros(8 / zoom * 1_000_000)
-        var start = max(0, seg.targetStart + delta)
-        let snappedStart = TimelineEditor.snap(start, to: points, threshold: threshold)
-        if snappedStart != start {
-            start = snappedStart
-        } else {
-            let end = start + seg.targetDuration
-            start += TimelineEditor.snap(end, to: points, threshold: threshold) - end
-        }
+        let start = TimelineEditor.snapMove(start: max(0, seg.targetStart + delta), duration: seg.targetDuration,
+                                            to: points, threshold: threshold, forward: dx >= 0)
         setDragTarget(row.map { DragTarget(segment: id, rows: rows, row: $0, start: start) })
+        setDragPreview(DragPreview(segment: id, start: start, rows: row == nil ? 0 : rows))
         updateGesture { TimelineEditor.move(&$0, segment: id, toStart: start) }
     }
 
     /// Ao soltar: move para outra faixa (deslocamento vertical em linhas) e
-    /// resolve sobreposições.
+    /// resolve sobreposições. O clipe desliza do cursor até o lugar final.
     func endDragMove(_ id: UUID) {
-        if let target = dragTarget, target.segment == id, gestureBase != nil {
-            let order = displayTrackOrder()
-            if order.indices.contains(target.row) {
-                let track = order[target.row]
-                updateGestureInPlace { p in
-                    TimelineEditor.moveToTrack(&p, segment: id, track: track)
-                    TimelineEditor.move(&p, segment: id, toStart: target.start)
+        withAnimation(Self.slide) {
+            if let target = dragTarget, target.segment == id, gestureBase != nil {
+                let order = displayTrackOrder()
+                if order.indices.contains(target.row) {
+                    let track = order[target.row]
+                    updateGestureInPlace { p in
+                        TimelineEditor.moveToTrack(&p, segment: id, track: track)
+                        TimelineEditor.move(&p, segment: id, toStart: target.start)
+                    }
                 }
             }
+            dragTarget = nil
+            dragPreview = nil
+            updateGestureInPlace { TimelineEditor.resolveOverlap(&$0, segment: id) }
         }
-        dragTarget = nil
-        updateGestureInPlace { TimelineEditor.resolveOverlap(&$0, segment: id) }
         endGesture()
+    }
+
+    /// Atualiza o gesto animando os outros clipes quando a ordem da faixa principal muda.
+    private func slideGesture(_ change: (inout Project) -> Void) {
+        let before = project.mainTrackIndex.map { project.tracks[$0].segments.map(\.id) }
+        guard var copy = gestureBase else { return }
+        change(&copy)
+        let after = copy.mainTrackIndex.map { copy.tracks[$0].segments.map(\.id) }
+        if before != after {
+            withAnimation(Self.slide) { updateGesture(change) }
+        } else {
+            updateGesture(change)
+        }
     }
 
     /// Linha de destino (ordem de exibição) do arraste vertical, só quando a
@@ -666,20 +685,39 @@ final class EditorModel {
         if target != dragTarget { dragTarget = target }
     }
 
+    private func setDragPreview(_ preview: DragPreview?) {
+        if preview != dragPreview { dragPreview = preview }
+    }
+
+    /// Aparar pela alça: a borda arrastada segue o cursor nos dois lados.
     func dragTrim(_ id: UUID, leading: Bool, dx: CGFloat) {
         beginGesture()
         selection = id
-        guard let base = gestureBase, let seg = base.segment(id) else { return }
+        guard let base = gestureBase, let seg = base.segment(id), let loc = base.locate(id) else { return }
         let delta = Micros(Double(dx) / zoom * 1_000_000)
         let points = TimelineEditor.snapPoints(base, excluding: id, extra: [playhead])
         let threshold = Micros(8 / zoom * 1_000_000)
         if leading {
             let target = TimelineEditor.snap(seg.targetStart + delta, to: points, threshold: threshold)
             updateGesture { TimelineEditor.trimStart(&$0, segment: id, to: target) }
+            // A faixa principal é magnética: o clipe aparado volta ao início do
+            // espaço e os seguintes o acompanham. Durante o gesto eles ficam onde
+            // estavam, com o início sob o cursor; o espaço fecha ao soltar.
+            if base.tracks[loc.track].isMain, let now = project.segment(id) {
+                let shift = seg.targetDuration - now.targetDuration
+                setDragPreview(DragPreview(segment: id, start: now.targetStart + shift, rows: 0, following: shift))
+            }
         } else {
             let target = TimelineEditor.snap(seg.targetEnd + delta, to: points, threshold: threshold)
             updateGesture { TimelineEditor.trimEnd(&$0, segment: id, to: target) }
         }
+    }
+
+    func endDragTrim() {
+        if dragPreview != nil {
+            withAnimation(Self.slide) { dragPreview = nil }
+        }
+        endGesture()
     }
 
     private func updateGestureInPlace(_ change: (inout Project) -> Void) {
@@ -955,4 +993,17 @@ struct DragTarget: Equatable {
     let rows: Int
     let row: Int
     let start: Micros
+}
+
+/// Onde o clipe do gesto é desenhado: segue o cursor, enquanto o projeto já
+/// mostra o resultado (vizinhos no novo lugar).
+struct DragPreview: Equatable {
+    let segment: UUID
+    /// Início desenhado do clipe.
+    let start: Micros
+    /// Deslocamento vertical em linhas, só sobre uma faixa que aceita o clipe.
+    let rows: Int
+    /// Na faixa principal, quanto os clipes seguintes ficam deslocados enquanto
+    /// o início é aparado.
+    var following: Micros = 0
 }

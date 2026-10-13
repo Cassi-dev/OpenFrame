@@ -209,11 +209,17 @@ public enum TimelineEditor {
         p.tracks[t].segments[i].targetStart = max(0, start)
     }
 
-    /// Reordena um segmento da faixa principal pela posição do centro.
+    /// Reordena um segmento da faixa principal pela posição do centro. A regra
+    /// é a mesma nos dois sentidos: o clipe passa um vizinho quando o centro
+    /// dele passa do centro do vizinho; no empate, nada troca.
     public static func reorderMain(_ p: inout Project, segment id: UUID, toCenter center: Micros) {
         guard let (t, i) = p.locate(id), p.tracks[t].isMain else { return }
+        let segments = p.tracks[t].segments
+        let index = segments.indices.filter { j in
+            let c = (segments[j].targetStart + segments[j].targetEnd) / 2
+            return j < i ? c <= center : (j > i && c < center)
+        }.count
         let seg = p.tracks[t].segments.remove(at: i)
-        let index = p.tracks[t].segments.filter { ($0.targetStart + $0.targetEnd) / 2 < center }.count
         p.tracks[t].segments.insert(seg, at: index)
         relayoutMain(&p)
     }
@@ -324,7 +330,29 @@ public enum TimelineEditor {
     }
 
     public static func snap(_ t: Micros, to points: [Micros], threshold: Micros) -> Micros {
-        var best = t
+        nearestPoint(t, in: points, threshold: threshold) ?? t
+    }
+
+    /// Ímã ao mover um clipe inteiro: a borda (início ou fim) mais perto de um
+    /// ponto vence; no empate, a que vai à frente no sentido do arraste. Assim
+    /// arrastar para a direita e para a esquerda se comportam como espelhos.
+    public static func snapMove(start: Micros, duration: Micros, to points: [Micros],
+                                threshold: Micros, forward: Bool) -> Micros {
+        let end = start + duration
+        let byStart = nearestPoint(start, in: points, threshold: threshold).map { $0 - start }
+        let byEnd = nearestPoint(end, in: points, threshold: threshold).map { $0 - end }
+        switch (byStart, byEnd) {
+        case let (s?, e?):
+            if abs(s) == abs(e) { return start + (forward ? e : s) }
+            return start + (abs(s) < abs(e) ? s : e)
+        case let (s?, nil): return start + s
+        case let (nil, e?): return start + e
+        case (nil, nil): return start
+        }
+    }
+
+    private static func nearestPoint(_ t: Micros, in points: [Micros], threshold: Micros) -> Micros? {
+        var best: Micros?
         var bestDistance = threshold + 1
         for point in points {
             let d = abs(point - t)

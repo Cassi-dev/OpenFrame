@@ -192,19 +192,48 @@ public enum TextAlignmentKind: String, Codable, CaseIterable, Sendable {
     case left, center, right
 }
 
+/// Caixa das letras aplicada na hora de desenhar; o texto guardado não muda.
+public enum TextCase: String, Codable, CaseIterable, Sendable {
+    case none, upper, lower, title
+}
+
+/// Estilo de um texto. Medidas tipográficas (espaçamentos, sombra, margens e
+/// raio do fundo) são frações do tamanho da fonte (em), como no CapCut, para
+/// acompanhar o tamanho e a resolução.
 public struct TextStyle: Codable, Hashable, Sendable {
     public var fontName = "Helvetica Neue"
+    /// Estilo dentro da família ("Light", "Medium"…); vazio = estilo normal.
+    public var fontFace = ""
     /// Tamanho como fração da altura do canvas, para independer da resolução.
     public var fontSize: Double = 0.07
     public var bold = true
     public var italic = false
+    public var underline = false
+    public var textCase = TextCase.none
     public var color = RGBA.white
+    /// Opacidade do texto inteiro (letras, contorno, fundo e sombra).
+    public var opacity: Double = 1
     public var strokeColor = RGBA.black
     /// Espessura do contorno em % do tamanho da fonte (0 = sem contorno).
+    /// Metade dela fica para fora da letra, como no traço centrado anterior.
     public var strokeWidth: Double = 0
+    /// Espaço extra entre letras, em em.
+    public var letterSpacing: Double = 0
+    /// Espaço extra entre linhas, em em (negativo aproxima as linhas).
+    public var lineSpacing: Double = 0
     public var backgroundEnabled = false
+    /// A opacidade do fundo é o alfa desta cor.
     public var backgroundColor = RGBA(0, 0, 0, 0.6)
+    public var backgroundRadius: Double = 0.18
+    public var backgroundPaddingX: Double = 0.21
+    public var backgroundPaddingY: Double = 0.21
     public var shadow = true
+    /// A opacidade da sombra é o alfa desta cor.
+    public var shadowColor = RGBA(0, 0, 0, 0.65)
+    public var shadowDistance: Double = 0.04
+    /// Direção da sombra em graus: 0 = direita, 90 = cima, -90 = baixo.
+    public var shadowAngle: Double = -90
+    public var shadowBlur: Double = 0.15
     public var alignment = TextAlignmentKind.center
     public var x: Double = 0
     public var y: Double = -0.7
@@ -214,6 +243,44 @@ public struct TextStyle: Codable, Hashable, Sendable {
     public var maxWidth: Double = 0.9
 
     public init() {}
+
+    /// Campos ausentes (projetos salvos por versões anteriores) ficam com o padrão.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TextStyle()
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        fontName = try value(.fontName, d.fontName)
+        fontFace = try value(.fontFace, d.fontFace)
+        fontSize = try value(.fontSize, d.fontSize)
+        bold = try value(.bold, d.bold)
+        italic = try value(.italic, d.italic)
+        underline = try value(.underline, d.underline)
+        textCase = try value(.textCase, d.textCase)
+        color = try value(.color, d.color)
+        opacity = try value(.opacity, d.opacity)
+        strokeColor = try value(.strokeColor, d.strokeColor)
+        strokeWidth = try value(.strokeWidth, d.strokeWidth)
+        letterSpacing = try value(.letterSpacing, d.letterSpacing)
+        lineSpacing = try value(.lineSpacing, d.lineSpacing)
+        backgroundEnabled = try value(.backgroundEnabled, d.backgroundEnabled)
+        backgroundColor = try value(.backgroundColor, d.backgroundColor)
+        backgroundRadius = try value(.backgroundRadius, d.backgroundRadius)
+        backgroundPaddingX = try value(.backgroundPaddingX, d.backgroundPaddingX)
+        backgroundPaddingY = try value(.backgroundPaddingY, d.backgroundPaddingY)
+        shadow = try value(.shadow, d.shadow)
+        shadowColor = try value(.shadowColor, d.shadowColor)
+        shadowDistance = try value(.shadowDistance, d.shadowDistance)
+        shadowAngle = try value(.shadowAngle, d.shadowAngle)
+        shadowBlur = try value(.shadowBlur, d.shadowBlur)
+        alignment = try value(.alignment, d.alignment)
+        x = try value(.x, d.x)
+        y = try value(.y, d.y)
+        scale = try value(.scale, d.scale)
+        rotation = try value(.rotation, d.rotation)
+        maxWidth = try value(.maxWidth, d.maxWidth)
+    }
 }
 
 public struct TextContent: Codable, Hashable, Sendable {
