@@ -38,6 +38,26 @@ enum DebugSnapshot {
                 model.inspectorTab = .text
                 await wait(1)
                 capture("5-texto", to: dir)
+                // Recursos novos de texto ligados: espaçamentos, sublinhado, contorno, fundo e sombra.
+                model.mutate {
+                    TimelineEditor.update(&$0, segment: text.id) {
+                        $0.text?.style.letterSpacing = 0.12
+                        $0.text?.style.lineSpacing = 0.3
+                        $0.text?.style.underline = true
+                        $0.text?.style.strokeWidth = 6
+                        $0.text?.style.backgroundEnabled = true
+                        $0.text?.style.backgroundRadius = 0.5
+                        $0.text?.style.shadow = true
+                        $0.text?.style.shadowAngle = -45
+                        $0.text?.style.shadowDistance = 0.1
+                    }
+                }
+                await wait(1)
+                await captureInspectorScrolled("5b-texto-rolado", to: dir)
+                await capturePlayerFrame(model, at: (text.targetStart + text.targetEnd) / 2,
+                                         to: dir.appendingPathComponent("5c-texto-estilizado-frame.png"))
+                model.undo()
+                await wait(0.5)
             }
             if let audio = p.tracks.first(where: { $0.kind == .audio })?.segments.first {
                 model.selection = audio.id
@@ -138,7 +158,7 @@ enum DebugSnapshot {
     }
 
     /// Lê o quadro que o AVPlayer está exibindo (a camada de vídeo não entra no cacheDisplay).
-    private static func capturePlayerFrame(_ model: EditorModel, to url: URL) async {
+    private static func capturePlayerFrame(_ model: EditorModel, at time: Micros = 2_000_000, to url: URL) async {
         guard let item = model.player.currentItem else {
             log("preview: sem item no player")
             return
@@ -148,7 +168,7 @@ enum DebugSnapshot {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         ])
         item.add(output)
-        model.seek(to: 2_000_000)
+        model.seek(to: time)
         try? await Task.sleep(for: .seconds(1.5))
         let time = item.currentTime()
         guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else {
@@ -172,6 +192,33 @@ enum DebugSnapshot {
 
     private static func log(_ message: String) {
         FileHandle.standardError.write(Data("[snapshot] \(message)\n".utf8))
+    }
+
+    /// Rola o inspetor (a rolagem mais à direita da janela) até o meio e o fim, capturando cada parte.
+    private static func captureInspectorScrolled(_ name: String, to dir: URL) async {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.height > 150 }),
+              let root = window.contentView else { return }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        let inspector = scrollViews(root)
+            .filter { ($0.documentView?.frame.height ?? 0) > $0.contentView.bounds.height + 1 }
+            .max { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+        guard let scroll = inspector, let document = scroll.documentView else {
+            log("inspetor: rolagem não encontrada")
+            return
+        }
+        let travel = max(0, document.frame.height - scroll.contentView.bounds.height)
+        log("inspetor: conteúdo \(Int(document.frame.height)) pt, visível \(Int(scroll.contentView.bounds.height)) pt")
+        for (index, fraction) in [0.5, 1.0].enumerated() {
+            let y = document.isFlipped ? travel * fraction : travel * (1 - fraction)
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try? await Task.sleep(for: .seconds(0.5))
+            capture("\(name)-\(index + 1)", to: dir)
+        }
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     private static func capture(_ name: String, to dir: URL) {
