@@ -43,6 +43,30 @@ enum DebugSnapshot {
                 model.inspectorTab = .text
                 await wait(1)
                 capture("5-texto", to: dir)
+                // Recursos novos de texto ligados: espaçamentos, sublinhado, contorno, fundo e sombra.
+                model.mutate {
+                    TimelineEditor.update(&$0, segment: text.id) {
+                        $0.text?.style.letterSpacing = 0.12
+                        $0.text?.style.lineSpacing = 0.3
+                        $0.text?.style.underline = true
+                        $0.text?.style.strokeWidth = 6
+                        $0.text?.style.backgroundEnabled = true
+                        $0.text?.style.backgroundRadius = 0.5
+                        $0.text?.style.shadow = true
+                        $0.text?.style.shadowAngle = -45
+                        $0.text?.style.shadowDistance = 0.1
+                    }
+                }
+                await wait(1)
+                await captureInspectorScrolled("5b-texto-rolado", to: dir)
+                await capturePlayerFrame(model, at: (text.targetStart + text.targetEnd) / 2,
+                                         to: dir.appendingPathComponent("5c-texto-estilizado-frame.png"))
+                await captureInspectorTabs(model, segment: text, prefix: "17-inspetor-texto", to: dir)
+                model.undo()
+                await wait(0.5)
+            }
+            if let main = p.mainTrackIndex, let first = p.tracks[main].segments.first {
+                await captureInspectorTabs(model, segment: first, prefix: "18-inspetor-clipe", to: dir)
             }
             if let audio = p.tracks.first(where: { $0.kind == .audio })?.segments.first {
                 model.selection = audio.id
@@ -143,7 +167,7 @@ enum DebugSnapshot {
     }
 
     /// Lê o quadro que o AVPlayer está exibindo (a camada de vídeo não entra no cacheDisplay).
-    private static func capturePlayerFrame(_ model: EditorModel, to url: URL) async {
+    private static func capturePlayerFrame(_ model: EditorModel, at time: Micros = 2_000_000, to url: URL) async {
         guard let item = model.player.currentItem else {
             log("preview: sem item no player")
             return
@@ -153,7 +177,7 @@ enum DebugSnapshot {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         ])
         item.add(output)
-        model.seek(to: 2_000_000)
+        model.seek(to: time)
         try? await Task.sleep(for: .seconds(1.5))
         let time = item.currentTime()
         guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else {
@@ -230,6 +254,56 @@ enum DebugSnapshot {
 
     private static func log(_ message: String) {
         FileHandle.standardError.write(Data("[snapshot] \(message)\n".utf8))
+    }
+
+    /// Rola o inspetor (a rolagem mais à direita da janela) até cada fração e captura.
+    /// Com `region`, salva só o inspetor com o título e as abas acima da rolagem.
+    private static func captureInspectorScrolled(_ name: String, fractions: [Double] = [0.5, 1],
+                                                 region: Bool = false, to dir: URL) async {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.height > 150 }),
+              let root = window.contentView else { return }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        guard let scroll = scrollViews(root).filter({ $0.documentView != nil })
+            .max(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+              let document = scroll.documentView else {
+            log("inspetor: rolagem não encontrada")
+            return
+        }
+        let travel = max(0, document.frame.height - scroll.contentView.bounds.height)
+        log("inspetor \(name): conteúdo \(Int(document.frame.height)) pt, visível \(Int(scroll.contentView.bounds.height)) pt")
+        var area = scroll.convert(scroll.bounds, to: root)
+        let above: CGFloat = 150
+        if root.isFlipped { area.origin.y -= above }
+        area.size.height += above
+        area = area.insetBy(dx: -8, dy: 0).intersection(root.bounds)
+        for (index, fraction) in fractions.enumerated() {
+            let y = document.isFlipped ? travel * fraction : travel * (1 - fraction)
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try? await Task.sleep(for: .seconds(0.5))
+            let file = "\(name)-\(index + 1)"
+            if region {
+                guard let rep = root.bitmapImageRepForCachingDisplay(in: area) else { continue }
+                root.cacheDisplay(in: area, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("\(file).png"))
+            } else {
+                capture(file, to: dir)
+            }
+        }
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    /// Todas as abas do inspetor do segmento, no topo, no meio e no fim da rolagem.
+    private static func captureInspectorTabs(_ model: EditorModel, segment: Segment, prefix: String, to dir: URL) async {
+        model.selection = segment.id
+        for tab in model.availableTabs(for: segment) {
+            model.inspectorTab = tab
+            try? await Task.sleep(for: .seconds(tab == .filters ? 2 : 0.8))
+            await captureInspectorScrolled("\(prefix)-\(tab.rawValue)", fractions: [0, 0.5, 1], region: true, to: dir)
+        }
     }
 
     private static func capture(_ name: String, to dir: URL) {

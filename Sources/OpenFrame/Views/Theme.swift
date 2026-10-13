@@ -35,6 +35,8 @@ enum Theme {
     static let panelRadius: CGFloat = 14
     static let cardRadius: CGFloat = 10
     static let fieldRadius: CGFloat = 8
+    /// Altura do degradê no topo das rolagens sob título fixo.
+    static let scrollFade: CGFloat = 16
 
     /// SF Pro, só entre os pesos 200 e 500.
     enum Weight {
@@ -65,6 +67,21 @@ extension View {
         background(Theme.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.hairline))
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+
+    /// Rolagem logo abaixo de um título fixo: o conteúdo some num degradê curto no
+    /// topo em vez de aparecer cortado colado no título. Quem usa reserva o mesmo
+    /// espaço no início do conteúdo (`Theme.scrollFade`), para nada ficar apagado em repouso.
+    func scrollFadeTop(_ height: CGFloat = Theme.scrollFade) -> some View {
+        mask {
+            VStack(spacing: 0) {
+                // O primeiro terço fica transparente: nada encosta no título.
+                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .clear, location: 0.35),
+                                       .init(color: .black, location: 1)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: height)
+                Rectangle()
+            }
+        }
     }
 
     /// Campo elevado (entradas, menus, cartões).
@@ -227,7 +244,9 @@ struct FieldRow<Content: View>: View {
                 .font(Theme.font(12))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
-                .frame(width: 84, alignment: .leading)
+                // Largura mínima alinha as colunas; rótulos maiores crescem em vez de cortar.
+                .fixedSize()
+                .frame(minWidth: 84, alignment: .leading)
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

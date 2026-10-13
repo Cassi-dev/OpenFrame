@@ -98,9 +98,12 @@ private struct MediaPanel: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 10)], spacing: 14) {
                         ForEach(materials) { MaterialTile(material: $0) }
                     }
+                    .padding(.top, Theme.scrollFade)
                     .padding(.bottom, 8)
                 }
                 .scrollIndicators(.never)
+                .scrollFadeTop()
+                .padding(.top, -Theme.scrollFade / 2)
             }
         }
         .padding(14)
@@ -260,7 +263,7 @@ struct WaveformBars: View {
 
 /// Estilos prontos de texto, usados na biblioteca e no inspetor.
 enum TextStylePreset: String, CaseIterable, Identifiable {
-    case classic, outline, highlight, neon
+    case classic, outline, highlight, neon, caption, label, longShadow, spaced
 
     var id: String { rawValue }
 
@@ -270,32 +273,72 @@ enum TextStylePreset: String, CaseIterable, Identifiable {
         case .outline: "Contorno"
         case .highlight: "Destaque"
         case .neon: "Neon"
+        case .caption: "Legenda"
+        case .label: "Etiqueta"
+        case .longShadow: "Sombra dura"
+        case .spaced: "Espaçado"
         }
     }
 
-    /// Aplica o estilo mantendo fonte, tamanho, posição e alinhamento.
+    /// Aplica o estilo mantendo fonte, tamanho, posição, alinhamento e largura.
     func applied(to old: TextStyle) -> TextStyle {
         var s = TextStyle()
         s.fontName = old.fontName
+        s.fontFace = old.fontFace
         s.fontSize = old.fontSize
         s.x = old.x
         s.y = old.y
+        s.scale = old.scale
+        s.rotation = old.rotation
+        s.maxWidth = old.maxWidth
         s.alignment = old.alignment
         switch self {
         case .classic:
             break
         case .outline:
-            s.strokeWidth = 4
+            s.strokeWidth = 8
             s.shadow = false
         case .highlight:
             s.color = .black
             s.backgroundEnabled = true
             s.backgroundColor = .yellow
+            s.backgroundRadius = 0.12
             s.shadow = false
         case .neon:
+            // Brilho feito com a sombra: sem distância, bem desfocada, na cor do texto.
             s.color = RGBA(0.3, 1, 0.95)
             s.strokeWidth = 2
             s.strokeColor = RGBA(0.05, 0.2, 0.4)
+            s.shadowColor = RGBA(0.3, 1, 0.95, 0.9)
+            s.shadowDistance = 0
+            s.shadowBlur = 0.35
+        case .caption:
+            s.bold = false
+            s.backgroundEnabled = true
+            s.backgroundColor = RGBA(0, 0, 0, 0.55)
+            s.backgroundRadius = 0.25
+            s.backgroundPaddingX = 0.35
+            s.backgroundPaddingY = 0.15
+            s.shadow = false
+        case .label:
+            s.textCase = .upper
+            s.letterSpacing = 0.08
+            s.backgroundEnabled = true
+            s.backgroundColor = RGBA(0.9, 0.2, 0.25)
+            s.backgroundRadius = 1
+            s.backgroundPaddingX = 0.5
+            s.shadow = false
+        case .longShadow:
+            s.shadowColor = RGBA(0, 0, 0, 1)
+            s.shadowAngle = -45
+            s.shadowDistance = 0.1
+            s.shadowBlur = 0
+        case .spaced:
+            s.textCase = .upper
+            s.bold = false
+            s.letterSpacing = 0.3
+            s.lineSpacing = 0.2
+            s.shadow = false
         }
         return s
     }
@@ -318,6 +361,18 @@ enum TextStylePreset: String, CaseIterable, Identifiable {
         case .neon:
             text.foregroundStyle(Color(red: 0.3, green: 1, blue: 0.95))
                 .shadow(color: Color(red: 0.3, green: 1, blue: 0.95).opacity(0.8), radius: 6)
+        case .caption:
+            Text("Aa").font(.system(size: 20, weight: .regular)).foregroundStyle(.white)
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 5))
+        case .label:
+            Text("AA").font(.system(size: 18, weight: .semibold)).tracking(1.5).foregroundStyle(.white)
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                .background(Color(red: 0.9, green: 0.2, blue: 0.25), in: Capsule())
+        case .longShadow:
+            text.foregroundStyle(.white).shadow(color: .black, radius: 0, x: 2, y: 2)
+        case .spaced:
+            Text("AA").font(.system(size: 18, weight: .regular)).tracking(6).foregroundStyle(.white)
         }
     }
 }
@@ -404,8 +459,11 @@ private struct CaptionsPanel: View {
                     VStack(spacing: 2) {
                         ForEach(cues) { CueRow(segment: $0) }
                     }
+                    .padding(.top, Theme.scrollFade)
                 }
                 .scrollIndicators(.never)
+                .scrollFadeTop()
+                .padding(.top, -Theme.scrollFade / 2)
             }
         }
         .padding(14)
