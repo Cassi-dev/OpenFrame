@@ -41,15 +41,25 @@ git push origin develop
 
 ### Release
 
+A `main` é protegida no GitHub: só muda por pull request.
+
 ```bash
 git switch -c release/0.2.0 develop
 # atualizar CFBundleShortVersionString/CFBundleVersion em scripts/make-app.sh
 # e as notas da versão; só correções pequenas daqui em diante
 ./scripts/test.sh && ./scripts/make-app.sh
-git switch main    && git merge --no-ff release/0.2.0 && git tag -a v0.2.0 -m "OpenFrame 0.2.0"
-git switch develop && git merge --no-ff release/0.2.0
-git branch -d release/0.2.0
-git push origin main develop --tags
+git push -u origin release/0.2.0
+```
+
+No GitHub, abra o pull request `release/0.2.0 → main` e faça o merge com
+**Create a merge commit** (squash ou rebase quebrariam a ligação com a `develop`).
+Depois:
+
+```bash
+git switch main && git pull
+git tag -a v0.2.0 -m "OpenFrame 0.2.0" && git push origin v0.2.0
+git switch develop && git merge --no-ff main && git push origin develop
+git branch -d release/0.2.0 && git push origin --delete release/0.2.0
 ```
 
 ### Hotfix
@@ -57,16 +67,23 @@ git push origin main develop --tags
 ```bash
 git switch -c hotfix/0.2.1 main
 # corrigir, testar e atualizar a versão em scripts/make-app.sh
-git switch main    && git merge --no-ff hotfix/0.2.1 && git tag -a v0.2.1 -m "OpenFrame 0.2.1"
-git switch develop && git merge --no-ff hotfix/0.2.1
-git branch -d hotfix/0.2.1
-git push origin main develop --tags
+git push -u origin hotfix/0.2.1
+```
+
+Pull request `hotfix/0.2.1 → main` no GitHub (merge commit) e, depois do merge:
+
+```bash
+git switch main && git pull
+git tag -a v0.2.1 -m "OpenFrame 0.2.1" && git push origin v0.2.1
+git switch develop && git merge --no-ff main && git push origin develop
+git branch -d hotfix/0.2.1 && git push origin --delete hotfix/0.2.1
 ```
 
 ## Regras
 
 - `./scripts/test.sh` passa antes de qualquer merge.
 - Merges sempre com `--no-ff`, para o histórico mostrar cada feature como um bloco.
+- A `main` nunca recebe push direto: só pull requests de `release/*` ou `hotfix/*`.
 - Versões no formato semântico `MAJOR.MINOR.PATCH`: feature → MINOR, hotfix → PATCH.
 - Mensagens de commit no padrão convencional, em português:
   `feat:`, `fix:`, `refactor:`, `style:`, `docs:`, `test:`, `chore:`.
