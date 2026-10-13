@@ -367,6 +367,11 @@ Git: ver a seção 11 (gitflow, remoto `origin` no GitHub).
 ## 9. Pendências e próximos passos sugeridos
 
 **OpenFrame**
+- Itens de usabilidade da timeline que o usuário deixou para depois: scrub ao
+  passar o mouse, linha de encaixe, etiqueta de tempo durante o arraste,
+  copiar/colar e seleção múltipla, botões repetidos na barra da timeline,
+  timeline vazia com instrução, travar faixa.
+- Tempo da cápsula de transporte truncado em projetos de mais de 1 h ("1:30:0…").
 - Teste manual das interações: arrastar entre faixas, aparar, scrub, atalhos,
   importar arrastando arquivos.
 - Volume acima de 100% (exigiria processamento de áudio próprio, já que o
@@ -440,6 +445,11 @@ Pedido do usuário (13/10/2026): `main` é sempre a versão mais atual e sem bug
   Releases e hotfixes chegam a ela por PR com "Create a merge commit"; a tag é
   criada depois do merge, na `main` atualizada.
 - `v0.1.0` aponta para `833edee`; o PR `release/0.1.0 → main` leva esse commit à `main`.
+- `v0.2.0` aponta para `a62d2b3` (merge do PR #2 `release/0.2.0 → main`, seção 12).
+- GitHub CLI `gh` 2.102.0 instalado via Homebrew e autenticado como
+  `talescavalcanti` (HTTPS, keyring): PRs podem ser abertos daqui (`gh pr create`).
+- Merges na `develop` e pushes passam pelo classificador de permissões do Claude
+  Code: pedir autorização do usuário antes.
 
 
 ---
@@ -487,3 +497,23 @@ O que entrou:
 - **Não verificado:** arrastes reais (biblioteca → timeline, agulha, entre faixas),
   hover das transições e duplo clique na alça, por falta de permissão de
   acessibilidade. O arraste vertical e a rolagem foram conferidos pelo `DebugSnapshot`.
+
+**`bugfix/inspetor-apagar-clipe`**: apagar o clipe selecionado (⌫) fechava o app.
+O SwiftUI reavalia a aba do inspetor uma vez depois que o segmento sai do projeto,
+e `EditorModel.binding` desembrulhava à força um valor nulo. O bug já existia antes
+da timeline (crash das 01:12). Agora os bindings usam a última versão conhecida do
+segmento (`inspectedSegments`). O `DebugSnapshot` apaga um clipe com o inspetor
+aberto: sem a correção, o app cai; com ela, continua aberto.
+Diagnóstico: relatórios `.ips` em `~/Library/Logs/DiagnosticReports/OpenFrame-*.ips`.
+
+**Release 0.2.0**: as três branches entraram na `develop` (`--no-ff`); a
+`release/0.2.0` mudou a versão em `make-app.sh` (0.2.0, build 2); PR #2 mesclado
+na `main`, tag `v0.2.0`, `main` mesclada de volta na `develop` e branches apagadas.
+
+**Testar o app**: `./scripts/make-app.sh && open -n build/OpenFrame.app --args -open
+<projeto>`. Projetos de teste do agente 04 (Demo com 4 faixas, Single, Long de 2 h)
+ficaram num scratchpad temporário em `/private/tmp/claude-501/…/scratchpad/demo/`,
+que pode ser apagado; `./scripts/make-demo.sh` gera um projeto novo.
+
+**Agentes do Maestri**: eu sou o "01"; o "04" fez a `feature/timeline-zoom`; o "05"
+fez a logo. Delegação com `maestri ask "04" "…"` e retorno por `maestri ask "01"`.
