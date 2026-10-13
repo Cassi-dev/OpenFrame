@@ -26,7 +26,7 @@ struct PreviewPanel: View {
 
     private var emptyState: some View {
         VStack(spacing: 14) {
-            LogoMark(frameColor: Theme.textTertiary, needleColor: Theme.accent.opacity(0.6))
+            LogoMark(frameColor: Theme.textTertiary, litColor: Theme.accent.opacity(0.6))
                 .frame(width: 54, height: 54)
             Text("Importe mídia e adicione à timeline")
                 .foregroundStyle(Theme.textSecondary)
