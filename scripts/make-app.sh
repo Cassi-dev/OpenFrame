@@ -1,15 +1,21 @@
 #!/bin/bash
-# Compila em modo release e monta build/OpenFrame.app.
+# Compila em modo release e monta build/OpenFrame.app, universal (Apple Silicon e Intel).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release --product OpenFrame
-BIN="$(swift build -c release --show-bin-path)/OpenFrame"
+# Sem Xcode, o `--arch arm64 --arch x86_64` do SwiftPM não funciona (pede o xcbuild):
+# compila cada arquitetura com o próprio triple e junta com o lipo.
+BINS=()
+for ARCH in arm64 x86_64; do
+    TRIPLE="$ARCH-apple-macosx14.0"
+    swift build -c release --product OpenFrame --triple "$TRIPLE"
+    BINS+=("$(swift build -c release --triple "$TRIPLE" --show-bin-path)/OpenFrame")
+done
 
 APP=build/OpenFrame.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/OpenFrame"
+lipo -create "${BINS[@]}" -output "$APP/Contents/MacOS/OpenFrame"
 cp assets/brand/appicon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'

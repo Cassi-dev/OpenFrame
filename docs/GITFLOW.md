@@ -47,7 +47,7 @@ A `main` é protegida no GitHub: só muda por pull request.
 git switch -c release/0.2.0 develop
 # atualizar CFBundleShortVersionString/CFBundleVersion em scripts/make-app.sh
 # e as notas da versão; só correções pequenas daqui em diante
-./scripts/test.sh && ./scripts/make-app.sh
+./scripts/test.sh && ./scripts/make-dmg.sh   # app + build/OpenFrame-0.2.0.dmg
 git push -u origin release/0.2.0
 ```
 
@@ -58,9 +58,14 @@ Depois:
 ```bash
 git switch main && git pull
 git tag -a v0.2.0 -m "OpenFrame 0.2.0" && git push origin v0.2.0
+./scripts/make-dmg.sh                          # instalador a partir da main marcada
+gh release create v0.2.0 build/OpenFrame-0.2.0.dmg --title "OpenFrame 0.2.0" --notes "..."
 git switch develop && git merge --no-ff main && git push origin develop
 git branch -d release/0.2.0 && git push origin --delete release/0.2.0
 ```
+
+Cada release no GitHub leva o instalador `.dmg` (app universal, Apple Silicon e
+Intel, assinatura ad-hoc, sem notarização).
 
 ### Hotfix
 
