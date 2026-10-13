@@ -1,0 +1,17 @@
+#!/bin/sh
+# Gitflow do OpenFrame: main e develop só recebem merges, nunca commits diretos.
+# Para concluir um merge com conflito o commit é liberado.
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+case "$branch" in
+  main|develop)
+    if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then exit 0; fi
+    echo "OpenFrame (gitflow): não faça commits direto na '$branch'." >&2
+    echo "Crie uma branch, por exemplo:" >&2
+    echo "  git switch -c feature/<nome> develop" >&2
+    echo "  git switch -c bugfix/<nome> develop" >&2
+    echo "  git switch -c hotfix/<versão> main" >&2
+    echo "Veja docs/GITFLOW.md." >&2
+    exit 1
+    ;;
+esac
+exit 0
