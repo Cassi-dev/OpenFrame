@@ -70,6 +70,10 @@ struct OpenFrameApp: App {
                 Button(model.isPlaying ? "Pausar  ␣" : "Reproduzir  ␣") { model.togglePlay() }
                 Button("Quadro anterior  ←") { model.step(frames: -1) }
                 Button("Próximo quadro  →") { model.step(frames: 1) }
+                Button("Corte anterior  ↑") { model.jumpToEdit(forward: false) }
+                Button("Próximo corte  ↓") { model.jumpToEdit(forward: true) }
+                Button("Ir para o início  ↖") { model.goToStart() }
+                Button("Ir para o fim  ↘") { model.goToEnd() }
                 Divider()
                 Button("Aproximar timeline") { model.zoomIn() }
                     .keyboardShortcut("=")

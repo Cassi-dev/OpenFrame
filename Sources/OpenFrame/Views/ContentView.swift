@@ -5,6 +5,8 @@ struct ContentView: View {
     @Environment(EditorModel.self) private var model
     @AppStorage("timelineHeight") private var timelineHeight: Double = 340
     @State private var dragStartHeight: Double?
+    /// Altura antes de maximizar a timeline, para voltar a ela.
+    @State private var heightBeforeMaximize: Double?
 
     static let barHeight: CGFloat = 52
 
@@ -57,10 +59,29 @@ struct ContentView: View {
     }
 
     private func clampedTimelineHeight(total: CGFloat) -> CGFloat {
-        min(max(CGFloat(timelineHeight), 190), max(190, total - Self.barHeight - 360))
+        min(max(CGFloat(timelineHeight), 190), maxTimelineHeight(total: total))
     }
 
-    /// Faixa fina entre o preview e a timeline; arrastar muda a altura da timeline.
+    private func maxTimelineHeight(total: CGFloat) -> CGFloat {
+        max(190, total - Self.barHeight - 360)
+    }
+
+    /// Maximiza a timeline ou volta à altura de antes.
+    private func toggleMaximized(total: CGFloat) {
+        let maximum = Double(maxTimelineHeight(total: total))
+        withAnimation(.easeOut(duration: 0.2)) {
+            if Double(clampedTimelineHeight(total: total)) >= maximum - 1 {
+                timelineHeight = heightBeforeMaximize ?? 340
+                heightBeforeMaximize = nil
+            } else {
+                heightBeforeMaximize = Double(clampedTimelineHeight(total: total))
+                timelineHeight = maximum
+            }
+        }
+    }
+
+    /// Faixa fina entre o preview e a timeline; arrastar muda a altura da
+    /// timeline e o duplo clique maximiza.
     private func resizeHandle(total: CGFloat) -> some View {
         Capsule()
             .fill(Color.white.opacity(0.12))
@@ -77,7 +98,12 @@ struct ContentView: View {
                     dragStartHeight = start
                     timelineHeight = start - Double(value.translation.height)
                 }
-                .onEnded { _ in dragStartHeight = nil })
+                .onEnded { _ in
+                    dragStartHeight = nil
+                    heightBeforeMaximize = nil
+                })
+            .onTapGesture(count: 2) { toggleMaximized(total: total) }
+            .help("Arraste para redimensionar a timeline; clique duas vezes para maximizar")
     }
 }
 

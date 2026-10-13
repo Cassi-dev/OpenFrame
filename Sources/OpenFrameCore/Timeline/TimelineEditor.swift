@@ -79,6 +79,49 @@ public enum TimelineEditor {
         return seg.id
     }
 
+    /// Insere o material solto na timeline em `time`, sobre a faixa `track`
+    /// (índice em `p.tracks`; nil fora das faixas). Visual sobre uma sobreposição
+    /// ou um texto vira sobreposição; nos demais casos entra na faixa principal,
+    /// na junção mais próxima de `time`. Áudio fica na faixa indicada se ela for
+    /// de áudio e estiver livre; senão, numa faixa de áudio livre.
+    @discardableResult
+    public static func insertMedia(_ m: Material, into p: inout Project, at time: Micros, track: Int?) -> UUID {
+        if !p.materials.contains(where: { $0.id == m.id }) { p.materials.append(m) }
+        let target = track.flatMap { p.tracks.indices.contains($0) ? $0 : nil }
+        var seg = Segment(materialId: m.id, source: sourceRange(for: m), targetStart: max(0, time))
+        if m.kind == .audio {
+            if let t = target, p.tracks[t].kind == .audio, isFree(p.tracks[t], range: seg.targetRange) {
+                p.tracks[t].segments.append(seg)
+                p.tracks[t].segments.sort { $0.targetStart < $1.targetStart }
+            } else {
+                place(seg, kind: .audio, in: &p)
+            }
+            return seg.id
+        }
+        if let t = target, !p.tracks[t].isMain, p.tracks[t].kind != .audio {
+            seg.transform.scale = 0.5
+            if p.tracks[t].kind == .video, isFree(p.tracks[t], range: seg.targetRange) {
+                p.tracks[t].segments.append(seg)
+                p.tracks[t].segments.sort { $0.targetStart < $1.targetStart }
+            } else {
+                place(seg, kind: .video, in: &p)
+            }
+            return seg.id
+        }
+        if p.mainTrackIndex == nil {
+            p.tracks.insert(Track(kind: .video, isMain: true), at: 0)
+        }
+        let mi = p.mainTrackIndex!
+        let index = p.tracks[mi].segments.filter { ($0.targetStart + $0.targetEnd) / 2 < time }.count
+        p.tracks[mi].segments.insert(seg, at: index)
+        relayoutMain(&p)
+        return seg.id
+    }
+
+    private static func isFree(_ track: Track, range: TimeRange) -> Bool {
+        !track.segments.contains { $0.targetStart < range.end && range.start < $0.targetEnd }
+    }
+
     @discardableResult
     public static func addText(_ content: TextContent, to p: inout Project, at time: Micros, duration: Micros = defaultTextDuration) -> UUID {
         let seg = Segment.text(content, at: max(0, time), duration: max(duration, minDuration))
@@ -190,19 +233,24 @@ public enum TimelineEditor {
         normalize(&p)
     }
 
-    /// Move o segmento para outra faixa do mesmo tipo de mídia.
-    public static func moveToTrack(_ p: inout Project, segment id: UUID, track target: Int) {
-        guard let (t, i) = p.locate(id), target != t, p.tracks.indices.contains(target) else { return }
+    /// Se a faixa `target` (diferente da atual) aceita o tipo de mídia do segmento.
+    public static func canMove(_ p: Project, segment id: UUID, toTrack target: Int) -> Bool {
+        guard let (t, i) = p.locate(id), target != t, p.tracks.indices.contains(target) else { return false }
         let seg = p.tracks[t].segments[i]
-        let dest = p.tracks[target]
         let isText = seg.text != nil
         let isAudio = p.material(seg.materialId)?.kind == .audio
-        let destOK: Bool = switch dest.kind {
+        return switch p.tracks[target].kind {
         case .text: isText
         case .audio: isAudio
         case .video: !isText && !isAudio
         }
-        guard destOK else { return }
+    }
+
+    /// Move o segmento para outra faixa do mesmo tipo de mídia.
+    public static func moveToTrack(_ p: inout Project, segment id: UUID, track target: Int) {
+        guard canMove(p, segment: id, toTrack: target), let (t, i) = p.locate(id) else { return }
+        let seg = p.tracks[t].segments[i]
+        let dest = p.tracks[target]
         p.tracks[t].segments.remove(at: i)
         if dest.isMain {
             let center = (seg.targetStart + seg.targetEnd) / 2
