@@ -44,6 +44,17 @@ enum DebugSnapshot {
                 await wait(1)
                 capture("7-audio", to: dir)
             }
+            // Apagar o clipe selecionado com o inspetor aberto (já derrubou o app).
+            if let main = p.mainTrackIndex, let first = p.tracks[main].segments.first {
+                model.selection = first.id
+                model.inspectorTab = .basic
+                await wait(1)
+                model.deleteSelection()
+                await wait(1)
+                log("apagar com o inspetor aberto: app continua aberto")
+                model.undo()
+                await wait(0.5)
+            }
             // Barra de ações do clipe na primeira e na última faixa exibidas.
             let rows = model.displayTrackOrder().map { p.tracks[$0] }
             if let first = rows.first?.segments.first {
