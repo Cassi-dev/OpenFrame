@@ -1,0 +1,7 @@
+# Uma suíte Qt Test por arquivo: openframe_add_test(NomeTests NomeTests.cpp)
+function(openframe_add_test name)
+    add_executable(${name} ${ARGN})
+    target_link_libraries(${name} PRIVATE openframe_core Qt6::Test)
+    target_compile_definitions(${name} PRIVATE OPENFRAME_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
