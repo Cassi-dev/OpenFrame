@@ -80,6 +80,9 @@ final class EditorModel {
     private(set) var isPlaying = false
     /// Pontos por segundo na timeline.
     var zoom: Double = 80
+    /// Largura visível e deslocamento horizontal da área rolável da timeline.
+    var timelineViewportWidth: CGFloat = 0
+    private(set) var timelineScrollX: CGFloat = 0
     var exportSettings = ExportSettings()
     var showExport = false
     var errorMessage: String?
@@ -103,6 +106,8 @@ final class EditorModel {
     @ObservationIgnored private var pendingSeek: CMTime?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private(set) weak var timelineScrollView: NSScrollView?
+    @ObservationIgnored private var timelineScrollObserver: Any?
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -679,6 +684,26 @@ final class EditorModel {
         case .alertFirstButtonReturn: return saveProject()
         case .alertThirdButtonReturn: return true
         default: return false
+        }
+    }
+
+    // MARK: - Rolagem da timeline
+
+    /// Recebe o NSScrollView horizontal da timeline e acompanha a rolagem.
+    func attachTimelineScroll(_ scroll: NSScrollView) {
+        guard scroll !== timelineScrollView else { return }
+        if let timelineScrollObserver { NotificationCenter.default.removeObserver(timelineScrollObserver) }
+        timelineScrollView = scroll
+        timelineScrollX = scroll.contentView.bounds.origin.x
+        scroll.contentView.postsBoundsChangedNotifications = true
+        timelineScrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let x = self.timelineScrollView?.contentView.bounds.origin.x,
+                      x != self.timelineScrollX else { return }
+                self.timelineScrollX = x
+            }
         }
     }
 

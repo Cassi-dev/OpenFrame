@@ -44,6 +44,19 @@ enum DebugSnapshot {
                 await wait(1)
                 capture("7-audio", to: dir)
             }
+            // Barra de ações do clipe na primeira e na última faixa exibidas.
+            let rows = model.displayTrackOrder().map { p.tracks[$0] }
+            if let first = rows.first?.segments.first {
+                model.selection = first.id
+                await wait(1)
+                capture("10-barra-primeira-faixa", to: dir)
+            }
+            if rows.count > 1, let last = rows.last?.segments.last {
+                model.selection = last.id
+                model.seek(to: last.targetEnd - 200_000)
+                await wait(1)
+                capture("11-barra-ultima-faixa", to: dir)
+            }
             model.selection = nil
             model.showGrid = true
             model.libraryPanel = .text
