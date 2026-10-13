@@ -103,6 +103,8 @@ final class EditorModel {
     @ObservationIgnored private var pendingSeek: CMTime?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var keyMonitor: Any?
+    /// Última versão de cada segmento mostrado no inspetor (ver `binding`).
+    @ObservationIgnored private var inspectedSegments: [UUID: Segment] = [:]
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -197,11 +199,17 @@ final class EditorModel {
 
     // MARK: - Bindings para o inspetor
 
+    /// Ao apagar o clipe selecionado (ou desfazer a criação dele), o SwiftUI
+    /// ainda reavalia a aba do inspetor uma vez antes de removê-la, quando o
+    /// segmento já não está no projeto. Os bindings usam então a última versão
+    /// conhecida dele.
     func binding<T: Equatable>(_ id: UUID, _ keyPath: WritableKeyPath<Segment, T>) -> Binding<T> {
-        let fallback = project.segment(id)?[keyPath: keyPath]
+        if let seg = project.segment(id) { inspectedSegments[id] = seg }
+        let fallback = inspectedSegments[id]
         return Binding(
             get: { [weak self] in
-                self?.project.segment(id)?[keyPath: keyPath] ?? fallback!
+                // O segmento sempre existe quando o inspetor o mostra pela primeira vez.
+                (self?.project.segment(id) ?? fallback)![keyPath: keyPath]
             },
             set: { [weak self] value in
                 self?.mutate(coalesce: "\(id)\(keyPath)") { p in
