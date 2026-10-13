@@ -15,6 +15,11 @@ enum DebugSnapshot {
         Task { @MainActor in
             func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
             await wait(4)
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
+                await dragScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             model.seek(to: 1_500_000)
             await wait(1)
             capture("1-projeto", to: dir)
@@ -160,6 +165,59 @@ enum DebugSnapshot {
                                                 colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         log("preview: quadro \(CVPixelBufferGetWidth(buffer))x\(CVPixelBufferGetHeight(buffer)) salvo")
         item.remove(output)
+    }
+
+    /// Arrastes espelhados (mesma distância para a direita e para a esquerda),
+    /// capturados no meio do gesto, para comparar os dois sentidos.
+    private static func dragScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        model.setZoom(120)
+        model.seek(to: 0)
+        let original = model.project
+        func describe(_ id: UUID) -> String {
+            let p = model.project
+            guard let loc = p.locate(id) else { return "?" }
+            let seg = p.tracks[loc.track].segments[loc.index]
+            let names = p.tracks[loc.track].segments.map { s in
+                s.text?.text ?? p.material(s.materialId)?.name ?? "?"
+            }
+            return String(format: "índice %d, início %.2f s, fim %.2f s, ordem %@",
+                          loc.index, seg.targetStart.seconds, seg.targetEnd.seconds, names.joined(separator: " | "))
+        }
+        func drag(_ name: String, _ id: UUID, dx: CGFloat) async {
+            model.dragMove(id, dx: dx, rows: 0)
+            await wait(0.8)
+            log("arraste \(name) dx=\(Int(dx)): \(describe(id)), visual \(String(describing: model.dragPreview))")
+            capture("arraste-\(name)\(dx > 0 ? "+" : "")\(Int(dx))", to: dir)
+            model.endDragMove(id)
+            await wait(0.3)
+            if model.project != original { model.undo() }
+            await wait(0.5)
+        }
+        let p = model.project
+        if let main = p.mainTrackIndex, p.tracks[main].segments.count >= 3 {
+            let middle = p.tracks[main].segments[1]
+            for dx: CGFloat in [-560, -260, 260, 560] { await drag("principal", middle.id, dx: dx) }
+        }
+        if let texts = p.tracks.first(where: { $0.kind == .text }), texts.segments.count >= 2 {
+            let a = texts.segments[0], b = texts.segments[1]
+            let gap = CGFloat((b.targetStart - a.targetStart).seconds * model.zoom)
+            await drag("texto-1", a.id, dx: gap * 0.7)
+            await drag("texto-2", b.id, dx: -gap * 0.7)
+        }
+        if let main = p.mainTrackIndex {
+            let seg = p.tracks[main].segments[1]
+            for (leading, dx) in [(true, CGFloat(90)), (false, CGFloat(-90))] {
+                model.dragTrim(seg.id, leading: leading, dx: dx)
+                await wait(0.8)
+                log("aparar \(leading ? "início" : "fim") dx=\(Int(dx)): \(describe(seg.id)), visual \(String(describing: model.dragPreview))")
+                capture("aparar-\(leading ? "inicio" : "fim")", to: dir)
+                model.endDragTrim()
+                await wait(0.3)
+                if model.project != original { model.undo() }
+                await wait(0.5)
+            }
+        }
     }
 
     private static func logZoom(_ step: String, _ model: EditorModel) {
