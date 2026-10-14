@@ -7,7 +7,9 @@
 set -euo pipefail
 
 build=$1
-out=$2
+# Caminho absoluto: o ISCC resolve caminhos relativos a partir da pasta do .iss.
+mkdir -p "$2"
+out=$(cd "$2" && pwd)
 root=$(cd "$(dirname "$0")/../.." && pwd)
 version=$(sed -n 's/^project(OpenFrame VERSION \([0-9.]*\).*/\1/p' "$root/qt/CMakeLists.txt")
 app="$out/OpenFrame"
