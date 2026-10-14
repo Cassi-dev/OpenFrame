@@ -1,0 +1,33 @@
+OpenFrame para Windows e Linux
+==============================
+
+O OpenFrame é software livre, sob a GNU General Public License versão 3 ou
+posterior (GPL-3.0-or-later); o texto está em LICENSE.txt. Código-fonte:
+https://github.com/talescavalcanti/OpenFrame
+
+Este pacote inclui os componentes abaixo, cada um com a sua licença. Os textos
+estão na pasta "licencas".
+
+FFmpeg 9.0 (bibliotecas libavcodec, libavformat, libavfilter, libavutil,
+libswscale, libswresample e outras)
+  Licença: GPL-3.0-or-later (build "gpl", com x264 e x265). Texto: LICENSE.txt
+  (o mesmo da GPL) e licencas/FFmpeg-LICENSE.txt.
+  Binários: https://github.com/BtbN/FFmpeg-Builds (build gpl-shared).
+  Código-fonte: https://ffmpeg.org/download.html e
+  https://github.com/BtbN/FFmpeg-Builds (receitas e versões das dependências).
+
+Qt 6 (Qt Core, Gui, Quick, Quick Controls, Quick Dialogs, Multimedia e
+dependências)
+  Licença: GNU LGPL versão 3 (licencas/LGPL-3.0.txt), usado como bibliotecas
+  dinâmicas, que podem ser trocadas por outra build compatível do Qt.
+  Código-fonte: https://download.qt.io/official_releases/qt/
+
+Inter (fonte da interface), de Rasmus Andersson
+  Licença: SIL Open Font License 1.1 (licencas/OFL-Inter.txt).
+  https://github.com/rsms/inter
+
+Lucide (ícones da interface)
+  Licença: ISC (licencas/LICENSE-Lucide.txt). https://lucide.dev
+
+Runtime do Microsoft Visual C++ (só no Windows)
+  Redistribuído conforme os termos da Microsoft para o Visual Studio.

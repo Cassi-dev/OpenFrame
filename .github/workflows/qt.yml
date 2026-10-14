@@ -1,5 +1,6 @@
 # Versão Windows/Linux (qt/): compila, roda os testes do núcleo e as capturas
-# offscreen do app em Windows (MSVC) e Ubuntu. As capturas ficam nos artefatos.
+# offscreen do app em Windows (MSVC) e Ubuntu, e gera os pacotes (instalador e
+# zip portátil no Windows, AppImage no Linux). Capturas e pacotes ficam nos artefatos.
 name: Qt (Windows e Linux)
 
 on:
@@ -58,7 +59,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libgl1-mesa-dev libegl1 \
             libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1-dev libfreetype-dev fonts-dejavu-core \
-            libpulse0 libasound2t64
+            libpulse0 libasound2t64 desktop-file-utils libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
 
       - name: Compilador MSVC (Windows)
         if: runner.os == 'Windows'
@@ -131,4 +133,23 @@ jobs:
           name: capturas-${{ runner.os }}
           path: capturas
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Pacotes
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            .github/scripts/pacote-windows.sh build pacotes
+          else
+            .github/scripts/pacote-linux.sh build pacotes
+          fi
+
+      - name: Publicar os pacotes
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenFrame-${{ runner.os }}
+          path: |
+            pacotes/*.zip
+            pacotes/*.exe
+            pacotes/*.AppImage
+          if-no-files-found: error
           retention-days: 14
