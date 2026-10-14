@@ -22,7 +22,29 @@ enum Animations {
         if let a = seg.animationOut, a.duration > 0, local > duration - a.duration {
             apply(a.kind, progress: ease(Double(duration - local) / Double(a.duration)), exiting: true, to: &st)
         }
+        if let loop = seg.animationLoop, loop.period > 0 {
+            applyLoop(loop, local: local, to: &st)
+        }
         return st
+    }
+
+    /// Fase do loop no instante, em ciclos (0...1 = primeiro ciclo).
+    static func loopPhase(_ loop: LoopAnimation, local: Micros) -> Double {
+        Double(max(0, local)) / Double(loop.period)
+    }
+
+    private static func applyLoop(_ loop: LoopAnimation, local: Micros, to st: inout AnimationState) {
+        let wave = sin(2 * .pi * loopPhase(loop, local: local))
+        let intensity = min(max(loop.intensity, 0), 1)
+        switch loop.kind {
+        case .float:
+            st.dy += wave * 0.02 * intensity
+        case .pulse:
+            st.scale *= 1 + 0.05 * intensity * wave
+        case .glow, .shine:
+            // Provisório: o halo e o reflexo vêm na etapa 2.
+            st.alpha *= 1 - 0.15 * intensity * (0.5 + 0.5 * wave)
+        }
     }
 
     static func ease(_ p: Double) -> Double {
@@ -57,6 +79,13 @@ enum Animations {
             st.scale *= max(p, 0.001)
         case .typewriter:
             st.reveal = min(st.reveal, p)
+        case .focus:
+            // Provisório: o desfoque entra na etapa 2.
+            st.scale *= 1.08 - 0.08 * p
+            st.alpha *= p
+        case .cascade, .elastic, .wave, .wordByWord, .maskReveal, .tracking, .decode:
+            // Provisório: os efeitos por unidade entram na etapa 2.
+            st.alpha *= p
         }
     }
 }

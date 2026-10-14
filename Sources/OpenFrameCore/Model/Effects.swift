@@ -126,6 +126,7 @@ public struct VideoEffect: Codable, Hashable, Sendable, Identifiable {
 
 public enum AnimationKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case fade, zoomIn, zoomOut, slideLeft, slideRight, slideUp, slideDown, spin, typewriter
+    case focus, cascade, elastic, wave, wordByWord, maskReveal, tracking, decode
 
     public var id: String { rawValue }
 
@@ -140,11 +141,24 @@ public enum AnimationKind: String, Codable, CaseIterable, Sendable, Identifiable
         case .slideDown: "Deslizar ↓"
         case .spin: "Girar"
         case .typewriter: "Máquina de escrever"
+        case .focus: "Foco"
+        case .cascade: "Cascata"
+        case .elastic: "Elástico"
+        case .wave: "Onda"
+        case .wordByWord: "Palavra a palavra"
+        case .maskReveal: "Revelar por máscara"
+        case .tracking: "Espaçamento"
+        case .decode: "Decodificar"
         }
     }
 
     /// Animações que só fazem sentido em texto.
-    public var textOnly: Bool { self == .typewriter }
+    public var textOnly: Bool {
+        switch self {
+        case .typewriter, .cascade, .elastic, .wave, .wordByWord, .maskReveal, .tracking, .decode: true
+        default: false
+        }
+    }
 }
 
 public struct SegmentAnimation: Codable, Hashable, Sendable {
@@ -154,6 +168,36 @@ public struct SegmentAnimation: Codable, Hashable, Sendable {
     public init(kind: AnimationKind, duration: Micros = 500_000) {
         self.kind = kind
         self.duration = duration
+    }
+}
+
+/// Animação contínua que roda o clipe inteiro, somada à entrada e à saída.
+public enum LoopKind: String, Codable, CaseIterable, Sendable, Identifiable {
+    case float, pulse, glow, shine
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .float: "Flutuar"
+        case .pulse: "Pulsar"
+        case .glow: "Respirar brilho"
+        case .shine: "Reflexo de luz"
+        }
+    }
+}
+
+public struct LoopAnimation: Codable, Hashable, Sendable {
+    public var kind: LoopKind
+    /// Duração de um ciclo.
+    public var period: Micros = 2_000_000
+    /// 0...1.
+    public var intensity: Double = 0.5
+
+    public init(kind: LoopKind, period: Micros = 2_000_000, intensity: Double = 0.5) {
+        self.kind = kind
+        self.period = period
+        self.intensity = intensity
     }
 }
 
