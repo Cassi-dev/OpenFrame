@@ -48,7 +48,7 @@ public enum TranscriptionError: LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .engineUnavailable: "O motor de transcrição ainda não foi integrado a esta versão."
+        case .engineUnavailable: "O motor de transcrição não está disponível nesta versão."
         case .modelNotInstalled(let m): "O modelo \(m.displayName) não está instalado. Baixe-o antes de gerar."
         case .noAudio: "Não há áudio para transcrever nesse trecho."
         case .failed(let message): "A transcrição falhou: \(message)"
@@ -68,7 +68,60 @@ public enum Transcriber {
         if ProcessInfo.processInfo.environment["OPENFRAME_FAKE_TRANSCRIPTION"] == "1" {
             return try await fakeWords(in: range, progress: progress)
         }
-        throw TranscriptionError.engineUnavailable
+        guard ModelStore.shared.isInstalled(model) else { throw TranscriptionError.modelNotInstalled(model) }
+        var options = WhisperEngine.Options()
+        options.language = language
+        return try await transcribe(project: project, source: source, modelURL: ModelStore.shared.url(for: model),
+                                    model: model, options: options, progress: progress)
+    }
+
+    /// O mesmo, com o arquivo do modelo e as opções do motor à escolha (testes e medições).
+    static func transcribe(project: Project, source: TranscriptionSource, modelURL: URL, model: WhisperModel?,
+                           options: WhisperEngine.Options,
+                           progress: @escaping @Sendable (TranscriptionProgress) -> Void) async throws -> [TranscribedWord] {
+        let range = try sourceRange(project: project, source: source)
+        progress(TranscriptionProgress(phase: .mixing, fraction: 0))
+        guard let samples = try await AudioMixdown.samples(project: mixProject(project, source: source), range: range, progress: {
+            progress(TranscriptionProgress(phase: .mixing, fraction: $0))
+        }), samples.contains(where: { abs($0) > 1e-4 }) else { throw TranscriptionError.noAudio }
+        try Task.checkCancellation()
+
+        progress(TranscriptionProgress(phase: .transcribing, fraction: 0))
+        let cancelled = WhisperEngine.Flag()
+        let words = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[WhisperEngine.Word], Error>) in
+                // O whisper bloqueia a thread: fora do pool das tarefas.
+                Thread.detachNewThread {
+                    continuation.resume(with: Result {
+                        try WhisperEngine.shared.transcribe(samples, modelURL: modelURL, model: model, options: options,
+                                                            cancelled: cancelled) {
+                            progress(TranscriptionProgress(phase: .transcribing, fraction: $0))
+                        }
+                    })
+                }
+            }
+        } onCancel: {
+            cancelled.set()
+        }
+        return words.compactMap { w in
+            let start = range.start + Time.seconds(w.start)
+            let end = min(range.end, range.start + Time.seconds(w.end))
+            guard start < range.end else { return nil }
+            return TranscribedWord(text: w.text, start: start, end: max(end, start), probability: w.probability)
+        }
+    }
+
+    /// Projeto que a mistura ouve: o inteiro, ou só o segmento escolhido (na faixa dele, audível
+    /// mesmo se a faixa estiver muda ou o volume em zero, porque o usuário pediu esse clipe).
+    static func mixProject(_ project: Project, source: TranscriptionSource) -> Project {
+        guard case .segment(let id) = source, let loc = project.locate(id) else { return project }
+        var p = project
+        for t in p.tracks.indices {
+            p.tracks[t].segments.removeAll { $0.id != id }
+        }
+        p.tracks[loc.track].muted = false
+        if p.tracks[loc.track].segments[0].volume <= 0 { p.tracks[loc.track].segments[0].volume = 1 }
+        return p
     }
 
     /// Idiomas oferecidos (códigos do Whisper), com os nomes em português.

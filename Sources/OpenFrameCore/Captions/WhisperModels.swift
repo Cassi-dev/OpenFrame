@@ -9,6 +9,17 @@ public enum WhisperModel: String, CaseIterable, Sendable, Identifiable {
 
     public var id: String { rawValue }
 
+    /// Modelo indicado na interface. Medido no M5 com 64 s de fala (pt-BR, `AVSpeechSynthesizer`):
+    /// base 1,1 s na GPU (WER 0,15), small 2,3 s (WER 0,06), turbo 3,2 s na GPU e 10,4 s só na CPU
+    /// (WER 0). No Apple Silicon o turbo compensa; no Intel (sem o Metal do ggml), o small.
+    public static var recommended: WhisperModel {
+        #if arch(arm64)
+        .turbo
+        #else
+        .small
+        #endif
+    }
+
     public var displayName: String {
         switch self {
         case .base: "Rápido"
@@ -99,6 +110,8 @@ public final class ModelStore: @unchecked Sendable {
     }
 
     public func delete(_ m: WhisperModel) throws {
+        // O modelo pode estar carregado na memória (e aberto): solta antes de apagar.
+        WhisperEngine.shared.unload()
         let fm = FileManager.default
         for file in [url(for: m), partialURL(url(for: m))] where fm.fileExists(atPath: file.path) {
             try fm.removeItem(at: file)
