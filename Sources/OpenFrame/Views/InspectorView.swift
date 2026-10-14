@@ -38,19 +38,16 @@ struct ChoiceTile<Preview: View>: View {
     let action: () -> Void
     /// Recebe se o ponteiro está sobre o cartão (miniaturas que tocam no hover).
     let preview: (Bool) -> Preview
-    /// Nomes longos quebram em duas linhas em vez de serem cortados.
-    var twoLineTitle = false
     @State private var hovering = false
 
     init(title: String, selected: Bool, action: @escaping () -> Void, @ViewBuilder preview: @escaping () -> Preview) {
         self.init(title: title, selected: selected, action: action, hoverPreview: { _ in preview() })
     }
 
-    init(title: String, selected: Bool, twoLineTitle: Bool = false, action: @escaping () -> Void,
+    init(title: String, selected: Bool, action: @escaping () -> Void,
          @ViewBuilder hoverPreview: @escaping (Bool) -> Preview) {
         self.title = title
         self.selected = selected
-        self.twoLineTitle = twoLineTitle
         self.action = action
         preview = hoverPreview
     }
@@ -68,9 +65,8 @@ struct ChoiceTile<Preview: View>: View {
                                       lineWidth: selected ? 1.5 : 1))
                 Text(title)
                     .font(Theme.font(11, selected ? .medium : .regular))
-                    .lineLimit(twoLineTitle ? 2 : 1)
-                    .multilineTextAlignment(.center)
-                    .frame(height: twoLineTitle ? 28 : nil, alignment: .top)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .foregroundStyle(selected ? Theme.accent : (hovering ? Theme.textPrimary : Theme.textSecondary))
             }
             .contentShape(Rectangle())
