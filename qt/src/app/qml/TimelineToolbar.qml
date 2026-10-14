@@ -1,0 +1,78 @@
+import QtQuick
+
+// Barra da timeline: dividir, duplicar, apagar, texto; intervalo do clipe
+// selecionado no meio; zoom à direita.
+Item {
+    id: bar
+    height: 46
+
+    readonly property var seg: Editor.selectedSegment
+
+    Row {
+        anchors.left: parent.left
+        anchors.leftMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 6
+        CircleButton { size: 28; iconName: "scissors"; help: "Dividir no cursor (Ctrl+B)"; onClicked: Editor.splitAtPlayhead() }
+        CircleButton { size: 28; iconName: "copy-plus"; enabled: Editor.selection !== ""; help: "Duplicar (Ctrl+D)"; onClicked: Editor.duplicateSelection() }
+        CircleButton { size: 28; iconName: "trash-2"; enabled: Editor.selection !== ""; help: "Apagar (Delete)"; onClicked: Editor.deleteSelection() }
+        Item {
+            width: 13
+            height: 28
+            VDivider { anchors.centerIn: parent; height: 18 }
+        }
+        PillButton {
+            anchors.verticalCenter: parent.verticalCenter
+            kind: "quiet"
+            compact: true
+            text: "Texto"
+            iconName: "type"
+            help: "Adicionar texto (Ctrl+T)"
+            onClicked: Editor.addText()
+        }
+    }
+
+    Row {
+        visible: Editor.selection !== "" && bar.seg.startText !== undefined
+        anchors.centerIn: parent
+        spacing: 6
+        OfText { text: bar.seg.startText + " – " + bar.seg.endText; size: 11; mono: true; color: Theme.textSecondary }
+        OfText { text: bar.seg.durationText || ""; size: 11; mono: true; color: Theme.textTertiary }
+    }
+
+    Row {
+        anchors.right: parent.right
+        anchors.rightMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 6
+        GlyphButton {
+            anchors.verticalCenter: parent.verticalCenter
+            iconName: "move-horizontal"
+            iconSize: 15
+            help: "Ajustar à janela (Shift+Z)"
+            rightPadding: 6
+            onClicked: Editor.zoomToFit()
+        }
+        GlyphButton {
+            anchors.verticalCenter: parent.verticalCenter
+            iconName: "minus"
+            help: "Afastar (Ctrl+−)"
+            onClicked: Editor.zoomOut()
+        }
+        // Zoom em escala logarítmica, do projeto inteiro (mínimo) ao máximo.
+        ThinSlider {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 120
+            readonly property real low: Math.log(Editor.minZoom)
+            readonly property real high: Math.log(Editor.maxZoom)
+            value: (Math.log(Editor.zoom) - low) / Math.max(high - low, 1e-6)
+            onMoved: (v) => Editor.setZoom(Math.exp(low + v * (high - low)))
+        }
+        GlyphButton {
+            anchors.verticalCenter: parent.verticalCenter
+            iconName: "plus"
+            help: "Aproximar (Ctrl+=)"
+            onClicked: Editor.zoomIn()
+        }
+    }
+}
