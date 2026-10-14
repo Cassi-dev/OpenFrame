@@ -100,6 +100,16 @@ QImage renderFrame(const Project &p, Micros t, QSize size)
 #endif
 }
 
+QByteArray projectThumbnail(const Project &p)
+{
+#ifdef OF_HAS_RENDERER
+    return ProjectThumbnail::jpeg(p);
+#else
+    Q_UNUSED(p)
+    return {};
+#endif
+}
+
 QImage filterPreview(const QImage &base, FilterPreset preset)
 {
 #ifdef OF_HAS_RENDERER

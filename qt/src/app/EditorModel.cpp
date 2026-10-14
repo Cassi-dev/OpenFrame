@@ -8,7 +8,6 @@
 #include "TextPresets.h"
 #include "TimelineEditor.h"
 
-#include <QBuffer>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -752,15 +751,8 @@ void EditorModel::writeThumbnail(const Project &snapshot, const QUuid &id)
     QPointer<EditorModel> self(this);
     const ProjectLibrary library = m_library;
     auto future = QtConcurrent::run([snapshot, id, library] {
-        const Micros t = Micros(std::min(double(snapshot.duration()) / 3, 2'000'000.0));
-        const QImage image = Bridge::renderFrame(snapshot, t, snapshot.canvasSize(360));
-        if (image.isNull())
-            return false;
-        QByteArray data;
-        QBuffer buffer(&data);
-        buffer.open(QIODevice::WriteOnly);
-        image.save(&buffer, "JPG", 80);
-        return library.writeThumbnail(data, id);
+        const QByteArray data = Bridge::projectThumbnail(snapshot);
+        return !data.isEmpty() && library.writeThumbnail(data, id);
     });
     future.then(this, [self](bool written) {
         if (self && written && self->m_screen == "home")
