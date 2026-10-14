@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import CoreImage
 import OpenFrameCore
+import SwiftUI
 
 /// Ferramenta de desenvolvimento: com `OPENFRAME_SNAPSHOT_DIR` definido, o app
 /// percorre algumas telas, salva capturas das próprias janelas e fecha.
@@ -225,23 +226,238 @@ enum DebugSnapshot {
         capture("inicio-3-de-volta", to: dir)
     }
 
-    /// Texto motion: aba Animação do texto e do clipe.
+    /// Texto motion: seleção, guias, giro e escala no preview (num instante com texto e
+    /// foto), duplo clique num texto e a aba Animação do texto e do clipe.
     private static func motionScenario(_ model: EditorModel, dir: URL) async {
         func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let original = model.project
         let p = model.project
-        if let text = p.tracks.first(where: { $0.kind == .text })?.segments.first {
-            await captureAnimationTab(model, segment: text, name: "motion-2-animacao-texto", to: dir)
+        let photos = p.tracks.flatMap(\.segments).filter { p.material($0.materialId)?.kind == .photo }
+        let texts = p.tracks.filter { $0.kind == .text }.flatMap(\.segments)
+        // Um instante com texto e foto juntos (senão, o meio do primeiro texto).
+        var time = texts.first.map { ($0.targetStart + $0.targetEnd) / 2 } ?? 1_000_000
+        outer: for t in texts {
+            for ph in photos where ph.targetStart < t.targetEnd && t.targetStart < ph.targetEnd {
+                time = (max(t.targetStart, ph.targetStart) + min(t.targetEnd, ph.targetEnd)) / 2
+                break outer
+            }
+        }
+        model.seek(to: time)
+        await wait(1.5)
+        guard let playerView = playerView() else {
+            log("motion: view do player não encontrada")
+            return
+        }
+        let mapping = CanvasMapping(size: playerView.bounds.size)
+        let boxes = model.canvasBoxes()
+        func describe(_ b: ElementBox) -> String {
+            String(format: "%@ centro (%.3f, %.3f) tamanho %.3f×%.3f escala %.2f rotação %.1f°",
+                   b.isText ? "texto" : (p.material(p.segment(b.id)?.materialId)?.name ?? "?"),
+                   b.center.x, b.center.y, b.size.width, b.size.height, b.scale, b.rotation)
+        }
+        log("motion: \(Time.format(time)), preview \(Int(mapping.size.width))×\(Int(mapping.size.height)) pt, \(boxes.count) elementos")
+        for b in boxes { log("motion:   \(describe(b))") }
+        func current(_ id: UUID) -> String {
+            model.canvasBoxes().first { $0.id == id }.map(describe) ?? "?"
+        }
+        func guides() -> String {
+            model.canvasGuides.map { "\($0.axis == .vertical ? "x" : "y")=\(String(format: "%.3f", $0.position)) \($0.kind)" }
+                .joined(separator: ", ")
+        }
+
+        if let text = boxes.last(where: \.isText) {
+            // Clique: seleciona o texto mais acima.
+            let start = mapping.view(text.center)
+            model.canvasPointerDown(at: start, mapping: mapping)
+            model.canvasPointerUp()
+            log("motion: clique no texto → seleção \(model.selection == text.id ? "texto" : "outro")")
+            await wait(0.5)
+            await captureComposite("motion-1a-selecao", model: model, to: dir)
+
+            // Arraste do corpo até perto do centro: encaixa e mostra as guias.
+            let near = mapping.view(CGPoint(x: 0.012, y: -0.015))
+            model.canvasPointerDown(at: start, mapping: mapping)
+            model.canvasPointerMoved(to: start + (near - start), mapping: mapping)
+            log("motion: arraste até (0,012; -0,015) → \(current(text.id)); guias: \(guides())")
+            await wait(0.6)
+            await captureComposite("motion-1b-guias-centro", model: model, to: dir)
+            model.canvasPointerUp()
+
+            // Giro de ~43°: encaixa em 45° e mostra a etiqueta.
+            if let frame = model.selectionFrame(mapping: mapping) {
+                let h = frame.rotationHandle
+                let target = frame.center + SelectionFrame.rotate(h - frame.center, by: 43)
+                model.canvasPointerDown(at: h, mapping: mapping)
+                model.canvasPointerMoved(to: target, mapping: mapping)
+                log("motion: giro de 43° → \(current(text.id)); etiqueta \(String(describing: model.canvasRotationLabel))")
+                await wait(0.6)
+                await captureComposite("motion-1c-giro", model: model, to: dir)
+                model.canvasPointerUp()
+            }
+            // Alça de canto: afastar do centro 1,4× escala 1,4×.
+            if let frame = model.selectionFrame(mapping: mapping) {
+                let corner = frame.corners[2]
+                model.canvasPointerDown(at: corner, mapping: mapping)
+                model.canvasPointerMoved(to: frame.center + (corner - frame.center) * 1.4, mapping: mapping)
+                log("motion: canto ×1,4 → \(current(text.id))")
+                await wait(0.6)
+                await captureComposite("motion-1d-escala", model: model, to: dir)
+                model.canvasPointerUp()
+            }
+        }
+        // Outro elemento (o mais acima num canto): arrastar até alinhar a borda com o texto.
+        let corner = mapping.view(CGPoint(x: -0.8, y: 0.8))
+        model.canvasPointerDown(at: corner, mapping: mapping)
+        if let id = model.selection, let box = model.canvasBoxes().first(where: { $0.id == id }),
+           let text = model.canvasBoxes().last(where: \.isText) {
+            let textBounds = CanvasLayout.bounds(of: text, aspect: p.aspectValue)
+            let bounds = CanvasLayout.bounds(of: box, aspect: p.aspectValue)
+            // Borda esquerda do elemento quase na esquerda do texto.
+            let goal = CGPoint(x: box.center.x + (textBounds.minX - bounds.minX) + 0.01, y: box.center.y - 0.1)
+            model.canvasPointerMoved(to: corner + (mapping.view(goal) - mapping.view(box.center)), mapping: mapping)
+            log("motion: arraste de \(describe(box)) → \(current(id)); guias: \(guides())")
+            await wait(0.6)
+            await captureComposite("motion-1e-guias-elemento", model: model, to: dir)
+        }
+        model.canvasPointerUp()
+        log("motion: desfazer por gesto: \(model.canUndo ? "sim" : "não")")
+        for _ in 0..<10 where model.project != original { model.undo() }
+        log("motion: depois de desfazer, igual ao original: \(model.project == original)")
+        await wait(0.5)
+
+        // Duplo clique num texto: aba Texto com o foco no campo.
+        if let text = model.canvasBoxes().last(where: \.isText) {
+            model.selection = nil
+            model.inspectorTab = .basic
+            await wait(0.3)
+            model.canvasPointerDown(at: mapping.view(text.center), mapping: mapping, clickCount: 2)
+            model.canvasPointerUp()
+            await wait(0.8)
+            let responder = playerView.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nenhum"
+            log("motion: duplo clique → aba \(model.inspectorTab.rawValue), foco em \(responder)")
+            capture("motion-1f-duplo-clique", to: dir)
+        }
+        model.selection = nil
+
+        if let textSeg = texts.first {
+            model.mutate {
+                TimelineEditor.update(&$0, segment: textSeg.id) {
+                    $0.animationIn = SegmentAnimation(kind: .slideUp)
+                    $0.animationLoop = LoopAnimation(kind: .float)
+                }
+            }
+            await captureAnimationTab(model, segment: textSeg, name: "motion-2-animacao-texto", to: dir)
+            model.undo()
         }
         if let main = p.mainTrackIndex, let first = p.tracks[main].segments.first {
             await captureAnimationTab(model, segment: first, name: "motion-3-animacao-clipe", to: dir)
         }
+        // Tocar o efeito ao escolher: trecho da entrada e volta ao playhead.
+        if let textSeg = texts.first {
+            model.seek(to: textSeg.targetEnd + 100_000)
+            await wait(0.5)
+            let before = model.playhead
+            model.mutate { TimelineEditor.update(&$0, segment: textSeg.id) { $0.animationIn = SegmentAnimation(kind: .zoomIn) } }
+            let range = AnimationPlayback.entry(model.project.segment(textSeg.id)!, duration: 500_000)
+            model.playExcerpt(range)
+            await wait(0.4)
+            log("motion: trecho \(Time.format(range.lowerBound))–\(Time.format(range.upperBound)), "
+                + "a 0,4 s: \(Time.format(model.playhead)) tocando=\(model.isPlaying)")
+            await wait(1.5)
+            log("motion: depois: \(Time.format(model.playhead)) tocando=\(model.isPlaying) (antes \(Time.format(before)))")
+            model.undo()
+        }
     }
 
-    private static func captureAnimationTab(_ model: EditorModel, segment: Segment, name: String, to dir: URL) async {
+    private static func captureAnimationTab(_ model: EditorModel, segment original: Segment, name: String, to dir: URL) async {
+        let segment = model.project.segment(original.id) ?? original
         model.selection = segment.id
         model.inspectorTab = .animation
-        try? await Task.sleep(for: .seconds(1.5))
-        await captureInspectorScrolled(name, fractions: [0, 1], region: true, to: dir)
+        // Miniaturas geradas em segundo plano.
+        try? await Task.sleep(for: .seconds(5))
+        await captureInspectorScrolled(name, fractions: [0, 0.5, 1], region: true, to: dir)
+        let strips = model.animationStrips.strips
+        let animated = strips.filter { $0.value.count > 1 }
+        log("\(name): \(strips.count) tiras prontas, \(animated.count) animadas")
+        // Folha de contato das tiras dos efeitos escolhidos (a cada 3 quadros).
+        let chosen = [segment.animationIn.map { "entry(OpenFrameCore.AnimationKind.\($0.kind))" },
+                      segment.animationLoop.map { "loop(OpenFrameCore.LoopKind.\($0.kind))" }]
+        for (key, frames) in animated {
+            let text = String(describing: key)
+            guard let match = chosen.compactMap({ $0 }).first(where: { text.contains($0) }),
+                  text.contains(segment.text.map { ThumbSubject.short($0.text) } ?? "") else { continue }
+            let picks = stride(from: 0, to: frames.count, by: 3).map { frames[$0] }
+            let w = picks[0].width, h = picks[0].height
+            guard let ctx = CGContext(data: nil, width: w * picks.count, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w * picks.count, height: h))
+            for (i, image) in picks.enumerated() { ctx.draw(image, in: CGRect(x: i * w, y: 0, width: w, height: h)) }
+            let file = "\(name)-tira-\(match.split(separator: ".").last!.filter(\.isLetter)).png"
+            if let image = ctx.makeImage() {
+                try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                    .write(to: dir.appendingPathComponent(file))
+            }
+            log("\(name): \(match) com \(frames.count) quadros → \(file)")
+        }
+    }
+
+    private static func playerView() -> NSView? {
+        func find(_ view: NSView) -> NSView? {
+            if view is PlayerLayerView.PlayerNSView { return view }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        return NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first
+    }
+
+    /// Janela com o quadro do player na área dele (a camada de vídeo não entra no
+    /// cacheDisplay) e, por cima, o overlay desenhado pela mesma view do app
+    /// (`SelectionOverlayDrawing`) com o estado atual do modelo.
+    private static func captureComposite(_ name: String, model: EditorModel, to dir: URL) async {
+        guard let player = playerView(), let window = player.window,
+              let root = window.contentView?.superview ?? window.contentView,
+              let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return }
+        let frame = await playerFrame(model)
+        root.cacheDisplay(in: root.bounds, to: rep)
+        let mapping = CanvasMapping(size: player.bounds.size)
+        let renderer = ImageRenderer(content: SelectionOverlayDrawing(
+            frame: model.selectionFrame(mapping: mapping),
+            guides: model.canvasGuides.map { OverlayGuide($0, mapping: mapping) },
+            rotationLabel: model.canvasRotationLabel)
+            .frame(width: mapping.size.width, height: mapping.size.height))
+        let scale = rep.size.width > 0 ? CGFloat(rep.pixelsWide) / rep.size.width : 2
+        renderer.scale = scale
+        guard let ui = rep.cgImage, let frame, let overlay = renderer.cgImage,
+              let ctx = CGContext(data: nil, width: ui.width, height: ui.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            capture(name, to: dir)
+            return
+        }
+        let r = player.convert(player.bounds, to: nil)
+        let area = CGRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+        ctx.draw(ui, in: CGRect(x: 0, y: 0, width: ui.width, height: ui.height))
+        ctx.draw(frame, in: area)
+        ctx.draw(overlay, in: area)
+        guard let image = ctx.makeImage() else { return }
+        try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+            .write(to: dir.appendingPathComponent("\(name).png"))
+    }
+
+    /// Quadro que o player exibe no playhead.
+    private static func playerFrame(_ model: EditorModel) async -> CGImage? {
+        guard let item = model.player.currentItem else { return nil }
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ])
+        item.add(output)
+        defer { item.remove(output) }
+        model.seek(to: model.playhead)
+        try? await Task.sleep(for: .seconds(1.2))
+        guard let buffer = output.copyPixelBuffer(forItemTime: item.currentTime(), itemTimeForDisplay: nil) else { return nil }
+        let image = CIImage(cvPixelBuffer: buffer)
+        return CIContext().createCGImage(image, from: image.extent)
     }
 
     private static func dragScenario(_ model: EditorModel, dir: URL) async {

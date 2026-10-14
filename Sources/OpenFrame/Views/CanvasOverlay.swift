@@ -1,4 +1,5 @@
 import AppKit
+import OpenFrameCore
 import SwiftUI
 
 // Manipulação direta no preview: seleção, alças de escala e rotação e guias de
@@ -112,27 +113,70 @@ struct OverlayGuide: Hashable {
 /// como os gestos da timeline.
 struct PlacementDrag {
     let handle: OverlayHandle
+    /// Elemento no início do gesto e os demais (alvos das guias).
+    let box: ElementBox
+    let others: [ElementBox]
     /// Ponto inicial do ponteiro e centro do elemento, em pontos da view.
     let startPoint: CGPoint
     let startCenterView: CGPoint
-    /// Valores iniciais no espaço do canvas.
-    let startCenter: CGPoint
-    let startScale: Double
-    let startRotation: Double
 
     static let scaleRange = 0.05...10.0
+    /// Distância de encaixe na tela.
+    static let snapPoints: CGFloat = 6
+
+    /// Resultado de um passo do gesto, no espaço do canvas.
+    struct Placement: Equatable {
+        var center: CGPoint
+        var scale: Double
+        var rotation: Double
+        var guides: [SnapGuide] = []
+        /// Graus mostrados na etiqueta durante o giro.
+        var rotationLabel: Double?
+    }
+
+    init(handle: OverlayHandle, box: ElementBox, others: [ElementBox], at point: CGPoint, mapping: CanvasMapping) {
+        self.handle = handle
+        self.box = box
+        self.others = others
+        startPoint = point
+        startCenterView = mapping.view(box.center)
+    }
+
+    /// Posição, escala e rotação para o ponteiro em `p` (pontos da view).
+    func placement(at p: CGPoint, mapping: CanvasMapping, aspect: Double, snapping: Bool) -> Placement {
+        var out = Placement(center: box.center, scale: box.scale, rotation: box.rotation)
+        switch handle {
+        case .body:
+            let proposed = proposedCenter(at: p, mapping: mapping)
+            if snapping {
+                let snapped = Snapping.snapMove(box, to: proposed, others: others, aspect: aspect,
+                                                threshold: mapping.threshold(points: Self.snapPoints))
+                out.center = snapped.center
+                out.guides = snapped.guides
+            } else {
+                out.center = proposed
+            }
+        case .corner:
+            out.scale = proposedScale(at: p)
+        case .rotate:
+            let r = proposedRotation(at: p)
+            out.rotation = snapping ? Snapping.snapRotation(r).degrees : r
+            out.rotationLabel = out.rotation
+        }
+        return out
+    }
 
     /// Centro proposto (normalizado) para um arraste do corpo.
     func proposedCenter(at p: CGPoint, mapping: CanvasMapping) -> CGPoint {
         let d = mapping.canvasDelta(CGSize(width: p.x - startPoint.x, height: p.y - startPoint.y))
-        return CGPoint(x: startCenter.x + d.width, y: startCenter.y + d.height)
+        return CGPoint(x: box.center.x + d.width, y: box.center.y + d.height)
     }
 
     /// Escala uniforme pela distância ao centro, relativa ao início do gesto.
     func proposedScale(at p: CGPoint) -> Double {
         let start = (startPoint - startCenterView).length
-        guard start > 1 else { return startScale }
-        let s = startScale * Double((p - startCenterView).length / start)
+        guard start > 1 else { return box.scale }
+        let s = box.scale * Double((p - startCenterView).length / start)
         return min(max(s, Self.scaleRange.lowerBound), Self.scaleRange.upperBound)
     }
 
@@ -140,7 +184,7 @@ struct PlacementDrag {
     func proposedRotation(at p: CGPoint) -> Double {
         func angle(_ q: CGPoint) -> Double { atan2(Double(q.y - startCenterView.y), Double(q.x - startCenterView.x)) }
         let delta = (angle(p) - angle(startPoint)) * 180 / .pi
-        return Self.normalized(startRotation + delta)
+        return Self.normalized(box.rotation + delta)
     }
 
     static func normalized(_ degrees: Double) -> Double {
@@ -152,6 +196,135 @@ struct PlacementDrag {
 
     /// ⌘ segurado desliga o encaixe.
     @MainActor static var snappingEnabled: Bool { !NSEvent.modifierFlags.contains(.command) }
+}
+
+extension SelectionFrame {
+    /// Contorno de uma caixa do núcleo em pontos da view.
+    init(_ box: ElementBox, mapping: CanvasMapping, aspect: Double) {
+        self.init(center: mapping.view(box.center),
+                  corners: CanvasLayout.corners(of: box, aspect: aspect).map(mapping.view),
+                  rotation: box.rotation)
+    }
+}
+
+extension OverlayGuide {
+    init(_ guide: SnapGuide, mapping: CanvasMapping) {
+        let vertical = guide.axis == .vertical
+        let p = mapping.view(CGPoint(x: guide.position, y: guide.position))
+        self.init(vertical: vertical, position: vertical ? p.x : p.y,
+                  strong: guide.kind == .canvasCenter, dashed: guide.kind == .safeMargin)
+    }
+}
+
+// MARK: - Gesto no modelo
+
+extension EditorModel {
+    /// Elementos visíveis no playhead (em repouso).
+    func canvasBoxes() -> [ElementBox] { CanvasLayout.boxes(in: project, at: playhead) }
+
+    /// Contorno do elemento selecionado, se ele aparece no playhead. Some durante a reprodução.
+    func selectionFrame(mapping: CanvasMapping) -> SelectionFrame? {
+        guard !isPlaying, let id = selection, let box = canvasBoxes().first(where: { $0.id == id }) else { return nil }
+        return SelectionFrame(box, mapping: mapping, aspect: project.aspectValue)
+    }
+
+    /// Clique no preview: alça ou corpo do selecionado, senão o elemento mais acima
+    /// sob o ponteiro, senão tira a seleção. Duplo clique num texto abre a aba Texto.
+    func canvasPointerDown(at p: CGPoint, mapping: CanvasMapping, clickCount: Int = 1) {
+        guard !isPlaying else { return }
+        let boxes = canvasBoxes()
+        let aspect = project.aspectValue
+        var target: (box: ElementBox, handle: OverlayHandle)?
+        if let id = selection, let box = boxes.first(where: { $0.id == id }),
+           let handle = SelectionFrame(box, mapping: mapping, aspect: aspect).handle(at: p) {
+            target = (box, handle)
+        } else if let id = CanvasLayout.hitTest(mapping.canvas(p), in: boxes, aspect: aspect),
+                  let box = boxes.first(where: { $0.id == id }) {
+            target = (box, .body)
+        }
+        guard let target else {
+            selection = nil
+            return
+        }
+        if clickCount >= 2, target.box.isText {
+            editText(target.box.id)
+        } else {
+            selection = target.box.id
+        }
+        placementDrag = PlacementDrag(handle: target.handle, box: target.box,
+                                      others: boxes.filter { $0.id != target.box.id }, at: p, mapping: mapping)
+        beginGesture()
+    }
+
+    func canvasPointerMoved(to p: CGPoint, mapping: CanvasMapping) {
+        guard let drag = placementDrag else { return }
+        let result = drag.placement(at: p, mapping: mapping, aspect: project.aspectValue,
+                                    snapping: PlacementDrag.snappingEnabled)
+        if canvasGuides != result.guides { canvasGuides = result.guides }
+        if canvasRotationLabel != result.rotationLabel { canvasRotationLabel = result.rotationLabel }
+        updateGesture {
+            TimelineEditor.setPlacement(&$0, segment: drag.box.id, center: result.center,
+                                        scale: result.scale, rotation: result.rotation)
+        }
+    }
+
+    func canvasPointerUp() {
+        guard placementDrag != nil else { return }
+        placementDrag = nil
+        canvasGuides = []
+        canvasRotationLabel = nil
+        endGesture()
+    }
+}
+
+// MARK: - Camada do preview
+
+/// Recebe cliques e arrastes sobre o vídeo (mesmo quadro do player) e desenha a seleção.
+struct CanvasManipulationLayer: View {
+    @Environment(EditorModel.self) private var model
+    @State private var pressed = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let mapping = CanvasMapping(size: geo.size)
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { value in
+                            if !pressed {
+                                pressed = true
+                                model.canvasPointerDown(at: value.startLocation, mapping: mapping,
+                                                        clickCount: NSApp.currentEvent?.clickCount ?? 1)
+                            }
+                            model.canvasPointerMoved(to: value.location, mapping: mapping)
+                        }
+                        .onEnded { _ in
+                            pressed = false
+                            model.canvasPointerUp()
+                        })
+                    .onContinuousHover { phase in
+                        guard case .active(let p) = phase else { return NSCursor.arrow.set() }
+                        cursor(at: p, mapping: mapping).set()
+                    }
+                SelectionOverlayDrawing(frame: model.selectionFrame(mapping: mapping),
+                                        guides: model.canvasGuides.map { OverlayGuide($0, mapping: mapping) },
+                                        rotationLabel: model.canvasRotationLabel)
+            }
+        }
+        .allowsHitTesting(!model.isPlaying)
+    }
+
+    private func cursor(at p: CGPoint, mapping: CanvasMapping) -> NSCursor {
+        if model.placementDrag != nil { return .closedHand }
+        switch model.selectionFrame(mapping: mapping)?.handle(at: p) {
+        case .rotate?, .corner?: return .crosshair
+        case .body?: return .openHand
+        case nil:
+            let hit = CanvasLayout.hitTest(mapping.canvas(p), in: model.canvasBoxes(), aspect: model.project.aspectValue)
+            return hit == nil ? .arrow : .pointingHand
+        }
+    }
 }
 
 // MARK: - Desenho

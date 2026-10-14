@@ -13,6 +13,7 @@ struct PreviewPanel: View {
                     .overlay {
                         if model.showGrid { ThirdsGrid().allowsHitTesting(false) }
                     }
+                    .overlay { CanvasManipulationLayer() }
                     .overlay {
                         if model.duration == 0 { emptyState }
                     }

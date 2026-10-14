@@ -78,6 +78,12 @@ final class EditorModel {
     var inspectorTab = InspectorTab.basic
     /// Pedido para pôr o foco no campo do texto (duplo clique num texto no preview).
     var focusTextEditor = false
+    /// Manipulação no preview: guias de encaixe e graus durante o giro.
+    var canvasGuides: [SnapGuide] = []
+    var canvasRotationLabel: Double?
+    @ObservationIgnored var placementDrag: PlacementDrag?
+    /// Quadros das miniaturas animadas do inspetor.
+    @ObservationIgnored let animationStrips = FrameStripStore()
     var libraryPanel = LibraryPanel.media
     var libraryVisible = true
     /// Grade dos terços sobre o preview.
