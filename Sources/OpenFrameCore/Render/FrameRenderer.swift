@@ -170,12 +170,13 @@ public final class FrameRenderer: @unchecked Sendable {
         img = ImageEffects.effects(img, seg.effects, k: k, time: seconds)
 
         let anim = Animations.state(for: seg, local: local)
-        if let shine = anim.shine {
-            img = TextMotion.applyShine(img, in: img.extent, position: shine.position, strength: shine.strength)
-        }
         let geo = ImageEffects.geometry(seg.effects, time: seconds)
         let w = img.extent.width
         let h = img.extent.height
+        // Depois de medir: o brilho do reflexo passa da borda e não pode mudar o centro.
+        if let shine = anim.shine {
+            img = TextMotion.applyShine(img, in: img.extent, position: shine.position, strength: shine.strength)
+        }
         let fit = min(canvas.width / w, canvas.height / h)
         let scale = fit * seg.transform.scale * anim.scale * geo.scale
         let cx = canvas.midX + (seg.transform.x + anim.dx + geo.dx) * canvas.width / 2

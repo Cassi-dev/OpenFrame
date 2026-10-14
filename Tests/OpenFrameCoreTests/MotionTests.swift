@@ -209,6 +209,26 @@ struct MotionTests {
         #expect(difference(render(p, at: 0), render(p, at: 500_000)) > size.area / 20)
     }
 
+    @Test("Reflexo aparece em texto branco, dentro e em volta das letras")
+    func shineOnWhiteText() {
+        let (rest, _) = textProject()
+        let (p, _) = textProject { $0.animationLoop = LoopAnimation(kind: .shine, period: 2_000_000, intensity: 1) }
+        // Fora da passagem (60% em diante do ciclo), igual ao repouso.
+        #expect(maxDifference(render(p, at: 1_600_000), render(rest, at: 1_600_000)) <= 8)
+        // No meio da varredura, muda o texto branco e o entorno.
+        let lit = render(p, at: 580_000)
+        let plain = render(rest, at: 580_000)
+        #expect(difference(lit, plain) > size.area / 4)
+        var aroundLetters = 0, onLetters = 0
+        for i in stride(from: 0, to: lit.data.count, by: 4) where lit.data[i] != plain.data[i] || lit.data[i + 2] != plain.data[i + 2] {
+            if plain.data[i] > 240 { onLetters += 1 } else { aroundLetters += 1 }
+        }
+        #expect(onLetters > 100 && aroundLetters > 100)
+        // A varredura passa em vários quadros do ciclo (8 por ciclo).
+        let swept = (0..<8).filter { difference(render(p, at: Micros($0) * 250_000), render(rest, at: Micros($0) * 250_000)) > size.area / 8 }
+        #expect(swept.count >= 4)
+    }
+
     @Test("Loop numa foto também")
     func loopOnPhoto() throws {
         var p = Project()

@@ -38,9 +38,10 @@ struct AnimationState {
     var shine: (position: Double, strength: Double)? {
         guard let loop, loop.kind == .shine else { return nil }
         let phase = Animations.loopPhase(loop, local: local)
-        let f = (phase - phase.rounded(.down)) / 0.45
+        let f = (phase - phase.rounded(.down)) / 0.58
         guard f < 1 else { return nil }
-        let eased = f * f * (3 - 2 * f)
+        // Quase linear, com entrada e saída levemente suaves.
+        let eased = 0.8 * f + 0.2 * f * f * (3 - 2 * f)
         return (eased, Animations.clamp(loop.intensity))
     }
 }
