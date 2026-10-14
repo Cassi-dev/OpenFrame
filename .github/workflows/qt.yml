@@ -64,7 +64,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build libgl1-mesa-dev libegl1 \
             libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1-dev libfreetype-dev fonts-dejavu-core \
             libpulse0 libasound2t64 desktop-file-utils libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libva2 libva-drm2 libva-x11-2
 
       - name: Compilador MSVC (Windows)
         if: runner.os == 'Windows'
@@ -115,10 +116,9 @@ jobs:
           fi
           "$root/bin/ffmpeg" -hide_banner -version | head -n 1
 
+      # O /utf-8 do MSVC vem do qt/CMakeLists.txt. Por CXXFLAGS, o Git Bash
+      # o converte num caminho (C:/Program Files/Git/utf-8).
       - name: Configurar
-        env:
-          # Fontes em UTF-8 (textos em português) no MSVC.
-          CXXFLAGS: ${{ runner.os == 'Windows' && '/utf-8' || '' }}
         run: cmake -S qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Compilar
