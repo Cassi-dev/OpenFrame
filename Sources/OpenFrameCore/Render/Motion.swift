@@ -105,6 +105,23 @@ enum Animations {
         return 1 - exp(-6 * x) * cos(3.5 * .pi * x)
     }
 
+    /// Maior escala que as animações do segmento atingem (entrada, saída e loop), para o
+    /// texto ser rasterizado grande o bastante e não serrilhar ao ampliar.
+    static func peakScale(for seg: Segment) -> Double {
+        func peak(_ a: SegmentAnimation?) -> Double {
+            switch a?.kind {
+            case .zoomOut: 1.5
+            case .focus: 1.08
+            case .elastic: 1.15 // 0,3 + 0,7 × pico da mola (~1,2)
+            case .wave: 1.12
+            default: 1
+            }
+        }
+        var scale = max(peak(seg.animationIn), peak(seg.animationOut))
+        if let loop = seg.animationLoop, loop.kind == .pulse { scale *= 1 + 0.05 * clamp(loop.intensity) }
+        return scale
+    }
+
     /// Animações desenhadas por unidade e a granularidade de cada uma.
     static func granularity(_ kind: AnimationKind) -> TextGranularity? {
         switch kind {
