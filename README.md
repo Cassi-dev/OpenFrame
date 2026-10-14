@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Editor de vídeo leve e offline, com controle total da exportação. Para Mac, Windows e Linux.</strong>
+  <strong>Editor de vídeo para Mac, Windows e Linux. Leve e offline.</strong>
 </p>
 
 <p align="center">
@@ -48,11 +48,6 @@ mesmos projetos `.openframe`.
   de arquivo alvo, com estimativa ao vivo antes de exportar.
 - **O que se vê é o que se exporta.** O preview e a exportação usam o mesmo
   compositor, e as cores originais de vídeos e fotos são preservadas.
-
-O conjunto de funcionalidades foi levantado estudando o CapCut para Mac por
-engenharia reversa (análise estática, com o [REA](docs/REFERENCIA-REA.md)). O
-código do OpenFrame é original: nada do binário, das bibliotecas ou dos recursos
-da ByteDance foi reaproveitado.
 
 ## Baixar e instalar
 
@@ -147,19 +142,6 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - Qualidade: mais baixa, recomendada, mais alta, bitrate personalizado (Mbps) ou tamanho de arquivo alvo (MB)
 - Intervalo de quadros-chave, bitrate e taxa de amostragem do áudio
 - Resumo ao vivo com dimensões, bitrate e tamanho estimado; progresso, tempo restante e cancelamento
-
-## Limitações conhecidas
-
-- Sem os recursos de IA do CapCut (legendas automáticas, remoção de fundo, vozes),
-  que dependem de modelos e serviços proprietários.
-- Projetos e exportação em SDR (Rec. 709). Vídeos HDR são convertidos para SDR.
-- Volume limitado a 100% (limite do `AVAudioMix`).
-- Ainda sem animação por keyframes nem exportação em GIF.
-- Windows e Linux: o render é feito na CPU (funciona sem placa de vídeo, mas é
-  mais lento que no Mac em projetos pesados); alguns filtros fotográficos são
-  aproximações dos do Mac, e em vídeos HDR PQ os realces muito claros saem um
-  pouco menos saturados que no Mac.
-
 ---
 
 ## Para desenvolvedores
