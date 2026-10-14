@@ -460,6 +460,7 @@ private struct TextTab: View {
         fontSection
         spacingSection
         colorSection
+        highlightSection
         backgroundSection
         shadowSection
         positionSection
@@ -571,6 +572,47 @@ private struct TextTab: View {
         if style.wrappedValue.strokeWidth > 0 {
             ColorRow(title: "Cor", color: color(value(\.strokeColor)))
         }
+    }
+
+    /// Só para textos com tempo por palavra (legendas automáticas).
+    @ViewBuilder private var highlightSection: some View {
+        if let text = model.project.segment(id)?.text, text.words?.isEmpty == false {
+            let highlight = model.binding(id, \.text!.highlight)
+            SectionHeader(title: "Destaque da palavra")
+            SwitchRow(title: "Destacar a palavra falada",
+                      isOn: Binding(get: { highlight.wrappedValue != nil },
+                                    set: { highlight.wrappedValue = $0 ? (highlight.wrappedValue ?? WordHighlight()) : nil }))
+            if let current = highlight.wrappedValue {
+                if text.activeHighlight == nil {
+                    Text("O texto foi editado e as palavras não batem mais com a fala: o destaque fica desligado até o número de palavras voltar a ser o mesmo.")
+                        .font(Theme.font(11))
+                        .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.35))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                FieldRow(label: "Modo") {
+                    PillPicker(selection: highlightValue(\.mode), options: HighlightMode.allCases,
+                               title: { $0 == .current ? "Só a atual" : "Progressivo" })
+                }
+                ColorRow(title: "Cor", color: color(highlightValue(\.color)))
+                ParamSlider(title: "Escala", value: highlightValue(\.scale), range: 1...1.6,
+                            defaultValue: WordHighlight().scale, format: percent)
+                SwitchRow(title: "Pílula atrás da palavra", isOn: highlightValue(\.backgroundEnabled))
+                if current.backgroundEnabled {
+                    ColorRow(title: "Cor da pílula", color: color(highlightValue(\.backgroundColor)))
+                }
+            }
+        }
+    }
+
+    private func highlightValue<T: Equatable>(_ keyPath: WritableKeyPath<WordHighlight, T>) -> Binding<T> {
+        let highlight = model.binding(id, \.text!.highlight)
+        return Binding(
+            get: { (highlight.wrappedValue ?? WordHighlight())[keyPath: keyPath] },
+            set: { value in
+                var h = highlight.wrappedValue ?? WordHighlight()
+                h[keyPath: keyPath] = value
+                highlight.wrappedValue = h
+            })
     }
 
     @ViewBuilder private var backgroundSection: some View {

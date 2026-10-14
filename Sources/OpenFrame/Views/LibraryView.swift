@@ -454,6 +454,13 @@ private struct CaptionsPanel: View {
                 .disabled(cues.isEmpty)
             }
             .buttonStyle(PillButtonStyle(compact: true))
+            if model.hasAutoCaptions, model.selectedSegment?.text != nil {
+                Button { model.applyStyleToAutoCaptions() } label: {
+                    Label("Aplicar este estilo a todas", systemImage: "paintbrush").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillButtonStyle(compact: true))
+                .help("Copia o estilo do texto selecionado para todas as legendas automáticas")
+            }
             if cues.isEmpty {
                 Text("Nenhum texto na timeline. Gere legendas a partir do áudio, importe um arquivo SRT ou adicione textos pelo painel Texto.")
                     .font(Theme.font(11))

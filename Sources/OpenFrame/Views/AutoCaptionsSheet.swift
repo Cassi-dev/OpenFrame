@@ -42,15 +42,15 @@ struct AutoCaptionsSheet: View {
     private var footer: some View {
         let generation = model.captionGeneration
         let problem = model.captionSourceProblem
-        let pending = CaptionModels.info(generation.modelID).flatMap { $0.installed ? nil : $0 }
+        let pending = generation.installed.contains(generation.model) ? nil : generation.model
         return HStack(spacing: 12) {
-            if let problem {
-                Label(problem, systemImage: "exclamationmark.triangle")
+            if let warning = problem ?? generation.modelError {
+                Label(warning, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.35))
                     .lineLimit(2)
             } else {
                 Label {
-                    Text(pending.map { "Baixa o modelo \($0.name) (\($0.bytes.megabytes)) uma vez. A transcrição roda neste Mac." }
+                    Text(pending.map { "Baixa o modelo \($0.displayName) (\($0.byteSize.megabytes)) uma vez. A transcrição roda neste Mac." }
                          ?? "A transcrição roda neste Mac, sem enviar nada para a internet.")
                 } icon: {
                     Image(systemName: pending == nil ? "lock" : "arrow.down.circle")
@@ -146,9 +146,9 @@ private struct CaptionOptionsForm: View {
                     }
                 }
                 FieldRow(label: "Idioma") {
-                    MenuField(selection: $generation.language, options: [nil] + CaptionModels.languages.map(\.code),
+                    MenuField(selection: $generation.language, options: [nil] + Transcriber.languages.map(\.code),
                               title: { code in
-                                  code.flatMap { c in CaptionModels.languages.first { $0.code == c }?.name }
+                                  code.flatMap { c in Transcriber.languages.first { $0.code == c }?.name }
                                       ?? "Detectar automaticamente"
                               })
                         .frame(width: 280)
@@ -156,30 +156,35 @@ private struct CaptionOptionsForm: View {
 
                 SectionHeader(title: "Precisão")
                 VStack(spacing: 2) {
-                    ForEach(CaptionModels.all, id: \.id) { info in
-                        ModelRow(info: info, selected: generation.modelID == info.id) {
-                            generation.modelID = info.id
+                    ForEach(WhisperModel.allCases) { whisper in
+                        ModelRow(whisper: whisper, selected: generation.model == whisper) {
+                            generation.model = whisper
                         }
                     }
                 }
 
                 SectionHeader(title: "Estilo")
                 HStack(spacing: 12) {
-                    ForEach(CaptionLooks.all, id: \.id) { look in
-                        CaptionStyleCard(look: look, selected: generation.layoutID == look.id) {
-                            generation.layoutID = look.id
+                    ForEach(CaptionLayout.allCases) { layout in
+                        CaptionStyleCard(layout: layout, selected: generation.layout == layout) {
+                            generation.layout = layout
                         }
                     }
                 }
-                if generation.layoutID == "highlight" {
+                if generation.layout == .highlight {
                     ColorRow(title: "Cor do destaque",
                              color: Binding(get: { generation.highlightColor.color },
                                             set: { generation.highlightColor = RGBA($0) }))
                         .padding(.top, 4)
                 }
 
-                SwitchRow(title: "Substituir legendas automáticas anteriores", isOn: $generation.replacePrevious)
-                    .padding(.top, 10)
+                // Sem legendas automáticas no projeto, não há o que substituir.
+                if model.hasAutoCaptions {
+                    SwitchRow(title: generation.source == .clip ? "Substituir as legendas automáticas deste clipe"
+                                                                : "Substituir as legendas automáticas anteriores",
+                              isOn: $generation.replacePrevious)
+                        .padding(.top, 10)
+                }
             }
             .padding(.bottom, 16)
         }
@@ -194,21 +199,28 @@ private struct CaptionOptionsForm: View {
 /// Uma linha da lista de precisão: escolher, baixar com progresso, cancelar e apagar.
 private struct ModelRow: View {
     @Environment(EditorModel.self) private var model
-    let info: CaptionModels.Info
+    let whisper: WhisperModel
     let selected: Bool
     let select: () -> Void
     @State private var hovering = false
 
+    private static let details: [WhisperModel: String] = [
+        .base: "O mais leve. Bom para fala clara e pouco ruído.",
+        .small: "Bom equilíbrio entre velocidade e precisão.",
+        .turbo: "Mais lento e mais preciso. Melhor para áudio difícil.",
+    ]
+
     var body: some View {
-        let download = model.captionGeneration.downloads[info.id]
+        let generation = model.captionGeneration
+        let download = generation.downloads[whisper]
         HStack(spacing: 12) {
             Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                 .font(Theme.font(14))
                 .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text(info.name).font(Theme.font(13, selected ? .medium : .regular))
-                    if info.recommended {
+                    Text(whisper.displayName).font(Theme.font(13, selected ? .medium : .regular))
+                    if whisper == CaptionGeneration.recommended {
                         Text("Recomendado")
                             .font(Theme.font(10, .medium))
                             .foregroundStyle(Theme.accent)
@@ -217,16 +229,16 @@ private struct ModelRow: View {
                             .background(Theme.accentSoft, in: Capsule())
                     }
                 }
-                Text(info.detail)
+                Text(Self.details[whisper] ?? "")
                     .font(Theme.font(11))
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer(minLength: 12)
-            Text(info.bytes.megabytes)
+            Text(whisper.byteSize.megabytes)
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 64, alignment: .trailing)
-            status(download)
+            status(download, installed: generation.installed.contains(whisper))
                 .frame(width: 190, alignment: .trailing)
         }
         .padding(.horizontal, 12)
@@ -241,28 +253,29 @@ private struct ModelRow: View {
     }
 
     @ViewBuilder
-    private func status(_ download: Double?) -> some View {
+    private func status(_ download: Double?, installed: Bool) -> some View {
+        let generation = model.captionGeneration
         if let download {
             HStack(spacing: 8) {
                 VStack(alignment: .trailing, spacing: 4) {
                     ProgressBar(fraction: download).frame(width: 110)
-                    Text("\(Int64(Double(info.bytes) * download).megabytes) de \(info.bytes.megabytes)")
+                    Text("\(Int64(Double(whisper.byteSize) * download).megabytes) de \(whisper.byteSize.megabytes)")
                         .font(Theme.mono(10))
                         .foregroundStyle(Theme.textTertiary)
                         .fixedSize()
                 }
-                Button { model.cancelModelDownload(info.id) } label: { Image(systemName: "xmark") }
+                Button { generation.cancelDownload(whisper) } label: { Image(systemName: "xmark") }
                     .buttonStyle(CircleButtonStyle(size: 22))
                     .help("Cancelar o download")
             }
-        } else if info.installed {
+        } else if installed {
             HStack(spacing: 8) {
                 Label("Instalado", systemImage: "checkmark")
                     .font(Theme.font(11))
                     .foregroundStyle(Theme.textSecondary)
                 Menu {
-                    Button("Apagar modelo (\(info.bytes.megabytes))", role: .destructive) {
-                        model.deleteModel(info.id)
+                    Button("Apagar modelo (\(whisper.byteSize.megabytes))", role: .destructive) {
+                        generation.delete(whisper)
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -278,7 +291,7 @@ private struct ModelRow: View {
                 .help("Mais opções")
             }
         } else {
-            Button { model.downloadModel(info.id) } label: {
+            Button { generation.download(whisper) } label: {
                 Label("Baixar", systemImage: "arrow.down")
             }
             .buttonStyle(PillButtonStyle(compact: true))
@@ -302,19 +315,32 @@ struct ProgressBar: View {
 }
 
 /// Cartão de um visual de legenda, com a prévia animada sobre um quadro do vídeo.
+/// A prévia é feita pelo mesmo render da exportação, com o estilo padrão do layout.
 private struct CaptionStyleCard: View {
     @Environment(EditorModel.self) private var model
-    let look: CaptionLooks.Look
+    let layout: CaptionLayout
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
 
+    private static let details: [CaptionLayout: String] = [
+        .phrases: "Até duas linhas embaixo, como no cinema.",
+        .highlight: "Uma linha; a palavra falada acende.",
+        .punch: "Poucas palavras grandes no centro.",
+    ]
+
     var body: some View {
+        let color = model.captionGeneration.highlightColor
+        let key = CaptionPreviewFrames.Key(layout: layout, color: layout == .highlight ? color : nil)
+        let store = model.animationStrips
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack {
                     CardBackdrop()
-                    CaptionSample(lookID: look.id, highlight: model.captionGeneration.highlightColor.color)
+                    FrameStripView(frames: store.strip(key), rest: CaptionPreviewFrames.restIndex,
+                                   playing: hovering || selected, cycle: CaptionPreviewFrames.cycle) {
+                        CaptionSample(layout: layout, highlight: color.color)
+                    }
                 }
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -322,10 +348,10 @@ private struct CaptionStyleCard: View {
                     .strokeBorder(selected ? Theme.accent : (hovering ? Color.white.opacity(0.22) : Theme.hairline),
                                   lineWidth: selected ? 1.5 : 1))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(look.name)
+                    Text(layout.displayName)
                         .font(Theme.font(12, .medium))
                         .foregroundStyle(selected ? Theme.accent : Theme.textPrimary)
-                    Text(look.detail)
+                    Text(Self.details[layout] ?? "")
                         .font(Theme.font(11))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(2, reservesSpace: true)
@@ -337,6 +363,9 @@ private struct CaptionStyleCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .frame(maxWidth: .infinity)
+        .task(id: key) {
+            store.request(key, urgent: true) { CaptionPreviewFrames.frames(key) }
+        }
     }
 }
 
@@ -360,25 +389,25 @@ private struct CardBackdrop: View {
 
 /// Amostra de cada visual feita no SwiftUI: aparece enquanto a prévia do núcleo não fica pronta.
 private struct CaptionSample: View {
-    let lookID: String
+    let layout: CaptionLayout
     let highlight: Color
 
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
-            switch lookID {
-            case "highlight":
+            switch layout {
+            case .highlight:
                 (Text("um vídeo ") + Text("muito").foregroundColor(highlight) + Text(" bom"))
                     .font(.system(size: h * 0.11, weight: .bold))
                     .modifier(CaptionInk())
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, h * 0.12)
-            case "punch":
+            case .punch:
                 Text("MUITO BOM")
                     .font(.system(size: h * 0.2, weight: .heavy))
                     .modifier(CaptionInk())
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            default:
+            case .phrases:
                 Text("Hoje eu vou mostrar\num vídeo muito bom")
                     .font(.system(size: h * 0.085, weight: .semibold))
                     .multilineTextAlignment(.center)
@@ -479,7 +508,7 @@ private struct GenerationProgressView: View {
     }
 
     private func detail(_ generation: CaptionGeneration) -> String {
-        let name = CaptionModels.info(generation.modelID)?.name ?? ""
+        let name = generation.model.displayName
         switch generation.phase {
         case .downloading(let received, let total):
             return "Baixando o modelo \(name): \(received.megabytes) de \(total.megabytes)"
@@ -506,58 +535,53 @@ extension Int64 {
     var megabytes: String { "\(Int((Double(self) / 1_000_000).rounded())) MB" }
 }
 
-/// Modelos do Whisper oferecidos na lista de precisão.
-enum CaptionModels {
-    struct Info {
-        let id: String
-        let name: String
-        let detail: String
-        let bytes: Int64
-        let installed: Bool
-        let recommended: Bool
+/// Quadros da prévia de cada layout: uma frase falsa com tempo por palavra, montada pelo
+/// `CaptionBuilder` e desenhada pelo `FrameRenderer` num canvas transparente 16:9.
+enum CaptionPreviewFrames {
+    struct Key: Hashable {
+        let layout: CaptionLayout
+        /// Cor do destaque (só no layout Destaque).
+        let color: RGBA?
     }
 
-    static let recommendedID = "small"
+    static let pixelSize = CGSize(width: 384, height: 216)
+    static let cycle = 3.6
+    static let count = 72
+    /// Quadro parado: no meio da frase, com uma palavra destacada.
+    static let restIndex = 24
 
-    private static let details: [String: String] = [
-        "base": "O mais leve. Bom para fala clara e pouco ruído.",
-        "small": "Bom equilíbrio entre velocidade e precisão.",
-        "turbo": "Mais lento e mais preciso. Melhor para áudio difícil.",
-    ]
+    private static let sample = "Hoje eu vou mostrar como gerar legendas no seu Mac."
 
-    // Provisório até a etapa 1 do núcleo trazer o catálogo dos modelos.
-    private static let provisional: [(id: String, name: String, bytes: Int64)] = [
-        ("base", "Rápido", 147_951_465),
-        ("small", "Equilibrado", 487_601_967),
-        ("turbo", "Máxima precisão", 574_041_195),
-    ]
+    private nonisolated(unsafe) static let renderer = FrameRenderer()
+    private nonisolated(unsafe) static let context = CIContext(options: [.cacheIntermediates: false])
 
-    static var all: [Info] {
-        provisional.map {
-            Info(id: $0.id, name: $0.name, detail: details[$0.id] ?? "", bytes: $0.bytes, installed: false,
-                 recommended: $0.id == recommendedID)
+    /// Uma palavra a cada ~0,26 s, a partir de 0,2 s.
+    static func words() -> [TranscribedWord] {
+        var t: Micros = 200_000
+        return sample.split(separator: " ").map { (word: Substring) -> TranscribedWord in
+            let length = Micros(170_000 + 18_000 * word.count)
+            defer { t += length + 50_000 }
+            return TranscribedWord(text: String(word), start: t, end: t + length)
         }
     }
 
-    static func info(_ id: String) -> Info? { all.first { $0.id == id } }
-
-    // Provisório até a etapa 1 do núcleo trazer a lista de idiomas do transcritor.
-    static let languages: [(code: String, name: String)] = [
-        ("pt", "Português"), ("en", "Inglês"), ("es", "Espanhol"),
-    ]
-}
-
-/// Os três visuais de legenda, na ordem dos cartões.
-enum CaptionLooks {
-    struct Look {
-        let id: String
-        let name: String
-        let detail: String
+    static func frames(_ key: Key) -> [CGImage] {
+        var project = Project()
+        project.canvas.background = .color(RGBA(0, 0, 0, 0))
+        let cues = CaptionBuilder.cues(from: words(), layout: key.layout)
+        CaptionBuilder.apply(cues, layout: key.layout, style: nil, to: &project, replacing: false)
+        if let color = key.color {
+            for t in project.tracks.indices {
+                for i in project.tracks[t].segments.indices { project.tracks[t].segments[i].text?.highlight?.color = color }
+            }
+        }
+        let plan = RenderPlan(project: project, renderSize: pixelSize)
+        let rect = CGRect(origin: .zero, size: pixelSize)
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        return (0..<count).compactMap { i in
+            let time = Micros(cycle * 1_000_000 * Double(i) / Double(count))
+            let image = renderer.render(plan: plan, time: time) { _ in nil }
+            return context.createCGImage(image, from: rect, format: .RGBA8, colorSpace: space)
+        }
     }
-
-    static let all: [Look] = [
-        Look(id: "phrases", name: "Frases", detail: "Até duas linhas embaixo, como no cinema."),
-        Look(id: "highlight", name: "Destaque", detail: "Uma linha; a palavra falada acende."),
-        Look(id: "punch", name: "Impacto", detail: "Poucas palavras grandes no centro."),
-    ]
 }
