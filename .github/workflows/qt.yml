@@ -133,9 +133,11 @@ jobs:
             for t in $(ctest --test-dir build --rerun-failed -N | sed -n 's/.*Test *#[0-9]*: //p'); do
               for qpa in windows offscreen; do
                 status=0
-                "build/tests/$t.exe" -platform "$qpa" -o diag.txt,txt -v1 || status=$?
+                exe=$(find build -name "$t.exe" | head -n 1)
+                rm -f diag.txt
+                "$exe" -platform "$qpa" -o diag.txt,txt -v2 || status=$?
                 echo "== $t ($qpa): saída $status"
-                tail -n 15 diag.txt 2>/dev/null || true
+                tail -n 25 diag.txt 2>/dev/null || true
               done
             done
           fi
