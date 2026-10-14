@@ -76,6 +76,14 @@ final class EditorModel {
         didSet { if selection != oldValue { ensureValidTab() } }
     }
     var inspectorTab = InspectorTab.basic
+    /// Pedido para pôr o foco no campo do texto (duplo clique num texto no preview).
+    var focusTextEditor = false
+    /// Manipulação no preview: guias de encaixe e graus durante o giro.
+    var canvasGuides: [SnapGuide] = []
+    var canvasRotationLabel: Double?
+    @ObservationIgnored var placementDrag: PlacementDrag?
+    /// Quadros das miniaturas animadas do inspetor.
+    @ObservationIgnored let animationStrips = FrameStripStore()
     var libraryPanel = LibraryPanel.media
     var libraryVisible = true
     /// Grade dos terços sobre o preview.
@@ -125,9 +133,16 @@ final class EditorModel {
     @ObservationIgnored private var structureKey: CompositionBuilder.StructureKey?
     @ObservationIgnored private var planBox: PlanBox?
     @ObservationIgnored private var previewRenderSize: CGSize = .zero
+    /// Lado menor do preview em pixels: segue o player na tela (ver `PreviewResolution`).
+    @ObservationIgnored private(set) var previewShortSide = 720
+    /// Último tamanho do player informado pela view: pontos e escala da tela.
+    @ObservationIgnored private var previewViewport: (points: CGSize, scale: CGFloat)?
+    @ObservationIgnored private var previewResolutionTask: Task<Void, Never>?
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
     @ObservationIgnored private var isSeeking = false
     @ObservationIgnored private var pendingSeek: CMTime?
+    /// Trecho tocado uma vez ao escolher um efeito: onde parar e para onde voltar.
+    @ObservationIgnored private var excerpt: (end: Micros, resume: Micros)?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private(set) weak var timelineScrollView: NSScrollView?
@@ -292,6 +307,14 @@ final class EditorModel {
         return tabs
     }
 
+    /// Seleciona o texto e abre a aba Texto com o foco no campo.
+    func editText(_ id: UUID) {
+        guard project.segment(id)?.text != nil else { return }
+        selection = id
+        inspectorTab = .text
+        focusTextEditor = true
+    }
+
     func isOnMainTrack(_ id: UUID) -> Bool {
         guard let loc = project.locate(id) else { return false }
         return project.tracks[loc.track].isMain
@@ -304,7 +327,38 @@ final class EditorModel {
 
     // MARK: - Preview
 
-    private var previewSize: CGSize { project.canvasSize(shortSide: 720) }
+    private var previewSize: CGSize { project.canvasSize(shortSide: previewShortSide) }
+
+    /// A view do player mudou de tamanho ou de tela. O primeiro tamanho vale na hora;
+    /// os seguintes, ~300 ms depois que o tamanho parar (redimensionar a janela ou a timeline).
+    func previewViewportChanged(points: CGSize, scale: CGFloat) {
+        guard points.width > 1, points.height > 1 else { return }
+        let first = previewViewport == nil
+        previewViewport = (points, scale)
+        previewResolutionTask?.cancel()
+        if first {
+            updatePreviewResolution()
+            return
+        }
+        previewResolutionTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.updatePreviewResolution()
+        }
+    }
+
+    /// Recalcula o degrau; só refaz o preview se ele mudou.
+    private func updatePreviewResolution() {
+        guard let viewport = previewViewport else { return }
+        setPreviewShortSide(PreviewResolution.shortSide(points: viewport.points, scale: viewport.scale))
+    }
+
+    /// Troca o lado menor do preview (o DebugSnapshot também usa, para medir cada degrau).
+    func setPreviewShortSide(_ side: Int) {
+        guard side != previewShortSide else { return }
+        previewShortSide = side
+        projectDidChange()
+    }
 
     private func projectDidChange() {
         let key = CompositionBuilder.structureKey(project)
@@ -358,13 +412,35 @@ final class EditorModel {
     private func playerTimeChanged(_ time: CMTime) {
         guard isPlaying else { return }
         playhead = min(time.micros, duration)
+        if let excerpt, playhead >= excerpt.end || player.rate == 0 {
+            player.pause()
+            isPlaying = false
+            self.excerpt = nil
+            seek(to: excerpt.resume)
+            return
+        }
         revealPlayhead()
         if player.rate == 0 || playhead >= duration {
             isPlaying = false
         }
     }
 
+    /// Toca o trecho uma vez e volta ao ponto em que o playhead estava
+    /// (prévia de um efeito recém-escolhido).
+    func playExcerpt(_ range: Range<Micros>) {
+        let resume = excerpt?.resume ?? playhead
+        if isPlaying { player.pause() }
+        let start = min(max(0, range.lowerBound), duration)
+        let end = min(range.upperBound, duration)
+        guard end > start else { return }
+        excerpt = (end, resume)
+        seek(to: start)
+        isPlaying = true
+        player.play()
+    }
+
     func togglePlay() {
+        excerpt = nil
         if isPlaying {
             player.pause()
             isPlaying = false
@@ -390,6 +466,7 @@ final class EditorModel {
 
     /// Scrub pela régua ou pela agulha do playhead.
     func scrub(to t: Micros) {
+        excerpt = nil
         if isPlaying { togglePlay() }
         seek(to: t)
     }

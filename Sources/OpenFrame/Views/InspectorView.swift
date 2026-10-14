@@ -31,18 +31,31 @@ private let percent: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
 private let signedPercent: (Double) -> String = { String(format: "%+.0f", $0 * 100) }
 private let secondsFormat: (Double) -> String = { String(format: "%.1fs", $0) }
 
-/// Cartão selecionável usado nas grades de filtros, efeitos e transições.
-private struct ChoiceTile<Preview: View>: View {
+/// Cartão selecionável usado nas grades de filtros, efeitos, animações e transições.
+struct ChoiceTile<Preview: View>: View {
     let title: String
     let selected: Bool
     let action: () -> Void
-    @ViewBuilder let preview: () -> Preview
+    /// Recebe se o ponteiro está sobre o cartão (miniaturas que tocam no hover).
+    let preview: (Bool) -> Preview
     @State private var hovering = false
+
+    init(title: String, selected: Bool, action: @escaping () -> Void, @ViewBuilder preview: @escaping () -> Preview) {
+        self.init(title: title, selected: selected, action: action, hoverPreview: { _ in preview() })
+    }
+
+    init(title: String, selected: Bool, action: @escaping () -> Void,
+         @ViewBuilder hoverPreview: @escaping (Bool) -> Preview) {
+        self.title = title
+        self.selected = selected
+        self.action = action
+        preview = hoverPreview
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                preview()
+                preview(hovering)
                     .frame(height: 50)
                     .frame(maxWidth: .infinity)
                     .background(Theme.raised)
@@ -53,6 +66,7 @@ private struct ChoiceTile<Preview: View>: View {
                 Text(title)
                     .font(Theme.font(11, selected ? .medium : .regular))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .foregroundStyle(selected ? Theme.accent : (hovering ? Theme.textPrimary : Theme.textSecondary))
             }
             .contentShape(Rectangle())
@@ -62,7 +76,7 @@ private struct ChoiceTile<Preview: View>: View {
     }
 }
 
-private let tileColumns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
+let tileColumns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
 
 /// Campo de texto de uma linha com a aparência dos campos do tema.
 private struct InputField: View {
@@ -345,45 +359,6 @@ private struct EffectsTab: View {
     }
 }
 
-private struct AnimationTab: View {
-    let segment: Segment
-
-    var body: some View {
-        let isText = segment.text != nil
-        let kinds = AnimationKind.allCases.filter { isText || !$0.textOnly }
-        AnimationPicker(title: "Entrada", id: segment.id, keyPath: \.animationIn, kinds: kinds)
-        AnimationPicker(title: "Saída", id: segment.id, keyPath: \.animationOut, kinds: kinds)
-    }
-}
-
-private struct AnimationPicker: View {
-    @Environment(EditorModel.self) private var model
-    let title: String
-    let id: UUID
-    let keyPath: WritableKeyPath<Segment, SegmentAnimation?>
-    let kinds: [AnimationKind]
-
-    var body: some View {
-        let anim = model.binding(id, keyPath)
-        SectionHeader(title: title)
-        FieldRow(label: "Tipo") {
-            MenuField(selection: Binding<AnimationKind?>(
-                get: { anim.wrappedValue?.kind },
-                set: { kind in
-                    anim.wrappedValue = kind.map { SegmentAnimation(kind: $0, duration: anim.wrappedValue?.duration ?? 500_000) }
-                }),
-                      options: [nil] + kinds.map(Optional.some),
-                      title: { $0?.displayName ?? "Nenhuma" })
-        }
-        if anim.wrappedValue != nil {
-            ParamSlider(title: "Duração",
-                        value: Binding(get: { anim.wrappedValue?.duration.seconds ?? 0.5 },
-                                       set: { anim.wrappedValue?.duration = Time.seconds($0) }),
-                        range: 0.1...3, defaultValue: 0.5, format: secondsFormat)
-        }
-    }
-}
-
 private struct TransitionTab: View {
     @Environment(EditorModel.self) private var model
     let segment: Segment
@@ -461,6 +436,8 @@ private struct TextTab: View {
         return model.binding(id, path)
     }
 
+    @FocusState private var editorFocused: Bool
+
     var body: some View {
         TextEditor(text: model.binding(id, \.text!.text))
             .font(Theme.font(13))
@@ -468,6 +445,9 @@ private struct TextTab: View {
             .scrollContentBackground(.hidden)
             .padding(6)
             .field()
+            .focused($editorFocused)
+            .onAppear(perform: takeFocusIfRequested)
+            .onChange(of: model.focusTextEditor) { takeFocusIfRequested() }
 
         SectionHeader(title: "Estilos prontos")
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
@@ -483,6 +463,13 @@ private struct TextTab: View {
         backgroundSection
         shadowSection
         positionSection
+    }
+
+    private func takeFocusIfRequested() {
+        guard model.focusTextEditor else { return }
+        model.focusTextEditor = false
+        // Depois do layout: a aba acabou de aparecer.
+        DispatchQueue.main.async { editorFocused = true }
     }
 
     @ViewBuilder private var fontSection: some View {

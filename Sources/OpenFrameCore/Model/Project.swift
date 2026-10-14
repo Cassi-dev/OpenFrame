@@ -57,6 +57,8 @@ public struct Segment: Codable, Hashable, Sendable, Identifiable {
     public var effects: [VideoEffect] = []
     public var animationIn: SegmentAnimation?
     public var animationOut: SegmentAnimation?
+    /// Sem loop, a chave não é gravada (projetos e fixtures antigos ficam iguais).
+    public var animationLoop: LoopAnimation?
     public var transition: Transition?
     public var text: TextContent?
 
