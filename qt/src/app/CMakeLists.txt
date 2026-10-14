@@ -30,9 +30,12 @@ set(OPENFRAME_FONTS
     fonts/lucide.ttf
 )
 
+# A pasta do módulo (qmldir etc.) fica em qml/OpenFrame: com o padrão, ela se
+# chamaria build/src/app/OpenFrame e colidiria com o executável no Linux.
 qt_add_qml_module(OpenFrame
     URI OpenFrame
     VERSION 1.0
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml/OpenFrame"
     QML_FILES ${OPENFRAME_QML}
     SOURCES
         CoreBridge.h CoreBridge.cpp
