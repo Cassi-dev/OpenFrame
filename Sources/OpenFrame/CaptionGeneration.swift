@@ -13,6 +13,8 @@ final class CaptionGeneration {
     enum Phase: Equatable {
         case configuring
         case downloading(received: Int64, total: Int64)
+        /// Mistura e transcrição levam o progresso total das duas (`overall`): a barra não volta a zero
+        /// entre uma e outra; a fase só muda o rótulo.
         case mixing(Double)
         case transcribing(Double)
         case finished(count: Int)
@@ -38,7 +40,7 @@ final class CaptionGeneration {
     var phase = Phase.configuring
     /// A geração começou baixando o modelo (o passo "Baixar modelo" aparece no progresso).
     var includesDownload = false
-    /// Início da fase atual, para a estimativa do tempo restante.
+    /// Início do download ou da transcrição (mistura incluída), para a estimativa do tempo restante.
     var phaseStartedAt = Date()
     /// Downloads pedidos na lista de precisão, fora da geração: id do modelo → fração.
     var downloads: [String: Double] = [:]
@@ -50,7 +52,8 @@ final class CaptionGeneration {
 
     private static func sameStage(_ a: Phase, _ b: Phase) -> Bool {
         switch (a, b) {
-        case (.downloading, .downloading), (.mixing, .mixing), (.transcribing, .transcribing): true
+        case (.downloading, .downloading): true
+        case (.mixing, .mixing), (.mixing, .transcribing), (.transcribing, .mixing), (.transcribing, .transcribing): true
         default: false
         }
     }
