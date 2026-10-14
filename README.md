@@ -156,8 +156,9 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - Volume limitado a 100% (limite do `AVAudioMix`).
 - Ainda sem animação por keyframes nem exportação em GIF.
 - Windows e Linux: o render é feito na CPU (funciona sem placa de vídeo, mas é
-  mais lento que no Mac em projetos pesados); vídeos HDR ainda não são
-  convertidos para SDR; alguns filtros fotográficos são aproximações dos do Mac.
+  mais lento que no Mac em projetos pesados); alguns filtros fotográficos são
+  aproximações dos do Mac, e em vídeos HDR PQ os realces muito claros saem um
+  pouco menos saturados que no Mac.
 
 ---
 
@@ -205,8 +206,8 @@ cmake -S qt -B build/qt -G Ninja -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt
 No Windows, use o "x64 Native Tools Command Prompt" do Visual Studio 2022,
 defina `FFMPEG_ROOT` com um build "gpl-shared" do
 [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) (pastas `include`, `lib` e
-`bin`), ponha o `bin` do FFmpeg e o do Qt no `PATH` e configure com
-`-DCMAKE_CXX_FLAGS="/utf-8 /EHsc"`.
+`bin`), ponha o `bin` do FFmpeg e o do Qt no `PATH` e use os mesmos comandos
+`cmake` acima.
 
 Capturas sem tela: `.github/scripts/capturas.sh <executável> <pasta>` gera mídia
 de teste com o ffmpeg e salva PNGs da tela inicial, do editor (todas as abas do

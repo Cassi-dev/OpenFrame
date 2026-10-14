@@ -29,7 +29,9 @@ Tudo no namespace `of`; tempo em `Micros` (microssegundos, `qint64`).
 | `MediaWriter.h` | `MediaWriter::create(path, optional<Video>, optional<Audio>, QString*)`; `writeVideo(QImage, index)`, `writeAudio(interleaved, frames)`, `finish(QString*)`, `abort()`. H.264, HEVC (hvc1), ProRes 422, AAC; contêiner pela extensão (MP4, MOV, M4A) |
 
 Cores: matriz e intervalo do arquivo; sem marca, BT.709 em HD e BT.601 em SD.
-Rotação da trilha e EXIF já aplicados nos quadros.
+Rotação da trilha e EXIF já aplicados nos quadros. Vídeo HDR (BT.2100 HLG ou PQ,
+como os do iPhone) sai convertido para SDR como o macOS mostra (ver
+`ToneMap.h`); cinzas a até 3 níveis do macOS, cores comuns a até 12.
 
 ## Etapa 3: render na CPU e texto
 
@@ -54,7 +56,6 @@ Diferenças em relação ao Swift:
 - Os filtros fotográficos (Mono, Noir, Tonal, Cromo, Desbotado, Instantânea,
   Processo, Transferência, Sépia) são aproximações ajustadas às cores medidas
   no Swift (erro médio de 0,2 a 8 níveis por canal; ver `FilterModels.h`).
-- HDR (HLG/PQ) ainda não é convertido para SDR.
 
 ## Etapa 4: áudio e reprodução
 

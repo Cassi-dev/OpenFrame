@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Fontes em UTF-8 (textos em português); o MSVC assume a página de código local.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(OPENFRAME_BUILD_TESTS "Compila os testes" ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Concurrent)
