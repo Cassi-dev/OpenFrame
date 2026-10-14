@@ -256,7 +256,11 @@ std::unique_ptr<MediaWriter> MediaWriter::create(const QString &path, const std:
         }
         d.fileOpened = true;
     }
-    r = avformat_write_header(d.output.get(), nullptr);
+    // Índice no começo do arquivo, como o `shouldOptimizeForNetworkUse` do Swift.
+    AVDictionary *muxerOptions = nullptr;
+    av_dict_set(&muxerOptions, "movflags", "+faststart", 0);
+    r = avformat_write_header(d.output.get(), &muxerOptions);
+    av_dict_free(&muxerOptions);
     if (r < 0) {
         d.fail(QStringLiteral("cabeçalho"), r);
         return failed();

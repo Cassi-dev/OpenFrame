@@ -76,6 +76,27 @@ Para o app:
   dispositivo de som, toca mudo. Só usa `QAudioSink`/`QMediaDevices`: o
   plugin de mídia FFmpeg do Qt não é necessário.
 
+## Etapa 5: exportação e miniatura
+
+| Cabeçalho | O que tem |
+|---|---|
+| `Exporter.h` | `Exporter` (QObject): `start(project, settings, path)`, `cancel()`, `isRunning()`; sinais `progress(double)` (0…1, crescente, 1 no fim) e `finished(bool ok, QString error)` |
+| `Renderer.h` | `ProjectThumbnail::image(project)` e `ProjectThumbnail::jpeg(project)` (quadro em 1/3 da duração, até 2 s, lado menor 360; JPEG qualidade 80) |
+
+Para o app:
+- `start` volta na hora; a exportação roda numa thread própria e os sinais
+  chegam na thread do `Exporter`.
+- Configuração inválida (`ExportSettings::validationError`) ou M4A sem som
+  terminam com `finished(false, mensagem)`. Cancelado: `finished(false, "")`,
+  e o arquivo parcial é apagado. Destruir o `Exporter` também cancela.
+- Formato do arquivo: H.264 (x264 "medium"), HEVC (x265 "fast", tag hvc1) ou
+  ProRes 422 (só MOV), com AAC na taxa escolhida (44,1 ou 48 kHz) e estéreo;
+  bitrate, fps e quadros-chave do `ExportSettings`; marcas BT.709; índice no
+  começo do arquivo (faststart). O som vai até o fim do vídeo (silêncio depois
+  do último trecho).
+- Miniatura: `library.writeThumbnail(ProjectThumbnail::jpeg(project), id)`
+  depois de salvar (num `QtConcurrent::run`, para não travar a interface).
+
 Convenções:
 - Enums são `enum class` em PascalCase (`AspectRatio::R9x16`, `TrackKind::Text`).
 - O `throws` do Swift virou `std::optional`/`bool` com `QString *error` opcional.
