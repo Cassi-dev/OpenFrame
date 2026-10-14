@@ -24,6 +24,7 @@ add_library(openframe_core STATIC
     Renderer.h Renderer.cpp
     AudioMix.h AudioMix.cpp
     Player.h Player.cpp
+    Exporter.h Exporter.cpp
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)

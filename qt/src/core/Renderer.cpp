@@ -6,6 +6,7 @@
 #include "Motion.h"
 #include "TextRenderer.h"
 
+#include <QBuffer>
 #include <cmath>
 
 namespace of {
@@ -276,6 +277,27 @@ QImage EffectPreview::filtered(const QImage &image, FilterPreset preset)
     LinearImage img = LinearImage::fromImage(image);
     ImageEffects::filter(img, FilterSetting{preset, 1});
     return img.toImage();
+}
+
+QImage ProjectThumbnail::image(const Project &project)
+{
+    const Micros total = project.duration();
+    if (total <= 0)
+        return {};
+    const Micros t = std::min<Micros>(total / 3, Time::seconds(2));
+    return Renderer::shared().render(project, t, project.canvasSize(360));
+}
+
+QByteArray ProjectThumbnail::jpeg(const Project &project)
+{
+    const QImage frame = image(project);
+    if (frame.isNull())
+        return {};
+    QByteArray data;
+    QBuffer buffer(&data);
+    buffer.open(QIODevice::WriteOnly);
+    frame.convertToFormat(QImage::Format_RGB32).save(&buffer, "JPEG", 80);
+    return data;
 }
 
 } // namespace of
