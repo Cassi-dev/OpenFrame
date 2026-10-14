@@ -105,14 +105,28 @@ struct CaptionBuilderTests {
     quando quiser.
     """
 
-    func check(_ cues: [CaptionCue], layout: CaptionLayout, words: [TranscribedWord]) {
-        let lim = CaptionBuilder.limits(layout)
+    /// Linhas desenhadas de uma legenda no estilo padrão do visual, no canvas dado.
+    static func renderedLines(_ cue: CaptionCue, preset: CaptionPreset, canvas: CGSize = CGSize(width: 1920, height: 1080)) -> [String] {
+        let style = CaptionBuilder.style(preset, aspect: canvas.width / canvas.height)
+        return TextRenderer.shared.lineTexts(for: TextContent(text: cue.text, style: style), canvas: canvas)
+    }
+
+    func check(_ cues: [CaptionCue], preset: CaptionPreset, words: [TranscribedWord],
+               canvas: CGSize = CGSize(width: 1920, height: 1080)) {
+        let lim = CaptionBuilder.limits(preset: preset)
         // Todas as palavras, na ordem, uma vez só.
         #expect(cues.flatMap(\.words).map(\.text) == words.map(\.text))
         for (k, cue) in cues.enumerated() {
-            let lines = cue.text.split(separator: "\n")
-            #expect(lines.count <= lim.lines, "\(cue.text)")
-            for line in lines where cue.words.count > 1 { #expect(line.count <= lim.lineChars, "\(line)") }
+            if preset.layout == .stacked {
+                let lines = cue.text.split(separator: "\n")
+                #expect(cue.words.count == 1 || (2...3).contains(lines.count), "\(cue.text)")
+                #expect(lines.allSatisfy { (1...2).contains($0.split(separator: " ").count) }, "\(cue.text)")
+            } else {
+                // Quebra suave: sem `\n`; quem quebra é a caixa, dentro das linhas do visual.
+                #expect(!cue.text.contains("\n"))
+                let lines = Self.renderedLines(cue, preset: preset, canvas: canvas)
+                if cue.words.count > 1 { #expect(lines.count <= lim.lines, "\(preset) \(lines)") }
+            }
             #expect(TextContent.words(of: cue.text).count == cue.words.count)
             #expect(cue.words.last!.end - cue.words.first!.start <= lim.maxDuration)
             #expect(cue.end > cue.start)
@@ -127,18 +141,28 @@ struct CaptionBuilderTests {
         }
     }
 
-    @Test("Frases: duas linhas equilibradas, até 42 caracteres e 5 s", arguments: CaptionLayout.allCases)
-    func limitsRespected(layout: CaptionLayout) {
+    @Test("Cada visual respeita as linhas, a duração e a ordem das palavras", arguments: CaptionPreset.allCases)
+    func limitsRespected(preset: CaptionPreset) {
         let words = spokenWords(speech)
-        let cues = CaptionBuilder.cues(from: words, layout: layout)
+        let cues = CaptionBuilder.cues(from: words, preset: preset)
         #expect(cues.count > 2)
-        check(cues, layout: layout, words: words)
+        check(cues, preset: preset, words: words)
+    }
+
+    @Test("No 9:16 cabe menos numa linha: a segmentação acompanha", arguments: [CaptionPreset.phrases, .highlight, .rise])
+    func portrait(preset: CaptionPreset) {
+        let words = spokenWords(speech)
+        let portrait = CaptionBuilder.cues(from: words, preset: preset, aspect: 9.0 / 16)
+        check(portrait, preset: preset, words: words, canvas: CGSize(width: 1080, height: 1920))
+        #expect(portrait.count > CaptionBuilder.cues(from: words, preset: preset).count)
+        // A caixa ocupa até 90% do quadro em pé.
+        #expect(CaptionBuilder.style(preset, aspect: 9.0 / 16).maxWidth == 0.9)
     }
 
     @Test("Quebra nas pausas e na pontuação")
     func breaksAtPunctuation() {
         let cues = CaptionBuilder.cues(from: spokenWords(speech), layout: .phrases)
-        let texts = cues.map { $0.text.replacingOccurrences(of: "\n", with: " ") }
+        let texts = cues.map { $0.text.replacingOccurrences(of: CaptionBuilder.glue, with: " ") }
         // O fim de frase com pausa sempre fecha uma legenda.
         #expect(texts.contains { $0.hasSuffix("complicação.") })
         #expect(texts.contains { $0.hasPrefix("Primeiro") })
@@ -150,27 +174,48 @@ struct CaptionBuilderTests {
         #expect(clean.count * 2 >= cues.count - 1, "\(texts)")
     }
 
-    @Test("Nenhuma linha termina em artigo ou preposição quando há outra opção")
-    func noDanglingFunctionWords() {
+    @Test("Nenhuma linha termina em artigo ou preposição quando há outra opção", arguments: [1.0, 0.6, 0.4])
+    func noDanglingFunctionWords(widthFactor: Double) {
         let cues = CaptionBuilder.cues(from: spokenWords(speech), layout: .phrases)
+        var style = CaptionBuilder.defaultStyle(.phrases)
+        style.maxWidth *= widthFactor
         for cue in cues {
-            for line in cue.text.split(separator: "\n").dropLast() {
-                let last = String(line.split(separator: " ").last!)
-                #expect(!CaptionBuilder.isFunctionWord(last), "\(cue.text)")
+            let lines = TextRenderer.shared.lineTexts(for: TextContent(text: cue.text, style: style),
+                                                      canvas: CGSize(width: 1920, height: 1080))
+            for line in lines.dropLast() {
+                let last = String(line.split(whereSeparator: \.isWhitespace).last!)
+                #expect(!CaptionBuilder.isFunctionWord(last), "\(lines)")
             }
         }
         let ends = cues.dropLast().map { $0.words.last!.text }
         #expect(ends.filter(CaptionBuilder.isFunctionWord).isEmpty, "\(ends)")
     }
 
-    @Test("As duas linhas ficam equilibradas")
-    func balancedLines() {
+    @Test("Frases no 16:9: duas linhas equilibradas; caixa larga junta numa linha só")
+    func balancedLines() throws {
         let words = spokenWords("este é um exemplo de legenda longa que precisa de duas linhas na tela")
         let cues = CaptionBuilder.cues(from: words, layout: .phrases)
         #expect(cues.count == 1)
-        let lines = cues[0].text.split(separator: "\n")
-        #expect(lines.count == 2)
-        #expect(abs(lines[0].count - lines[1].count) <= 12, "\(lines)")
+        #expect(!cues[0].text.contains("\n"))
+        var p = Project()
+        p.canvas.aspect = .r16x9
+        CaptionBuilder.apply(cues, preset: .phrases, accent: nil, to: &p, replacing: false)
+        let track = try #require(p.tracks.first { $0.isAutoCaptions })
+        let canvas = CGSize(width: 1920, height: 1080)
+        func lines() -> [String] {
+            TextRenderer.shared.lineTexts(for: p.tracks.first(where: \.isAutoCaptions)!.segments[0].text!, canvas: canvas)
+        }
+        let two = lines()
+        #expect(two.count == 2, "\(two)")
+        let style = track.segments[0].text!.style
+        let widths = two.map { TextRenderer.shared.lineWidth($0, style: style, fontPx: 100) }
+        #expect(abs(widths[0] - widths[1]) <= 0.25 * widths.max()!, "\(two)")
+
+        // Alargar a caixa junta as linhas; estreitar quebra mais.
+        TimelineEditor.setTextWidth(&p, segment: track.segments[0].id, maxWidth: 3)
+        #expect(lines().count == 1)
+        TimelineEditor.setTextWidth(&p, segment: track.segments[0].id, maxWidth: 0.3)
+        #expect(lines().count > 2)
     }
 
     @Test("Impacto: de 1 a 4 palavras, quase sempre de 2 a 4")
@@ -262,7 +307,7 @@ struct CaptionBuilderTests {
 
     @Test("Layouts: nomes e estilos")
     func layouts() {
-        #expect(CaptionLayout.allCases.map(\.displayName) == ["Frases", "Destaque", "Impacto"])
+        #expect(CaptionLayout.allCases.map(\.displayName) == ["Frases", "Destaque", "Impacto", "Empilhado"])
         #expect(CaptionBuilder.defaultStyle(.punch).fontSize > CaptionBuilder.defaultStyle(.phrases).fontSize)
         #expect(CaptionBuilder.defaultStyle(.punch).y == 0)
         #expect(CaptionBuilder.defaultStyle(.phrases).y < -0.5)

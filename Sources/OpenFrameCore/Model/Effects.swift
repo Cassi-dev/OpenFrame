@@ -283,8 +283,18 @@ public struct TextStyle: Codable, Hashable, Sendable {
     public var y: Double = -0.7
     public var scale: Double = 1
     public var rotation: Double = 0
-    /// Largura máxima da caixa como fração da largura do canvas.
+    /// Largura máxima da caixa como fração da largura do canvas (a quebra automática de linha).
     public var maxWidth: Double = 0.9
+    /// A quebra automática equilibra as linhas, como o `text-wrap: balance` do CSS: o mesmo número de
+    /// linhas, com a mais longa a menor possível.
+    public var balanceLines = false
+    /// Cada linha (quebrada por `\n`) é escalada para ocupar a largura `maxWidth`, entre 0,6× e 2,5× o
+    /// tamanho da fonte (o bloco justificado do visual Empilhado).
+    public var fitLines = false
+
+    /// Faixa permitida para `maxWidth`. Passa de 1 para permitir uma linha só em textos longos; o que sair
+    /// do quadro é cortado, como em qualquer elemento.
+    public static let maxWidthRange: ClosedRange<Double> = 0.1...3.0
 
     public init() {}
 
@@ -324,6 +334,8 @@ public struct TextStyle: Codable, Hashable, Sendable {
         scale = try value(.scale, d.scale)
         rotation = try value(.rotation, d.rotation)
         maxWidth = try value(.maxWidth, d.maxWidth)
+        balanceLines = try value(.balanceLines, d.balanceLines)
+        fitLines = try value(.fitLines, d.fitLines)
     }
 }
 
@@ -334,6 +346,8 @@ public struct TextContent: Codable, Hashable, Sendable {
     /// Opcionais: sem eles a chave não é gravada e projetos antigos abrem iguais.
     public var words: [CaptionWord]?
     public var highlight: WordHighlight?
+    /// Palavras-chave em destaque tipográfico (visual Editorial).
+    public var emphasis: WordEmphasis?
 
     public init(text: String, style: TextStyle = TextStyle()) {
         self.text = text
