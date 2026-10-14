@@ -125,9 +125,28 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Testes do núcleo
-        run: ctest --test-dir build --output-on-failure --timeout 600
+        run: |
+          ctest --test-dir build --output-on-failure --timeout 600 && exit 0
+          # Diagnóstico no Windows: o CRT guarda a saída em buffer e um teste que
+          # cai não imprime nada; o código de saída mostra o tipo da queda.
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            for t in $(ctest --test-dir build --rerun-failed -N | sed -n 's/.*Test *#[0-9]*: //p'); do
+              for qpa in windows offscreen; do
+                status=0
+                "build/tests/$t.exe" -platform "$qpa" -o diag.txt,txt -v1 || status=$?
+                echo "== $t ($qpa): saída $status"
+                tail -n 15 diag.txt 2>/dev/null || true
+              done
+            done
+          fi
+          exit 1
 
+      # No Windows a captura usa a plataforma nativa com o Qt Quick por software
+      # (o offscreen do Windows não tem banco de fontes próprio).
       - name: Capturas offscreen do app
+        env:
+          OPENFRAME_QPA: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
+          OPENFRAME_SOFTWARE: ${{ runner.os == 'Windows' && '1' || '' }}
         run: .github/scripts/capturas.sh "${{ matrix.app }}" capturas
 
       - name: Publicar as capturas

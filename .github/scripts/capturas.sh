@@ -3,7 +3,8 @@
 # arrastes), para conferir o visual sem tela. Usado pela CI; roda também no Mac.
 #
 # uso: capturas.sh <executável do OpenFrame> <pasta de saída>
-# Precisa do ffmpeg no PATH (gera a mídia de teste).
+# Precisa do ffmpeg no PATH (gera a mídia de teste). OPENFRAME_QPA troca a
+# plataforma do Qt (padrão: offscreen; no Windows a CI usa "windows").
 set -euo pipefail
 
 # No Windows (Git Bash) o app recebe caminhos nativos (C:/...).
@@ -45,7 +46,7 @@ cenario() {
     local pasta="$out/$nome" log="$out/$nome.log"
     mkdir -p "$pasta"
     echo "== $nome"
-    env QT_QPA_PLATFORM=offscreen OPENFRAME_SNAPSHOT_DIR="$pasta" ${vars[@]+"${vars[@]}"} "$app" "$@" >"$log" 2>&1 &
+    env QT_QPA_PLATFORM="${OPENFRAME_QPA:-offscreen}" OPENFRAME_SNAPSHOT_DIR="$pasta" ${vars[@]+"${vars[@]}"} "$app" "$@" >"$log" 2>&1 &
     local pid=$!
     (sleep "$limite" && kill "$pid") >/dev/null 2>&1 &
     local vigia=$!
