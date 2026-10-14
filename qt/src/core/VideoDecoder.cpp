@@ -254,19 +254,19 @@ std::unique_ptr<VideoDecoder> VideoDecoder::open(const QString &path, QString *e
 
 QImage VideoDecoder::frameAt(Micros t, QSize maxSize)
 {
-    Impl &d = *this->d;
-    const bool inCurrent = d.current && d.currentTime <= t && (d.next ? t < d.nextTime : d.eof);
+    Impl &impl = *d;
+    const bool inCurrent = impl.current && impl.currentTime <= t && (impl.next ? t < impl.nextTime : impl.eof);
     if (!inCurrent) {
-        if (!d.current || t < d.currentTime || t - d.currentTime > forwardLimit)
-            d.seek(t);
-        if (!d.advanceTo(t))
+        if (!impl.current || t < impl.currentTime || t - impl.currentTime > forwardLimit)
+            impl.seek(t);
+        if (!impl.advanceTo(t))
             return {};
     }
-    if (d.image.isNull() || d.imageMaxSize != maxSize) {
-        d.image = d.convert(d.current.get(), maxSize);
-        d.imageMaxSize = maxSize;
+    if (impl.image.isNull() || impl.imageMaxSize != maxSize) {
+        impl.image = impl.convert(impl.current.get(), maxSize);
+        impl.imageMaxSize = maxSize;
     }
-    return d.image;
+    return impl.image;
 }
 
 QSize VideoDecoder::displaySize() const

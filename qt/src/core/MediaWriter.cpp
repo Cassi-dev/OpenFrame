@@ -266,57 +266,57 @@ std::unique_ptr<MediaWriter> MediaWriter::create(const QString &path, const std:
 
 bool MediaWriter::writeVideo(const QImage &frame, qint64 index)
 {
-    Impl &d = *this->d;
-    if (!d.video)
-        return d.fail(QStringLiteral("sem trilha de vídeo"));
+    Impl &impl = *d;
+    if (!impl.video)
+        return impl.fail(QStringLiteral("sem trilha de vídeo"));
     QImage image = frame.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    if (image.size() != d.videoSpec.size)
-        image = image.scaled(d.videoSpec.size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-    if (av_frame_make_writable(d.videoFrame.get()) < 0)
-        return d.fail(QStringLiteral("memória de vídeo"));
+    if (image.size() != impl.videoSpec.size)
+        image = image.scaled(impl.videoSpec.size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (av_frame_make_writable(impl.videoFrame.get()) < 0)
+        return impl.fail(QStringLiteral("memória de vídeo"));
     const uint8_t *src[4] = {image.constBits(), nullptr, nullptr, nullptr};
     const int srcStride[4] = {int(image.bytesPerLine()), 0, 0, 0};
-    sws_scale(d.sws.get(), src, srcStride, 0, image.height(), d.videoFrame->data, d.videoFrame->linesize);
-    d.videoFrame->pts = index;
-    d.videoFrame->duration = 1;
-    return d.encode(d.video.get(), d.videoStream, d.videoFrame.get());
+    sws_scale(impl.sws.get(), src, srcStride, 0, image.height(), impl.videoFrame->data, impl.videoFrame->linesize);
+    impl.videoFrame->pts = index;
+    impl.videoFrame->duration = 1;
+    return impl.encode(impl.video.get(), impl.videoStream, impl.videoFrame.get());
 }
 
 bool MediaWriter::writeAudio(const float *interleaved, int frames)
 {
-    Impl &d = *this->d;
-    if (!d.audio)
-        return d.fail(QStringLiteral("sem trilha de áudio"));
-    d.pending.insert(d.pending.end(), interleaved, interleaved + qsizetype(frames) * d.channels);
-    const int frameSize = d.audio->frame_size > 0 ? d.audio->frame_size : 1024;
-    while (int(d.pending.size()) >= frameSize * d.channels)
-        if (!d.sendAudio(frameSize))
+    Impl &impl = *d;
+    if (!impl.audio)
+        return impl.fail(QStringLiteral("sem trilha de áudio"));
+    impl.pending.insert(impl.pending.end(), interleaved, interleaved + qsizetype(frames) * impl.channels);
+    const int frameSize = impl.audio->frame_size > 0 ? impl.audio->frame_size : 1024;
+    while (int(impl.pending.size()) >= frameSize * impl.channels)
+        if (!impl.sendAudio(frameSize))
             return false;
     return true;
 }
 
 bool MediaWriter::finish(QString *error)
 {
-    Impl &d = *this->d;
-    bool ok = d.error.isEmpty();
-    if (ok && d.audio && !d.pending.empty())
-        ok = d.sendAudio(int(d.pending.size()) / d.channels);
-    if (ok && d.video)
-        ok = d.encode(d.video.get(), d.videoStream, nullptr);
-    if (ok && d.audio)
-        ok = d.encode(d.audio.get(), d.audioStream, nullptr);
+    Impl &impl = *d;
+    bool ok = impl.error.isEmpty();
+    if (ok && impl.audio && !impl.pending.empty())
+        ok = impl.sendAudio(int(impl.pending.size()) / impl.channels);
+    if (ok && impl.video)
+        ok = impl.encode(impl.video.get(), impl.videoStream, nullptr);
+    if (ok && impl.audio)
+        ok = impl.encode(impl.audio.get(), impl.audioStream, nullptr);
     if (ok) {
-        const int r = av_write_trailer(d.output.get());
+        const int r = av_write_trailer(impl.output.get());
         if (r < 0)
-            ok = d.fail(QStringLiteral("finalizar"), r);
+            ok = impl.fail(QStringLiteral("finalizar"), r);
     }
-    d.output.reset();
-    d.finished = true;
+    impl.output.reset();
+    impl.finished = true;
     if (!ok) {
-        if (d.fileOpened)
-            QFile::remove(d.path);
+        if (impl.fileOpened)
+            QFile::remove(impl.path);
         if (error)
-            *error = d.error;
+            *error = impl.error;
     }
     return ok;
 }

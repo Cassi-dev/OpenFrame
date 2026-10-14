@@ -16,6 +16,12 @@ add_library(openframe_core STATIC
     Thumbnails.h Thumbnails.cpp
     Waveform.h Waveform.cpp
     MediaWriter.h MediaWriter.cpp
+    LinearImage.h LinearImage.cpp
+    FilterModels.h FilterModels.cpp
+    ImageEffects.h ImageEffects.cpp
+    Motion.h Motion.cpp
+    TextRenderer.h TextRenderer.cpp
+    Renderer.h Renderer.cpp
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)
