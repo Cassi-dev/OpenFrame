@@ -408,7 +408,7 @@ private struct CaptionSample: View {
                     .modifier(CaptionInk())
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, h * 0.12)
-            case .punch:
+            case .punch, .stacked:
                 Text("MUITO BOM")
                     .font(.system(size: h * 0.2, weight: .heavy))
                     .modifier(CaptionInk())
