@@ -74,16 +74,70 @@ final class TextRenderer: @unchecked Sendable {
         if style.letterSpacing != 0 {
             attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = CGFloat(style.letterSpacing) * fontPx
         }
-        let framesetter = CTFramesetterCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
-        let maxWidth = max(fontPx, CGFloat(style.maxWidth) * canvas.width)
+        let string = NSAttributedString(string: text, attributes: attrs)
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        var wrap = max(fontPx, CGFloat(style.maxWidth) * canvas.width)
+        if style.balanceLines { wrap = Self.balancedWidth(framesetter, length: string.length, maxWidth: wrap) }
         let suggested = CTFramesetterSuggestFrameSizeWithConstraints(
             framesetter, CFRange(location: 0, length: 0), nil,
-            CGSize(width: maxWidth, height: .greatestFiniteMagnitude), nil)
+            CGSize(width: wrap, height: .greatestFiniteMagnitude), nil)
         let textSize = CGSize(width: ceil(suggested.width) + 1, height: ceil(suggested.height) + 1)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0),
                                              CGPath(rect: CGRect(origin: .zero, size: textSize), transform: nil), nil)
         return Layout(face: face, fontPx: fontPx, textSize: textSize, frame: frame,
                       kern: CGFloat(style.letterSpacing) * fontPx)
+    }
+
+    /// Número de linhas da quebra automática na largura `width`.
+    static func lineCount(_ typesetter: CTTypesetter, length: Int, width: CGFloat) -> Int {
+        var start = 0
+        var count = 0
+        while start < length {
+            start += max(1, CTTypesetterSuggestLineBreak(typesetter, start, Double(width)))
+            count += 1
+        }
+        return count
+    }
+
+    /// Menor largura de quebra com o mesmo número de linhas de `maxWidth` (`text-wrap: balance`): as linhas
+    /// ficam parecidas e a mais longa, a menor possível. Busca binária até meio pixel.
+    static func balancedWidth(_ framesetter: CTFramesetter, length: Int, maxWidth: CGFloat) -> CGFloat {
+        let typesetter = CTFramesetterGetTypesetter(framesetter)
+        let lines = lineCount(typesetter, length: length, width: maxWidth)
+        guard lines > 1 else { return maxWidth }
+        var lo: CGFloat = 0
+        var hi = maxWidth
+        while hi - lo > 0.5 {
+            let mid = (lo + hi) / 2
+            if lineCount(typesetter, length: length, width: mid) <= lines { hi = mid } else { lo = mid }
+        }
+        return hi
+    }
+
+    /// Largura do texto numa linha só, com a fonte, a caixa e o espaçamento do estilo, para a fonte de
+    /// `fontPx` pixels. Usado pela quebra das legendas.
+    func lineWidth(_ text: String, style: TextStyle, fontPx: CGFloat) -> CGFloat {
+        let face = makeFont(style, size: fontPx)
+        var attrs: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): face.font]
+        if style.letterSpacing != 0 {
+            attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = CGFloat(style.letterSpacing) * fontPx
+        }
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: Self.cased(text, style.textCase),
+                                                                       attributes: attrs))
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+
+    /// Texto de cada linha do layout (as quebras automáticas e as de `\n`), sem os espaços das pontas.
+    func lineTexts(for content: TextContent, canvas: CGSize) -> [String] {
+        let text = Self.cased(content.text, content.style.textCase)
+        guard !text.isEmpty, canvas.height > 0 else { return [] }
+        let l = layout(text, style: content.style, canvas: canvas)
+        let ns = text as NSString
+        return (CTFrameGetLines(l.frame) as! [CTLine]).map { line in
+            let r = CTLineGetStringRange(line)
+            return ns.substring(with: NSRange(location: r.location, length: r.length))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     private let sizes = NSCache<NSString, NSValue>()

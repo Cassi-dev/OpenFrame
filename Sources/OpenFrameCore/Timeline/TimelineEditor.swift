@@ -339,6 +339,21 @@ public enum TimelineEditor {
         }
     }
 
+    /// Muda a largura da caixa de um texto (`style.maxWidth`, limitada a `TextStyle.maxWidthRange`); o texto
+    /// se reorganiza. Numa faixa de legendas automáticas, vale para todos os textos da faixa.
+    public static func setTextWidth(_ p: inout Project, segment id: UUID, maxWidth: Double) {
+        guard maxWidth.isFinite, let (t, i) = p.locate(id), p.tracks[t].segments[i].text != nil else { return }
+        let range = TextStyle.maxWidthRange
+        let width = min(max(maxWidth, range.lowerBound), range.upperBound)
+        if p.tracks[t].isAutoCaptions {
+            for k in p.tracks[t].segments.indices where p.tracks[t].segments[k].text != nil {
+                p.tracks[t].segments[k].text!.style.maxWidth = width
+            }
+        } else {
+            p.tracks[t].segments[i].text!.style.maxWidth = width
+        }
+    }
+
     /// Vídeo e áudio têm duração limitada pelo arquivo; foto e texto não.
     private static func isTimed(_ s: Segment, in p: Project) -> Bool {
         guard let m = p.material(s.materialId) else { return false }
