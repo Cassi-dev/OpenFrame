@@ -1,0 +1,2 @@
+# Scripts da CI rodam no bash também no Windows (autocrlf dos runners).
+*.sh text eol=lf

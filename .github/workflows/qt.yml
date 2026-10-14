@@ -1,0 +1,134 @@
+# Versão Windows/Linux (qt/): compila, roda os testes do núcleo e as capturas
+# offscreen do app em Windows (MSVC) e Ubuntu. As capturas ficam nos artefatos.
+name: Qt (Windows e Linux)
+
+on:
+  push:
+    branches: [main, develop, "feature/multiplataforma*"]
+    paths: ["qt/**", ".github/workflows/qt.yml", ".github/scripts/**"]
+  pull_request:
+    paths: ["qt/**", ".github/workflows/qt.yml", ".github/scripts/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qt-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.12.0"
+  # FFmpeg "gpl-shared" do BtbN, versão fixa. Os builds de fim de mês ficam
+  # publicados por tempo indeterminado; os diários somem em poucas semanas.
+  FFMPEG_RELEASE: autobuild-2026-09-30-13-08
+  FFMPEG_BUILD: ffmpeg-n9.0.2-17-g2a571b6068
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (MSVC)
+            os: windows-latest
+            qt-arch: win64_msvc2022_64
+            ffmpeg-asset: win64-gpl-shared-9.0.zip
+            ffmpeg-sha256: 3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696
+            app: build/src/app/OpenFrame.exe
+          - name: Linux (Ubuntu 24.04)
+            os: ubuntu-24.04
+            qt-arch: linux_gcc_64
+            ffmpeg-asset: linux64-gpl-shared-9.0.tar.xz
+            ffmpeg-sha256: 01a9764d0b5364b66cfeb4617557c64321b0e232e172ec73f0a701c5f7694326
+            app: build/src/app/OpenFrame
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libgl1-mesa-dev libegl1 \
+            libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1-dev libfreetype-dev fonts-dejavu-core \
+            libpulse0 libasound2t64
+
+      - name: Compilador MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: command -v ninja || choco install ninja -y --no-progress
+
+      - name: Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt-arch }}
+          modules: qtmultimedia
+          aqtversion: "==3.3.*"
+          cache: true
+
+      - name: Cache do FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_BUILD }}-${{ matrix.ffmpeg-asset }}
+
+      - name: Baixar o FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        env:
+          URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE }}/${{ env.FFMPEG_BUILD }}-${{ matrix.ffmpeg-asset }}
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o ffmpeg-pacote "$URL"
+          echo "${{ matrix.ffmpeg-sha256 }}  ffmpeg-pacote" | sha256sum -c -
+          mkdir extraido
+          if [[ "$URL" == *.zip ]]; then 7z x -bd -oextraido ffmpeg-pacote > /dev/null; else tar -xJf ffmpeg-pacote -C extraido; fi
+          mv extraido/* ffmpeg
+          rm -rf ffmpeg-pacote extraido
+
+      - name: FFmpeg no ambiente
+        run: |
+          root="$RUNNER_TEMP/ffmpeg"
+          if [[ "$RUNNER_OS" == Windows ]]; then root=$(cygpath -m "$root"); fi
+          echo "FFMPEG_ROOT=$root" >> "$GITHUB_ENV"
+          # DLLs (Windows) e o ffmpeg de linha de comando, que gera a mídia de teste.
+          echo "$root/bin" >> "$GITHUB_PATH"
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            echo "LD_LIBRARY_PATH=$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
+          "$root/bin/ffmpeg" -hide_banner -version | head -n 1
+
+      - name: Configurar
+        env:
+          # Fontes em UTF-8 (textos em português) no MSVC.
+          CXXFLAGS: ${{ runner.os == 'Windows' && '/utf-8' || '' }}
+        run: cmake -S qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build --parallel
+
+      - name: Testes do núcleo
+        run: ctest --test-dir build --output-on-failure --timeout 600
+
+      - name: Capturas offscreen do app
+        run: .github/scripts/capturas.sh "${{ matrix.app }}" capturas
+
+      - name: Publicar as capturas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-${{ runner.os }}
+          path: capturas
+          if-no-files-found: warn
+          retention-days: 14
