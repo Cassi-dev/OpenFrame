@@ -57,9 +57,10 @@ target_link_libraries(OpenFrame PRIVATE
 )
 
 # Ícone e versão do executável no Windows.
-set(OPENFRAME_RC "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/windows/OpenFrame.rc")
-if(WIN32 AND EXISTS "${OPENFRAME_RC}")
-    target_sources(OpenFrame PRIVATE "${OPENFRAME_RC}")
+if(WIN32)
+    get_filename_component(OPENFRAME_ICO "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/windows/OpenFrame.ico" ABSOLUTE)
+    configure_file(../../packaging/windows/OpenFrame.rc.in "${CMAKE_CURRENT_BINARY_DIR}/OpenFrame.rc" @ONLY)
+    target_sources(OpenFrame PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/OpenFrame.rc")
 endif()
 
 include(GNUInstallDirs)
