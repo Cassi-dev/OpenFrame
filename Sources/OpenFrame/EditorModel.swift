@@ -101,9 +101,7 @@ final class EditorModel {
     private(set) var dragPreview: DragPreview?
     /// Material da biblioteca sendo arrastado, para prever onde ele cai.
     var draggingMaterial: UUID?
-    var exportSettings = ExportSettings() {
-        didSet { if exportSettings.outputSize(for: project) != oldValue.outputSize(for: project) { updatePreviewResolution() } }
-    }
+    var exportSettings = ExportSettings()
     var showExport = false
     var errorMessage: String?
     /// Tela inicial (projetos) ou editor.
@@ -352,9 +350,7 @@ final class EditorModel {
     /// Recalcula o degrau; só refaz o preview se ele mudou.
     private func updatePreviewResolution() {
         guard let viewport = previewViewport else { return }
-        let export = exportSettings.outputSize(for: project)
-        setPreviewShortSide(PreviewResolution.shortSide(points: viewport.points, scale: viewport.scale,
-                                                        exportShortSide: Int(min(export.width, export.height))))
+        setPreviewShortSide(PreviewResolution.shortSide(points: viewport.points, scale: viewport.scale))
     }
 
     /// Troca o lado menor do preview (o DebugSnapshot também usa, para medir cada degrau).

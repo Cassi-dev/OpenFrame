@@ -444,11 +444,10 @@ enum DebugSnapshot {
         window.setFrame(original, display: true)
         await wait(0.6)
         log("resolução: janela restaurada, 0,6 s depois: \(model.previewShortSide)")
-        for (pts, scale, export) in [(CGSize(width: 939, height: 528), 2.0, 2160), (CGSize(width: 939, height: 528), 2.0, 1080),
-                                     (CGSize(width: 400, height: 225), 2.0, 2160), (CGSize(width: 1600, height: 900), 2.0, 4320),
-                                     (CGSize(width: 939, height: 528), 1.0, 2160), (CGSize(width: 939, height: 528), 2.0, 480)] {
-            log("resolução: \(Int(pts.width))×\(Int(pts.height)) pt ×\(scale), exportação \(export) → "
-                + "\(PreviewResolution.shortSide(points: pts, scale: scale, exportShortSide: export))")
+        for (pts, scale) in [(CGSize(width: 939, height: 528), 2.0), (CGSize(width: 400, height: 225), 2.0),
+                             (CGSize(width: 1600, height: 900), 2.0), (CGSize(width: 939, height: 528), 1.0)] {
+            log("resolução: \(Int(pts.width))×\(Int(pts.height)) pt ×\(scale) → "
+                + "\(PreviewResolution.shortSide(points: pts, scale: scale))")
         }
     }
 

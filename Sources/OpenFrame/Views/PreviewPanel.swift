@@ -125,12 +125,12 @@ enum PreviewResolution {
     /// Teto mesmo em telas maiores (medido no `DebugSnapshot`, cenário `resolucao`).
     static let maxShortSide = 2160
 
-    /// Menor degrau que cobre o lado menor do player em pixels (pontos × escala da tela),
-    /// sem passar da resolução da exportação nem do teto.
-    static func shortSide(points: CGSize, scale: CGFloat, exportShortSide: Int, cap: Int = maxShortSide) -> Int {
+    /// Menor degrau que cobre o lado menor do player em pixels (pontos × escala da tela), até o teto.
+    /// Não depende da exportação: o preview fica nítido na tela mesmo com a saída em resolução menor.
+    static func shortSide(points: CGSize, scale: CGFloat, cap: Int = maxShortSide) -> Int {
         let physical = Int((min(points.width, points.height) * scale).rounded(.up))
         let step = steps.first { $0 >= physical } ?? steps.last!
-        return max(2, min(step, exportShortSide, cap))
+        return max(2, min(step, cap))
     }
 }
 
