@@ -107,7 +107,7 @@ struct CaptionBuilderTests {
 
     /// Linhas desenhadas de uma legenda no estilo padrão do visual, no canvas dado.
     static func renderedLines(_ cue: CaptionCue, preset: CaptionPreset, canvas: CGSize = CGSize(width: 1920, height: 1080)) -> [String] {
-        let style = CaptionBuilder.style(preset, aspect: canvas.width / canvas.height)
+        let style = CaptionBuilder.defaultStyle(preset, aspect: canvas.width / canvas.height)
         return TextRenderer.shared.lineTexts(for: TextContent(text: cue.text, style: style), canvas: canvas)
     }
 
@@ -154,9 +154,19 @@ struct CaptionBuilderTests {
         let words = spokenWords(speech)
         let portrait = CaptionBuilder.cues(from: words, preset: preset, aspect: 9.0 / 16)
         check(portrait, preset: preset, words: words, canvas: CGSize(width: 1080, height: 1920))
-        #expect(portrait.count > CaptionBuilder.cues(from: words, preset: preset).count)
+        #expect(portrait.count >= CaptionBuilder.cues(from: words, preset: preset).count)
+        // Cabe menos numa linha em pé.
+        let tall = CaptionBuilder.Measure([], style: CaptionBuilder.defaultStyle(preset, aspect: 9.0 / 16), aspect: 9.0 / 16)
+        let wide = CaptionBuilder.Measure([], style: CaptionBuilder.defaultStyle(preset), aspect: 16.0 / 9)
+        #expect(tall.line < wide.line)
         // A caixa ocupa até 90% do quadro em pé.
-        #expect(CaptionBuilder.style(preset, aspect: 9.0 / 16).maxWidth == 0.9)
+        #expect(CaptionBuilder.defaultStyle(preset, aspect: 9.0 / 16).maxWidth == 0.9)
+        // A fonte é medida pelo lado menor: no mesmo tamanho de quadro, os mesmos pixels do 16:9.
+        let base = CaptionBuilder.defaultStyle(preset)
+        #expect(abs(CaptionBuilder.defaultStyle(preset, aspect: 9.0 / 16).fontSize * 1920 - base.fontSize * 1080) < 1e-9)
+        #expect(abs(CaptionBuilder.defaultStyle(preset, aspect: 4.0 / 5).fontSize * 1350 - base.fontSize * 1080) < 1e-9)
+        #expect(CaptionBuilder.defaultStyle(preset, aspect: 1).fontSize == base.fontSize)
+        #expect(CaptionBuilder.defaultStyle(preset, aspect: 21.0 / 9).fontSize == base.fontSize)
     }
 
     @Test("Quebra nas pausas e na pontuação")
