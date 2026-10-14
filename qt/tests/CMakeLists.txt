@@ -19,3 +19,8 @@ openframe_add_test(RenderTests RenderTests.cpp)
 openframe_add_test(TextTests TextTests.cpp)
 openframe_add_test(AudioMixTests AudioMixTests.cpp)
 openframe_add_test(PlayerTests PlayerTests.cpp)
+openframe_add_test(ExportTests ExportTests.cpp)
+# Lê o arquivo exportado direto pelo FFmpeg (codec, fps, marcas de cor).
+include(FFmpeg)
+target_link_libraries(ExportTests PRIVATE FFmpeg::FFmpeg)
+set_tests_properties(ExportTests PROPERTIES TIMEOUT 600)

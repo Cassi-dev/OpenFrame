@@ -43,4 +43,14 @@ namespace EffectPreview {
 QImage filtered(const QImage &image, FilterPreset preset);
 } // namespace EffectPreview
 
+/// Miniatura do projeto para a tela inicial, como no Swift: o quadro em 1/3 da
+/// duração (no máximo 2 s), com lado menor 360. O app grava o JPEG com
+/// `ProjectLibrary::writeThumbnail`.
+namespace ProjectThumbnail {
+/// Nula se o projeto estiver vazio.
+QImage image(const Project &project);
+/// JPEG com qualidade 80 (vazio se o projeto estiver vazio).
+QByteArray jpeg(const Project &project);
+} // namespace ProjectThumbnail
+
 } // namespace of
