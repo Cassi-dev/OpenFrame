@@ -201,20 +201,25 @@ public final class FrameRenderer: @unchecked Sendable {
     private func textLayer(_ seg: Segment, time: Micros, canvas: CGRect) -> CIImage? {
         guard let content = seg.text else { return nil }
         let anim = Animations.state(for: seg, local: time - seg.targetStart)
+        // O texto é rasterizado já na escala efetiva (canvas × r: fonte, margens, sombra e
+        // largura máxima crescem juntas, o layout é o mesmo) e só reduzido depois: ampliar
+        // uma imagem pequena serrilha. O centro da imagem continua sendo o centro do texto.
+        let style = content.style
+        let r = TextRenderer.shared.rasterScale(for: content, canvas: canvas.size, peak: Animations.peakScale(for: seg))
+        let raster = CGSize(width: canvas.width * r, height: canvas.height * r)
         let img: CIImage
         let w: CGFloat
         let h: CGFloat
         if Animations.usesUnits(seg) {
             // Por unidade no clipe inteiro; a caixa nominal é a da imagem estática.
             let granularity = Animations.granularity(for: seg, state: anim)
-            guard let r = TextMotion.image(content, canvas: canvas.size, state: anim, granularity: granularity) else { return nil }
-            (img, w, h) = (r.image, r.size.width, r.size.height)
+            guard let out = TextMotion.image(content, canvas: raster, state: anim, granularity: granularity) else { return nil }
+            (img, w, h) = (out.image, out.size.width, out.size.height)
         } else {
-            guard let still = TextRenderer.shared.image(for: content, canvas: canvas.size, reveal: anim.reveal) else { return nil }
+            guard let still = TextRenderer.shared.image(for: content, canvas: raster, reveal: anim.reveal) else { return nil }
             (img, w, h) = (still, still.extent.width, still.extent.height)
         }
-        let style = content.style
-        let scale = style.scale * anim.scale
+        let scale = style.scale * anim.scale / r
         let cx = canvas.midX + (style.x + anim.dx) * canvas.width / 2
         let cy = canvas.midY + (style.y + anim.dy) * canvas.height / 2
         let radians = -(style.rotation + anim.rotation) * .pi / 180

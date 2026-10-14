@@ -139,6 +139,30 @@ final class TextRenderer: @unchecked Sendable {
                        width: Int(l.textSize.width + padX * 2), height: Int(l.textSize.height + padY * 2))
     }
 
+    /// Tamanho em pixels da imagem de `image(for:)` (com as margens), sem desenhar.
+    func imageSize(for content: TextContent, canvas: CGSize) -> CGSize? {
+        let text = Self.cased(content.text, content.style.textCase)
+        guard !text.isEmpty, canvas.height > 0 else { return nil }
+        let key = "img|\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))" as NSString
+        if let cached = sizes.object(forKey: key) { return cached.sizeValue }
+        let m = metrics(layout(text, style: content.style, canvas: canvas), style: content.style)
+        let size = CGSize(width: m.width, height: m.height)
+        sizes.setObject(NSValue(size: size), forKey: key)
+        return size
+    }
+
+    /// Lado maior máximo da imagem rasterizada de um texto.
+    static let maxRasterSide: CGFloat = 8192
+
+    /// Fator de rasterização do texto: a escala efetiva (estilo × pico da animação), em passos
+    /// de 1/8 arredondados para cima (o cache não explode ao arrastar as alças), nunca abaixo
+    /// de 1 e limitado para a imagem não passar de `maxRasterSide`.
+    func rasterScale(for content: TextContent, canvas: CGSize, peak: Double) -> CGFloat {
+        let wanted = max(1, (abs(content.style.scale) * peak * 8).rounded(.up) / 8)
+        guard let size = imageSize(for: content, canvas: canvas), max(size.width, size.height) > 0 else { return CGFloat(wanted) }
+        return min(CGFloat(wanted), Self.maxRasterSide / max(size.width, size.height))
+    }
+
     private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
         let l = layout(text, style: style, canvas: canvas)
         let fontPx = l.fontPx
