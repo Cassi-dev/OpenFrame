@@ -1111,6 +1111,20 @@ std::optional<int> EditorModel::trackIndex(int row) const
     return order[row];
 }
 
+bool EditorModel::isRowFree(int row, qreal from, qreal to) const
+{
+    const QList<int> order = displayTrackOrder();
+    if (row < 0)
+        return false;
+    if (row >= order.size())
+        return true;
+    const Micros a = Time::seconds(from), b = Time::seconds(to);
+    for (const Segment &s : m_project.tracks[order[row]].segments)
+        if (s.targetStart < b && s.targetEnd() > a)
+            return false;
+    return true;
+}
+
 QVariantMap EditorModel::dropPreview(const QString &materialId, qreal time, int row) const
 {
     const auto id = parseId(materialId);

@@ -1,6 +1,8 @@
 # App OpenFrame (QML). Os arquivos QML ficam todos em qml/ e entram no módulo
 # "OpenFrame" na raiz (alias pelo nome do arquivo), para se enxergarem sem import.
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2)
+# Multimedia: o núcleo linka (som do Player); o alvo precisa ser visível aqui,
+# onde o executável é finalizado.
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 Multimedia)
 
 qt_add_executable(OpenFrame WIN32 MACOSX_BUNDLE
     main.cpp

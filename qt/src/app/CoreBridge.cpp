@@ -181,6 +181,7 @@ PreviewEngine::PreviewEngine(QObject *parent) : QObject(parent), d(new Impl)
         d->time = t;
         emit timeChanged(t);
     });
+    connect(&d->player, &Player::playingChanged, this, [this](bool playing) { d->playing = playing; });
     connect(&d->player, &Player::finished, this, [this] {
         d->playing = false;
         emit finished();

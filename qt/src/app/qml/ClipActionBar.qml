@@ -1,7 +1,7 @@
 import QtQuick
 
-// Ações do clipe selecionado, flutuando junto dele: acima do clipe ou, na
-// primeira faixa, abaixo (para não cobrir a régua). Fica dentro da área visível.
+// Ações do clipe selecionado, flutuando junto dele sem cobrir outros clipes.
+// Fica dentro da área visível.
 Rectangle {
     id: bar
     property real viewportWidth: 0
@@ -21,10 +21,25 @@ Rectangle {
     readonly property real visibleRight: visibleLeft + viewportWidth
     readonly property real inView: viewportWidth > 0 ? Math.max(Math.min(anchorX, visibleRight - barWidth - 8), visibleLeft + 8) : anchorX
     readonly property real nearClip: Math.min(Math.max(inView, start - barWidth + 24), end - 24)
+    readonly property real baseX: Math.max(0, Math.min(nearClip, Editor.timelineContentWidth - 24 - barWidth))
+
+    // Sem cobrir outros clipes: acima do clipe se a faixa de cima estiver livre
+    // nesse trecho (a primeira faixa tem a régua em cima), senão abaixo, senão
+    // dentro do próprio clipe.
+    readonly property string place: {
+        void Editor.clipCount // reavaliar quando os clipes mudarem
+        const from = baseX / Editor.zoom, to = (baseX + barWidth) / Editor.zoom
+        if (row > 0 && Editor.isRowFree(row - 1, from, to))
+            return "above"
+        if (Editor.isRowFree(row + 1, from, to))
+            return "below"
+        return "inside"
+    }
 
     visible: !Editor.gestureActive && Editor.selection !== "" && row >= 0
-    x: Math.max(0, Math.min(nearClip, Editor.timelineContentWidth - 24 - barWidth))
-    y: row === 0 ? 36 + 50 - 2 : 36 + row * 56 - 30 + 2
+    // Dentro do clipe, sem passar das bordas dele (se couber).
+    x: place === "inside" && end - start >= barWidth + 8 ? Math.max(start + 4, Math.min(baseX, end - barWidth - 4)) : baseX
+    y: 36 + row * 56 + (place === "above" ? -30 + 2 : place === "below" ? 50 - 2 : (50 - 30) / 2)
     width: barWidth
     height: 30
     radius: 15

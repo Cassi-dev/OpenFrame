@@ -243,6 +243,8 @@ public:
     Q_INVOKABLE void addAsOverlay(const QString &materialId);
     Q_INVOKABLE void removeMaterial(const QString &materialId);
     Q_INVOKABLE QVariantMap dropPreview(const QString &materialId, qreal time, int row) const;
+    /// Linha exibida sem clipes entre `from` e `to` (s). Abaixo da última há espaço livre; acima da primeira, a régua.
+    Q_INVOKABLE bool isRowFree(int row, qreal from, qreal to) const;
     Q_INVOKABLE void dropMaterial(const QString &materialId, qreal time, int row);
 
     // Edição
