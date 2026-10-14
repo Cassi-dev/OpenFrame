@@ -19,7 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  QT_VERSION: "6.12.0"
   # FFmpeg "gpl-shared" do BtbN, versão fixa. Os builds de fim de mês ficam
   # publicados por tempo indeterminado; os diários somem em poucas semanas.
   FFMPEG_RELEASE: autobuild-2026-09-30-13-08
@@ -36,12 +35,17 @@ jobs:
         include:
           - name: Windows (MSVC)
             os: windows-latest
+            # Desde o Qt 6.11 o repositório do Windows tem um Updates.xml por
+            # arquitetura, que o aqtinstall 3.3 ainda não lê. O 6.10.3 é o mais
+            # novo no formato antigo (o núcleo e o app pedem 6.8 ou mais).
+            qt-version: "6.10.3"
             qt-arch: win64_msvc2022_64
             ffmpeg-asset: win64-gpl-shared-9.0.zip
             ffmpeg-sha256: 3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696
             app: build/src/app/OpenFrame.exe
           - name: Linux (Ubuntu 24.04)
             os: ubuntu-24.04
+            qt-version: "6.12.0"
             qt-arch: linux_gcc_64
             ffmpeg-asset: linux64-gpl-shared-9.0.tar.xz
             ffmpeg-sha256: 01a9764d0b5364b66cfeb4617557c64321b0e232e172ec73f0a701c5f7694326
@@ -70,10 +74,10 @@ jobs:
         if: runner.os == 'Windows'
         run: command -v ninja || choco install ninja -y --no-progress
 
-      - name: Qt ${{ env.QT_VERSION }}
+      - name: Qt ${{ matrix.qt-version }}
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{ matrix.qt-version }}
           arch: ${{ matrix.qt-arch }}
           modules: qtmultimedia
           aqtversion: "==3.3.*"
