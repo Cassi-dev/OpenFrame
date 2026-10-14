@@ -13,9 +13,14 @@ final class TextRenderer: @unchecked Sendable {
     static let shared = TextRenderer()
 
     private let cache = NSCache<NSString, CIImage>()
+    /// Sprites por unidade (`TextMotion`) e glifos do "decodificar".
+    let unitCache = NSCache<NSString, TextUnits>()
+    let scrambleCache = NSCache<NSString, ScrambleSet>()
 
     init() {
         cache.countLimit = 256
+        unitCache.countLimit = 32
+        scrambleCache.countLimit = 8
     }
 
     func image(for content: TextContent, canvas: CGSize, reveal: Double) -> CIImage? {
@@ -43,18 +48,20 @@ final class TextRenderer: @unchecked Sendable {
     // MARK: - Desenho
 
     /// Inclinação do itálico sintético (12°).
-    private static let syntheticSlant = CGFloat(tan(12 * Double.pi / 180))
+    static let syntheticSlant = CGFloat(tan(12 * Double.pi / 180))
     /// Espessura extra do negrito sintético, em em.
-    private static let syntheticBold: CGFloat = 0.03
+    static let syntheticBold: CGFloat = 0.03
 
-    private struct Layout {
+    struct Layout {
         let face: FontFace
         let fontPx: CGFloat
         let textSize: CGSize
         let frame: CTFrame
+        /// Espaço extra entre letras, em pixels.
+        let kern: CGFloat
     }
 
-    private func layout(_ text: String, style: TextStyle, canvas: CGSize) -> Layout {
+    func layout(_ text: String, style: TextStyle, canvas: CGSize) -> Layout {
         let fontPx = max(4, CGFloat(style.fontSize) * canvas.height)
         let face = makeFont(style, size: fontPx)
 
@@ -75,7 +82,8 @@ final class TextRenderer: @unchecked Sendable {
         let textSize = CGSize(width: ceil(suggested.width) + 1, height: ceil(suggested.height) + 1)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0),
                                              CGPath(rect: CGRect(origin: .zero, size: textSize), transform: nil), nil)
-        return Layout(face: face, fontPx: fontPx, textSize: textSize, frame: frame)
+        return Layout(face: face, fontPx: fontPx, textSize: textSize, frame: frame,
+                      kern: CGFloat(style.letterSpacing) * fontPx)
     }
 
     private let sizes = NSCache<NSString, NSValue>()
@@ -96,68 +104,112 @@ final class TextRenderer: @unchecked Sendable {
         return size
     }
 
-    private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
-        let l = layout(text, style: style, canvas: canvas)
-        let fontPx = l.fontPx
-        let face = l.face
-        let textSize = l.textSize
-        let frame = l.frame
-        let cut = text.index(text.startIndex, offsetBy: min(visibleCharacters, text.count)).utf16Offset(in: text)
-        let shapes = collectShapes(frame, text: text as NSString, visibleUTF16: cut, style: style, face: face, fontPx: fontPx)
+    /// Margens e medidas do desenho, iguais no caminho estático e no por unidade.
+    struct Metrics {
+        let strokeOut: CGFloat
+        let bgX: CGFloat
+        let bgY: CGFloat
+        let shadowOffset: CGSize
+        let shadowBlur: CGFloat
+        let padX: CGFloat
+        let padY: CGFloat
+        let width: Int
+        let height: Int
+    }
 
+    func metrics(_ l: Layout, style: TextStyle) -> Metrics {
+        let fontPx = l.fontPx
         // Margens: o bastante para contorno, fundo, sombra e partes das letras
         // que passam da caixa tipográfica (itálico, linhas apertadas).
         let strokeOut = max(0, CGFloat(style.strokeWidth)) / 100 * fontPx / 2
-            + (face.syntheticBold ? Self.syntheticBold * fontPx / 2 : 0)
+            + (l.face.syntheticBold ? Self.syntheticBold * fontPx / 2 : 0)
         let bgX = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingX)) * fontPx : 0
         let bgY = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingY)) * fontPx : 0
         let shadowOffset = shadowOffset(style, fontPx: fontPx)
         let shadowBlur = style.shadow ? max(0, CGFloat(style.shadowBlur)) * fontPx : 0
         let shadowX = style.shadow ? abs(shadowOffset.width) + shadowBlur * 1.5 : 0
         let shadowY = style.shadow ? abs(shadowOffset.height) + shadowBlur * 1.5 : 0
-        let slant = (style.italic || face.syntheticItalic) ? fontPx * 0.25 : 0
+        let slant = (style.italic || l.face.syntheticItalic) ? fontPx * 0.25 : 0
         let tight = max(0, -CGFloat(style.lineSpacing)) * fontPx
         let base = ceil(fontPx * 0.35)
         let padX = max(base, ceil(fontPx * 0.12 + max(strokeOut, bgX) + shadowX + slant))
         let padY = max(base, ceil(fontPx * 0.12 + max(strokeOut, bgY) + shadowY + tight))
-        let width = Int(textSize.width + padX * 2)
-        let height = Int(textSize.height + padY * 2)
+        return Metrics(strokeOut: strokeOut, bgX: bgX, bgY: bgY, shadowOffset: shadowOffset, shadowBlur: shadowBlur,
+                       padX: padX, padY: padY,
+                       width: Int(l.textSize.width + padX * 2), height: Int(l.textSize.height + padY * 2))
+    }
 
-        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
-        ctx.translateBy(x: padX, y: padY)
+    private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
+        let l = layout(text, style: style, canvas: canvas)
+        let fontPx = l.fontPx
+        let m = metrics(l, style: style)
+        let cut = text.index(text.startIndex, offsetBy: min(visibleCharacters, text.count)).utf16Offset(in: text)
+        let (glyphs, lines) = glyphInfo(l, text: text as NSString, style: style)
+        let visible = glyphs.filter { $0.utf16 < cut }
+        var underlines: [CGRect] = []
+        if style.underline {
+            for line in lines.indices {
+                let onLine = visible.filter { $0.line == line && !$0.blank }
+                guard let minX = onLine.map(\.position.x).min(),
+                      let maxX = onLine.map({ $0.position.x + $0.advance - l.kern }).max(), maxX > minX else { continue }
+                underlines.append(underlineRect(lines[line], from: minX, to: maxX, fontPx: fontPx))
+            }
+        }
+        let shapes = makeShapes(visible, underlines: underlines, face: l.face)
+
+        guard let ctx = Self.bitmap(width: m.width, height: m.height) else { return nil }
+        ctx.translateBy(x: m.padX, y: m.padY)
         ctx.setAlpha(CGFloat(min(1, max(0, style.opacity))))
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
 
         if style.backgroundEnabled {
-            let box = CGRect(origin: .zero, size: textSize).insetBy(dx: -bgX, dy: -bgY)
-            let radius = min(max(0, CGFloat(style.backgroundRadius)) * fontPx, min(box.width, box.height) / 2)
             ctx.setFillColor(style.backgroundColor.cgColor)
-            ctx.addPath(CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            ctx.addPath(backgroundPath(l, m, style: style))
             ctx.fillPath()
         }
 
         // Letras, contorno e sublinhado numa camada só: a sombra sai uma vez, do conjunto.
         if style.shadow {
-            ctx.setShadow(offset: shadowOffset, blur: shadowBlur, color: style.shadowColor.cgColor)
+            ctx.setShadow(offset: m.shadowOffset, blur: m.shadowBlur, color: style.shadowColor.cgColor)
         }
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        draw(shapes, in: ctx, style: style, l, m, stroke: true, fill: true)
+        ctx.endTransparencyLayer()
+        ctx.endTransparencyLayer()
+
+        guard let cg = ctx.makeImage() else { return nil }
+        return CIImage(cgImage: cg)
+    }
+
+    static func bitmap(width: Int, height: Int) -> CGContext? {
+        CGContext(data: nil, width: max(1, width), height: max(1, height), bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    }
+
+    func backgroundPath(_ l: Layout, _ m: Metrics, style: TextStyle) -> CGPath {
+        let box = CGRect(origin: .zero, size: l.textSize).insetBy(dx: -m.bgX, dy: -m.bgY)
+        let radius = min(max(0, CGFloat(style.backgroundRadius)) * l.fontPx, min(box.width, box.height) / 2)
+        return CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius, transform: nil)
+    }
+
+    /// Desenha contorno e/ou preenchimento (com o negrito sintético e os emoji) no contexto.
+    func draw(_ shapes: Shapes, in ctx: CGContext, style: TextStyle, _ l: Layout, _ m: Metrics, stroke: Bool, fill: Bool) {
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
-        if strokeOut > 0 {
+        if stroke, m.strokeOut > 0 {
             ctx.setStrokeColor(style.strokeColor.cgColor)
-            ctx.setLineWidth(strokeOut * 2)
+            ctx.setLineWidth(m.strokeOut * 2)
             for path in [shapes.glyphs, shapes.underlines] where !path.isEmpty {
                 ctx.addPath(path)
                 ctx.strokePath()
             }
         }
+        guard fill else { return }
         ctx.setFillColor(style.color.cgColor)
-        if face.syntheticBold {
+        if l.face.syntheticBold, !shapes.glyphs.isEmpty {
             ctx.setStrokeColor(style.color.cgColor)
-            ctx.setLineWidth(Self.syntheticBold * fontPx)
+            ctx.setLineWidth(Self.syntheticBold * l.fontPx)
             ctx.addPath(shapes.glyphs)
             ctx.strokePath()
         }
@@ -171,56 +223,66 @@ final class TextRenderer: @unchecked Sendable {
                 CTFontDrawGlyphs(run.font, run.glyphs, positions.baseAddress!, run.glyphs.count, ctx)
             }
         }
-        ctx.endTransparencyLayer()
-        ctx.endTransparencyLayer()
-
-        guard let cg = ctx.makeImage() else { return nil }
-        return CIImage(cgImage: cg)
     }
 
-    private struct ColorGlyphs {
+    struct ColorGlyphs {
         let font: CTFont
         var glyphs: [CGGlyph] = []
         var positions: [CGPoint] = []
     }
 
-    private struct Shapes {
+    struct Shapes {
         let glyphs: CGPath
         let underlines: CGPath
         let colorGlyphs: [ColorGlyphs]
+        /// Caixa de tudo, sem o contorno.
+        let bounds: CGRect
     }
 
-    /// Junta os contornos das letras visíveis (as que a máquina de escrever já
-    /// revelou) e os retângulos do sublinhado, nas coordenadas da caixa de texto.
-    private func collectShapes(_ frame: CTFrame, text: NSString, visibleUTF16: Int, style: TextStyle,
-                               face: FontFace, fontPx: CGFloat) -> Shapes {
-        let glyphPath = CGMutablePath()
-        let underlinePath = CGMutablePath()
-        var colorGlyphs: [ColorGlyphs] = []
-        let skew = CGAffineTransform(a: 1, b: 0, c: face.syntheticItalic ? Self.syntheticSlant : 0, d: 1, tx: 0, ty: 0)
+    /// Um glifo posicionado, nas coordenadas da caixa de texto.
+    struct GlyphInfo {
+        let glyph: CGGlyph
+        let font: CTFont
+        let isColor: Bool
+        let position: CGPoint
+        let advance: CGFloat
+        /// Posição no texto (UTF-16).
+        let utf16: Int
+        let line: Int
+        /// Espaço ou quebra de linha.
+        let blank: Bool
+    }
+
+    struct LineInfo {
+        let origin: CGPoint
+        let ascent: CGFloat
+        let descent: CGFloat
+    }
+
+    /// Glifos e linhas do layout. O Core Text põe o espaço extra depois de toda letra,
+    /// inclusive a última da linha: as posições já descontam essa sobra para centralizar.
+    func glyphInfo(_ l: Layout, text: NSString, style: TextStyle) -> ([GlyphInfo], [LineInfo]) {
         let blanks = CharacterSet.whitespacesAndNewlines
-
-        let lines = CTFrameGetLines(frame) as! [CTLine]
+        let lines = CTFrameGetLines(l.frame) as! [CTLine]
         var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
-
-        // O Core Text põe o espaço extra depois de toda letra, inclusive a última da
-        // linha: desconta essa sobra para centralizar e sublinhar só o que se vê.
-        let kern = CGFloat(style.letterSpacing) * fontPx
+        CTFrameGetLineOrigins(l.frame, CFRange(location: 0, length: 0), &origins)
         let shift: CGFloat = switch style.alignment {
         case .left: 0
-        case .center: kern / 2
-        case .right: kern
+        case .center: l.kern / 2
+        case .right: l.kern
         }
-        for (line, lineOrigin) in zip(lines, origins) {
+        var result: [GlyphInfo] = []
+        var lineInfo: [LineInfo] = []
+        for (n, (line, lineOrigin)) in zip(lines, origins).enumerated() {
             let origin = CGPoint(x: lineOrigin.x + shift, y: lineOrigin.y)
-            var minX = CGFloat.infinity
-            var maxX = -CGFloat.infinity
+            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+            CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+            lineInfo.append(LineInfo(origin: origin, ascent: ascent, descent: descent))
             for run in CTLineGetGlyphRuns(line) as! [CTRun] {
                 let count = CTRunGetGlyphCount(run)
                 guard count > 0 else { continue }
                 let runAttrs = CTRunGetAttributes(run) as NSDictionary
-                let font = runAttrs[kCTFontAttributeName].map { $0 as! CTFont } ?? face.font
+                let font = runAttrs[kCTFontAttributeName].map { $0 as! CTFont } ?? l.face.font
                 let isColor = CTFontGetSymbolicTraits(font).contains(.traitColorGlyphs)
                 var glyphs = [CGGlyph](repeating: 0, count: count)
                 var positions = [CGPoint](repeating: .zero, count: count)
@@ -231,30 +293,48 @@ final class TextRenderer: @unchecked Sendable {
                 CTRunGetPositions(run, all, &positions)
                 CTRunGetAdvances(run, all, &advances)
                 CTRunGetStringIndices(run, all, &indices)
-                var colored = ColorGlyphs(font: font)
-                for i in 0..<count where indices[i] < visibleUTF16 {
-                    let p = CGPoint(x: origin.x + positions[i].x, y: origin.y + positions[i].y)
-                    if let scalar = Unicode.Scalar(text.character(at: indices[i])), !blanks.contains(scalar) {
-                        minX = min(minX, p.x)
-                        maxX = max(maxX, p.x + advances[i].width - kern)
-                    }
-                    if isColor {
-                        colored.glyphs.append(glyphs[i])
-                        colored.positions.append(p)
-                    } else if let outline = CTFontCreatePathForGlyph(font, glyphs[i], nil) {
-                        glyphPath.addPath(outline, transform: skew.concatenating(CGAffineTransform(translationX: p.x, y: p.y)))
-                    }
+                for i in 0..<count {
+                    let blank = Unicode.Scalar(text.character(at: indices[i])).map { blanks.contains($0) } ?? false
+                    result.append(GlyphInfo(glyph: glyphs[i], font: font, isColor: isColor,
+                                            position: CGPoint(x: origin.x + positions[i].x, y: origin.y + positions[i].y),
+                                            advance: advances[i].width, utf16: indices[i], line: n, blank: blank))
                 }
-                if !colored.glyphs.isEmpty { colorGlyphs.append(colored) }
-            }
-            if style.underline, maxX > minX {
-                // Posição e espessura em em, como `underline_offset`/`underline_width` do CapCut.
-                let thickness = fontPx * 0.05
-                let top = origin.y - fontPx * 0.12
-                underlinePath.addRect(CGRect(x: minX, y: top - thickness, width: maxX - minX, height: thickness))
             }
         }
-        return Shapes(glyphs: glyphPath, underlines: underlinePath, colorGlyphs: colorGlyphs)
+        return (result, lineInfo)
+    }
+
+    /// Posição e espessura em em, como `underline_offset`/`underline_width` do CapCut.
+    func underlineRect(_ line: LineInfo, from minX: CGFloat, to maxX: CGFloat, fontPx: CGFloat) -> CGRect {
+        let thickness = fontPx * 0.05
+        let top = line.origin.y - fontPx * 0.12
+        return CGRect(x: minX, y: top - thickness, width: maxX - minX, height: thickness)
+    }
+
+    /// Junta os contornos dos glifos e os retângulos do sublinhado, nas coordenadas da caixa de texto.
+    func makeShapes(_ glyphs: [GlyphInfo], underlines: [CGRect], face: FontFace) -> Shapes {
+        let glyphPath = CGMutablePath()
+        let underlinePath = CGMutablePath()
+        var colorGlyphs: [ColorGlyphs] = []
+        var bounds = CGRect.null
+        let skew = CGAffineTransform(a: 1, b: 0, c: face.syntheticItalic ? Self.syntheticSlant : 0, d: 1, tx: 0, ty: 0)
+        for g in glyphs {
+            if g.isColor {
+                if colorGlyphs.last.map({ $0.font != g.font }) ?? true { colorGlyphs.append(ColorGlyphs(font: g.font)) }
+                colorGlyphs[colorGlyphs.count - 1].glyphs.append(g.glyph)
+                colorGlyphs[colorGlyphs.count - 1].positions.append(g.position)
+                var glyph = g.glyph
+                var rect = CGRect.zero
+                CTFontGetBoundingRectsForGlyphs(g.font, .default, &glyph, &rect, 1)
+                bounds = bounds.union(rect.offsetBy(dx: g.position.x, dy: g.position.y))
+            } else if let outline = CTFontCreatePathForGlyph(g.font, g.glyph, nil) {
+                glyphPath.addPath(outline, transform: skew.concatenating(CGAffineTransform(translationX: g.position.x, y: g.position.y)))
+            }
+        }
+        for rect in underlines { underlinePath.addRect(rect) }
+        if !glyphPath.isEmpty { bounds = bounds.union(glyphPath.boundingBoxOfPath) }
+        if !underlinePath.isEmpty { bounds = bounds.union(underlinePath.boundingBoxOfPath) }
+        return Shapes(glyphs: glyphPath, underlines: underlinePath, colorGlyphs: colorGlyphs, bounds: bounds)
     }
 
     private func shadowOffset(_ style: TextStyle, fontPx: CGFloat) -> CGSize {
@@ -265,7 +345,7 @@ final class TextRenderer: @unchecked Sendable {
 
     // MARK: - Fonte e parágrafo
 
-    private struct FontFace {
+    struct FontFace {
         let font: CTFont
         let syntheticBold: Bool
         let syntheticItalic: Bool

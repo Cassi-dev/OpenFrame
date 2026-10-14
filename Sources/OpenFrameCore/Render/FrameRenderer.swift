@@ -170,6 +170,9 @@ public final class FrameRenderer: @unchecked Sendable {
         img = ImageEffects.effects(img, seg.effects, k: k, time: seconds)
 
         let anim = Animations.state(for: seg, local: local)
+        if let shine = anim.shine {
+            img = TextMotion.applyShine(img, in: img.extent, position: shine.position, strength: shine.strength)
+        }
         let geo = ImageEffects.geometry(seg.effects, time: seconds)
         let w = img.extent.width
         let h = img.extent.height
@@ -183,17 +186,33 @@ public final class FrameRenderer: @unchecked Sendable {
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(rotationAngle: radians))
             .concatenating(CGAffineTransform(translationX: cx, y: cy))
-        img = img.transformed(by: t, highQualityDownsample: true)
+        img = finish(img.transformed(by: t, highQualityDownsample: true), anim: anim, canvas: canvas)
+        if anim.glow > 0 { img = TextMotion.applyGlow(img, amount: anim.glow, sigma: 0.012 * canvas.height) }
         return withAlpha(img, seg.opacity * anim.alpha)
+    }
+
+    /// Desfoque da animação "foco", já no espaço do canvas.
+    private func finish(_ img: CIImage, anim: AnimationState, canvas: CGRect) -> CIImage {
+        let sigma = anim.blur * canvas.height
+        return sigma > 0.3 ? img.applyingGaussianBlur(sigma: sigma) : img
     }
 
     private func textLayer(_ seg: Segment, time: Micros, canvas: CGRect) -> CIImage? {
         guard let content = seg.text else { return nil }
         let anim = Animations.state(for: seg, local: time - seg.targetStart)
-        guard let img = TextRenderer.shared.image(for: content, canvas: canvas.size, reveal: anim.reveal) else { return nil }
+        let img: CIImage
+        let w: CGFloat
+        let h: CGFloat
+        if Animations.usesUnits(seg) {
+            // Por unidade no clipe inteiro; a caixa nominal é a da imagem estática.
+            let granularity = Animations.granularity(for: seg, state: anim)
+            guard let r = TextMotion.image(content, canvas: canvas.size, state: anim, granularity: granularity) else { return nil }
+            (img, w, h) = (r.image, r.size.width, r.size.height)
+        } else {
+            guard let still = TextRenderer.shared.image(for: content, canvas: canvas.size, reveal: anim.reveal) else { return nil }
+            (img, w, h) = (still, still.extent.width, still.extent.height)
+        }
         let style = content.style
-        let w = img.extent.width
-        let h = img.extent.height
         let scale = style.scale * anim.scale
         let cx = canvas.midX + (style.x + anim.dx) * canvas.width / 2
         let cy = canvas.midY + (style.y + anim.dy) * canvas.height / 2
@@ -202,7 +221,8 @@ public final class FrameRenderer: @unchecked Sendable {
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(rotationAngle: radians))
             .concatenating(CGAffineTransform(translationX: cx, y: cy))
-        return withAlpha(img.transformed(by: t, highQualityDownsample: true), seg.opacity * anim.alpha)
+        let placed = finish(img.transformed(by: t, highQualityDownsample: true), anim: anim, canvas: canvas)
+        return withAlpha(placed, seg.opacity * anim.alpha)
     }
 
     private func withAlpha(_ img: CIImage, _ alpha: Double) -> CIImage {
