@@ -1,0 +1,454 @@
+#pragma once
+
+#include "ExportSettings.h"
+#include "KeyedListModel.h"
+#include "Project.h"
+#include "ProjectLibrary.h"
+
+#include <QDateTime>
+#include <QElapsedTimer>
+#include <QObject>
+#include <QTimer>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
+#include <optional>
+
+class QQmlEngine;
+class QJSEngine;
+
+namespace of {
+
+class PreviewEngine;
+class ExportJob;
+
+/// Clipe arrastado para outra faixa: deslocamento em linhas, linha de destino
+/// (na ordem de exibição) e início do clipe nela.
+struct DragTarget {
+    QUuid segment;
+    int rows = 0;
+    int row = 0;
+    Micros start = 0;
+    bool operator==(const DragTarget &) const = default;
+};
+
+/// Onde o clipe do gesto é desenhado: segue o cursor, enquanto o projeto já
+/// mostra o resultado (vizinhos no novo lugar).
+struct DragPreview {
+    QUuid segment;
+    /// Início desenhado do clipe.
+    Micros start = 0;
+    /// Deslocamento vertical em linhas, só sobre uma faixa que aceita o clipe.
+    int rows = 0;
+    /// Na faixa principal, quanto os clipes seguintes ficam deslocados enquanto
+    /// o início é aparado.
+    Micros following = 0;
+    bool operator==(const DragPreview &) const = default;
+};
+
+/// Estado do editor, exposto ao QML como o singleton `Editor` (ver `EditorSingleton`). Toda alteração no
+/// projeto passa por `mutate` (com desfazer) ou pelos métodos de gesto. É o
+/// `EditorModel` do app Swift: undo por cópia do projeto (até 300 passos),
+/// sliders agrupados por 1 s, autosave 0,8 s depois da última alteração.
+class EditorModel : public QObject
+{
+    Q_OBJECT
+    QML_ANONYMOUS
+
+    // Tela e biblioteca
+    Q_PROPERTY(QString screen READ screen NOTIFY screenChanged)
+    Q_PROPERTY(KeyedListModel *entries READ entries CONSTANT)
+    Q_PROPERTY(QString libraryRoot READ libraryRoot CONSTANT)
+
+    // Projeto
+    Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
+    Q_PROPERTY(bool libraryProject READ libraryProject NOTIFY projectChanged)
+    Q_PROPERTY(bool isDirty READ isDirty NOTIFY projectChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY projectChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY projectChanged)
+    Q_PROPERTY(qreal duration READ duration NOTIFY projectChanged)
+    Q_PROPERTY(QString durationText READ durationText NOTIFY projectChanged)
+    Q_PROPERTY(QString aspect READ aspect NOTIFY projectChanged)
+    Q_PROPERTY(qreal aspectValue READ aspectValue NOTIFY projectChanged)
+    Q_PROPERTY(QVariantList aspectOptions READ aspectOptions CONSTANT)
+    Q_PROPERTY(QSize outputSize READ outputSize NOTIFY projectChanged)
+    Q_PROPERTY(int clipCount READ clipCount NOTIFY projectChanged)
+    Q_PROPERTY(QVariantMap canvas READ canvas NOTIFY projectChanged)
+    Q_PROPERTY(KeyedListModel *materials READ materials CONSTANT)
+    Q_PROPERTY(KeyedListModel *tracks READ tracks CONSTANT)
+    Q_PROPERTY(KeyedListModel *clips READ clips CONSTANT)
+    Q_PROPERTY(KeyedListModel *junctions READ junctions CONSTANT)
+    Q_PROPERTY(KeyedListModel *cues READ cues CONSTANT)
+
+    // Seleção e inspetor
+    Q_PROPERTY(QString selection READ selection WRITE setSelection NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantMap selectedSegment READ selectedSegment NOTIFY selectionChanged)
+    Q_PROPERTY(int selectedRow READ selectedRow NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantList availableTabs READ availableTabs NOTIFY selectionChanged)
+    Q_PROPERTY(QString inspectorTab READ inspectorTab WRITE setInspectorTab NOTIFY uiChanged)
+    Q_PROPERTY(QString libraryPanel READ libraryPanel WRITE setLibraryPanel NOTIFY uiChanged)
+    Q_PROPERTY(bool libraryVisible READ libraryVisible WRITE setLibraryVisible NOTIFY uiChanged)
+    Q_PROPERTY(bool showGrid READ showGrid WRITE setShowGrid NOTIFY uiChanged)
+    Q_PROPERTY(bool showExport READ showExport WRITE setShowExport NOTIFY uiChanged)
+    Q_PROPERTY(QString errorMessage READ errorMessage WRITE setErrorMessage NOTIFY uiChanged)
+    /// Diálogos e menus abertos no QML: as teclas do editor ficam desligadas.
+    Q_PROPERTY(int modalCount READ modalCount WRITE setModalCount NOTIFY uiChanged)
+
+    // Reprodução
+    Q_PROPERTY(qreal playhead READ playhead NOTIFY playheadChanged)
+    Q_PROPERTY(QString playheadText READ playheadText NOTIFY playheadChanged)
+    Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
+
+    // Timeline
+    Q_PROPERTY(qreal zoom READ zoom WRITE setZoomValue NOTIFY zoomChanged)
+    Q_PROPERTY(qreal minZoom READ minZoom NOTIFY zoomChanged)
+    Q_PROPERTY(qreal maxZoom READ maxZoom CONSTANT)
+    Q_PROPERTY(qreal timelineScrollX READ timelineScrollX WRITE setTimelineScrollX NOTIFY scrollChanged)
+    Q_PROPERTY(qreal timelineViewportWidth READ timelineViewportWidth WRITE setTimelineViewportWidth NOTIFY zoomChanged)
+    Q_PROPERTY(qreal timelineContentWidth READ timelineContentWidth NOTIFY zoomChanged)
+    Q_PROPERTY(bool gestureActive READ gestureActive NOTIFY dragChanged)
+    Q_PROPERTY(QString dragSegment READ dragSegment NOTIFY dragChanged)
+    Q_PROPERTY(int dragTargetRow READ dragTargetRow NOTIFY dragChanged)
+    /// Os clipes deslizam até o novo lugar (reordenação e ao soltar).
+    Q_PROPERTY(bool slideAnimation READ slideAnimation NOTIFY slideAnimationChanged)
+    Q_PROPERTY(QString draggingMaterial READ draggingMaterial WRITE setDraggingMaterial NOTIFY dragChanged)
+
+    // Exportação
+    Q_PROPERTY(QVariantMap exportSettings READ exportSettings NOTIFY exportSettingsChanged)
+    Q_PROPERTY(QVariantMap exportSummary READ exportSummary NOTIFY exportSummaryChanged)
+    Q_PROPERTY(QString exportPhase READ exportPhase NOTIFY exportStateChanged)
+    Q_PROPERTY(qreal exportProgress READ exportProgress NOTIFY exportStateChanged)
+    Q_PROPERTY(QString exportRemaining READ exportRemaining NOTIFY exportStateChanged)
+    Q_PROPERTY(QString exportResult READ exportResult NOTIFY exportStateChanged)
+    Q_PROPERTY(QString exportResultPath READ exportResultPath NOTIFY exportStateChanged)
+    Q_PROPERTY(QString exportError READ exportError NOTIFY exportStateChanged)
+
+public:
+    explicit EditorModel(QObject *parent = nullptr);
+    ~EditorModel() override;
+
+    static EditorModel *instance();
+
+    static constexpr double maxZoomValue = 600;
+
+    // Leitura (QML)
+    QString screen() const { return m_screen; }
+    KeyedListModel *entries() const { return m_entries; }
+    QString libraryRoot() const { return m_library.root(); }
+    QString projectName() const { return m_project.name; }
+    bool libraryProject() const { return m_libraryId.has_value(); }
+    bool isDirty() const { return m_dirty; }
+    bool canUndo() const { return !m_undo.isEmpty(); }
+    bool canRedo() const { return !m_redo.isEmpty(); }
+    qreal duration() const { return Time::toSeconds(m_project.duration()); }
+    QString durationText() const { return Time::format(m_project.duration()); }
+    QString aspect() const { return enumKey(m_project.canvas.aspect); }
+    qreal aspectValue() const { return m_project.aspectValue(); }
+    QVariantList aspectOptions() const;
+    QSize outputSize() const { return m_exportSettings.outputSize(m_project); }
+    int clipCount() const;
+    QVariantMap canvas() const;
+    KeyedListModel *materials() const { return m_materials; }
+    KeyedListModel *tracks() const { return m_tracks; }
+    KeyedListModel *clips() const { return m_clips; }
+    KeyedListModel *junctions() const { return m_junctions; }
+    KeyedListModel *cues() const { return m_cues; }
+
+    QString selection() const;
+    void setSelection(const QString &id);
+    QVariantMap selectedSegment() const { return m_selectedSegment; }
+    int selectedRow() const;
+    QVariantList availableTabs() const;
+    QString inspectorTab() const { return m_inspectorTab; }
+    void setInspectorTab(const QString &tab);
+    QString libraryPanel() const { return m_libraryPanel; }
+    void setLibraryPanel(const QString &panel);
+    bool libraryVisible() const { return m_libraryVisible; }
+    void setLibraryVisible(bool visible);
+    bool showGrid() const { return m_showGrid; }
+    void setShowGrid(bool show);
+    bool showExport() const { return m_showExport; }
+    void setShowExport(bool show);
+    QString errorMessage() const { return m_errorMessage; }
+    void setErrorMessage(const QString &message);
+    int modalCount() const { return m_modalCount; }
+    void setModalCount(int count);
+
+    qreal playhead() const { return Time::toSeconds(m_playhead); }
+    QString playheadText() const { return Time::format(m_playhead); }
+    bool isPlaying() const { return m_playing; }
+
+    qreal zoom() const { return m_zoom; }
+    void setZoomValue(qreal zoom) { setZoom(zoom); }
+    qreal minZoom() const;
+    qreal maxZoom() const { return maxZoomValue; }
+    qreal fitZoom() const;
+    qreal timelineScrollX() const { return m_scrollX; }
+    void setTimelineScrollX(qreal x);
+    qreal timelineViewportWidth() const { return m_viewportWidth; }
+    void setTimelineViewportWidth(qreal width);
+    qreal timelineContentWidth() const;
+    bool gestureActive() const { return m_dragPreview.has_value(); }
+    QString dragSegment() const;
+    int dragTargetRow() const { return m_dragTarget ? m_dragTarget->row : -1; }
+    bool slideAnimation() const { return m_slideAnimation; }
+    QString draggingMaterial() const { return m_draggingMaterial; }
+    void setDraggingMaterial(const QString &id);
+
+    QVariantMap exportSettings() const;
+    QVariantMap exportSummary() const;
+    QString exportPhase() const { return m_exportPhase; }
+    qreal exportProgress() const { return m_exportProgress; }
+    QString exportRemaining() const { return m_exportRemaining; }
+    QString exportResult() const { return m_exportResult; }
+    QString exportResultPath() const { return m_exportResultPath; }
+    QString exportError() const { return m_exportError; }
+
+    // Acesso direto (capturas e testes)
+    const Project &project() const { return m_project; }
+    std::optional<QUuid> selectionId() const { return m_selection; }
+    QList<int> displayTrackOrder() const;
+    Micros playheadMicros() const { return m_playhead; }
+
+    // Alterações e desfazer
+    void mutate(const std::function<void(Project &)> &change, const QString &coalesce = {});
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+
+    // Telas e projetos
+    Q_INVOKABLE void refreshLibrary();
+    Q_INVOKABLE void createProject(const QString &aspect = QStringLiteral("original"));
+    Q_INVOKABLE void openLibraryProject(const QString &id);
+    Q_INVOKABLE void showHome();
+    Q_INVOKABLE void renameProject(const QString &id, const QString &name);
+    Q_INVOKABLE void renameCurrentProject(const QString &name);
+    Q_INVOKABLE void duplicateProject(const QString &id);
+    Q_INVOKABLE void deleteProject(const QString &id);
+    Q_INVOKABLE void revealProject(const QString &id);
+    Q_INVOKABLE void newProject();
+    /// `.openframe` escolhido no diálogo: importado para a biblioteca e aberto.
+    Q_INVOKABLE void openProjectFile(const QUrl &url);
+    /// Abre o arquivo direto, fora da biblioteca (`--open`, desenvolvimento e capturas).
+    void openExternal(const QString &path);
+    Q_INVOKABLE void saveProject();
+    /// Grava uma cópia `.openframe` (ou o próprio arquivo, fora da biblioteca).
+    Q_INVOKABLE void exportProjectFile(const QUrl &url);
+    Q_INVOKABLE QString suggestedFileName(const QString &extension) const;
+    void saveNow();
+
+    // Mídia
+    Q_INVOKABLE void importMedia(const QList<QUrl> &urls);
+    Q_INVOKABLE bool isSupportedMedia(const QUrl &url) const;
+    Q_INVOKABLE void addToTimeline(const QString &materialId);
+    Q_INVOKABLE void addAsOverlay(const QString &materialId);
+    Q_INVOKABLE void removeMaterial(const QString &materialId);
+    Q_INVOKABLE QVariantMap dropPreview(const QString &materialId, qreal time, int row) const;
+    /// Linha exibida sem clipes entre `from` e `to` (s). Abaixo da última há espaço livre; acima da primeira, a régua.
+    Q_INVOKABLE bool isRowFree(int row, qreal from, qreal to) const;
+    Q_INVOKABLE void dropMaterial(const QString &materialId, qreal time, int row);
+
+    // Edição
+    Q_INVOKABLE void splitAtPlayhead();
+    Q_INVOKABLE void deleteSelection();
+    Q_INVOKABLE void duplicateSelection();
+    Q_INVOKABLE void addText(const QString &preset = {});
+    Q_INVOKABLE void importSubtitles(const QUrl &url);
+    Q_INVOKABLE void exportSubtitles(const QUrl &url);
+    Q_INVOKABLE bool canSplitSelection() const;
+    Q_INVOKABLE void toggleTrack(const QString &trackId, const QString &flag);
+    Q_INVOKABLE void setAspect(const QString &key);
+    Q_INVOKABLE void setCanvasBackground(const QString &kind);
+    Q_INVOKABLE void setCanvasColor(const QColor &color);
+    Q_INVOKABLE void setCanvasBlur(qreal amount);
+    Q_INVOKABLE void setProjectName(const QString &name);
+
+    /// Altera um campo do segmento pelo caminho das chaves do JSON
+    /// ("transform.scale", "text.style.color", "filter.intensity"…). Um valor
+    /// indefinido remove o campo (opcionais como `filter` e `transition`).
+    Q_INVOKABLE void setSegmentValue(const QString &path, const QVariant &value);
+    Q_INVOKABLE void resetSegment(const QString &group);
+    Q_INVOKABLE void setSpeed(qreal speed);
+    Q_INVOKABLE void setFilter(const QString &preset);
+    Q_INVOKABLE void toggleEffect(const QString &kind);
+    Q_INVOKABLE void setAnimation(const QString &which, const QString &kind);
+    Q_INVOKABLE void setTransition(const QString &kind);
+    Q_INVOKABLE void applyTextPreset(const QString &preset);
+    Q_INVOKABLE void setFontFamily(const QString &family);
+    Q_INVOKABLE void setFontFace(const QString &face);
+    Q_INVOKABLE QStringList fontFamilies() const;
+    Q_INVOKABLE QStringList suggestedFontFamilies() const;
+    Q_INVOKABLE QStringList fontFaces(const QString &family) const;
+    Q_INVOKABLE QVariantList filterOptions() const;
+    Q_INVOKABLE QVariantList effectOptions() const;
+    Q_INVOKABLE QVariantList transitionOptions() const;
+    Q_INVOKABLE QVariantList animationOptions(bool text) const;
+    Q_INVOKABLE QVariantList textPresets() const;
+
+    // Reprodução
+    Q_INVOKABLE void togglePlay();
+    Q_INVOKABLE void seek(qreal seconds);
+    Q_INVOKABLE void scrub(qreal seconds);
+    Q_INVOKABLE void step(int frames);
+    Q_INVOKABLE void goToStart();
+    Q_INVOKABLE void goToEnd();
+    Q_INVOKABLE void jumpToEdit(bool forward);
+    void seekMicros(Micros t);
+
+    // Zoom e rolagem
+    Q_INVOKABLE void zoomIn();
+    Q_INVOKABLE void zoomOut();
+    Q_INVOKABLE void zoomToFit();
+    /// Muda o zoom mantendo o tempo `time` (s) na posição `x` da área visível.
+    /// Sem âncora (x < 0), mantém o playhead (se estiver à vista) ou o centro.
+    Q_INVOKABLE void setZoom(qreal value, qreal time = -1, qreal x = -1);
+    /// Roda do mouse com Ctrl/Alt: zoom no ponto `viewportX` da área visível.
+    Q_INVOKABLE void zoomAtViewportX(qreal factor, qreal viewportX);
+    Q_INVOKABLE void scrollTimelineBy(qreal dx);
+
+    // Arrastes na timeline
+    Q_INVOKABLE void dragMove(const QString &id, qreal dx, int rows);
+    Q_INVOKABLE void endDragMove(const QString &id);
+    Q_INVOKABLE void dragTrim(const QString &id, bool leading, qreal dx);
+    Q_INVOKABLE void endDragTrim();
+
+    // Exportação
+    Q_INVOKABLE void setExportValue(const QString &key, const QVariant &value);
+    Q_INVOKABLE QVariantList exportOptions(const QString &key) const;
+    Q_INVOKABLE void startExport(const QUrl &url);
+    Q_INVOKABLE void cancelExport();
+    Q_INVOKABLE void resetExport();
+    Q_INVOKABLE void revealFile(const QString &path);
+    Q_INVOKABLE void openFile(const QString &path);
+
+    /// Pede ao QML um diálogo de arquivo ("openProject", "importMedia", "importSrt",
+    /// "exportSrt", "exportProject", "exportVideo").
+    Q_INVOKABLE void requestDialog(const QString &kind) { emit dialogRequested(kind); }
+
+    /// Teclas do editor (espaço, Delete, Esc, setas, Home/End, Shift+Z).
+    bool handleKey(int key, Qt::KeyboardModifiers modifiers);
+
+signals:
+    void screenChanged();
+    void projectChanged();
+    void selectionChanged();
+    void uiChanged();
+    void playheadChanged();
+    void playingChanged();
+    void zoomChanged();
+    void scrollChanged();
+    void dragChanged();
+    void slideAnimationChanged();
+    void exportSettingsChanged();
+    void exportSummaryChanged();
+    void exportStateChanged();
+    void dialogRequested(const QString &kind);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+    void setProject(const Project &p);
+    void pushUndo(const Project &snapshot);
+    void beginGesture();
+    void updateGesture(const std::function<void(Project &)> &change);
+    void updateGestureInPlace(const std::function<void(Project &)> &change);
+    void endGesture();
+    void slideGesture(const std::function<void(Project &)> &change);
+    void projectDidChange();
+    void rebuildModels();
+    void rebuildEntries();
+    void refreshSelection();
+    void ensureValidTab();
+    void setPlayheadMicros(Micros t);
+    void setPlaying(bool playing);
+    void revealPlayhead();
+    void setScrollClamped(qreal x);
+    void animateSlides();
+    void scheduleAutosave();
+    void load(const Project &p, std::optional<QUuid> libraryId, const QString &documentPath);
+    void loadMediaPreviews(const Material &m);
+    void writeThumbnail(const Project &snapshot, const QUuid &id);
+    void fillMissingThumbnails();
+    QStringList availableTabKeys(const Segment &seg) const;
+    bool isOnMainTrack(const QUuid &id) const;
+    bool isLastOnMainTrack(const QUuid &id) const;
+    std::optional<QUuid> targetSegmentId() const;
+    std::optional<int> trackIndex(int row) const;
+    std::optional<int> dragTargetRowFor(const QUuid &id, int rows, const Project &base) const;
+    void setDragTarget(const std::optional<DragTarget> &target);
+    void setDragPreview(const std::optional<DragPreview> &preview);
+    QVariantMap segmentMap(const Segment &seg) const;
+    void playerTimeChanged(Micros t);
+
+    Project m_project;
+    QList<Project> m_undo;
+    QList<Project> m_redo;
+    QString m_lastCoalesceKey;
+    QElapsedTimer m_lastCoalesce;
+    std::optional<Project> m_gestureBase;
+
+    std::optional<QUuid> m_selection;
+    QVariantMap m_selectedSegment;
+    QString m_inspectorTab = QStringLiteral("basic");
+    QString m_libraryPanel = QStringLiteral("media");
+    bool m_libraryVisible = true;
+    bool m_showGrid = false;
+    bool m_showExport = false;
+    QString m_errorMessage;
+    int m_modalCount = 0;
+
+    Micros m_playhead = 0;
+    bool m_playing = false;
+
+    qreal m_zoom = 80;
+    qreal m_scrollX = 0;
+    qreal m_viewportWidth = 0;
+    std::optional<DragTarget> m_dragTarget;
+    std::optional<DragPreview> m_dragPreview;
+    bool m_slideAnimation = false;
+    QTimer m_slideTimer;
+    QString m_draggingMaterial;
+
+    QString m_screen = QStringLiteral("home");
+    ProjectLibrary m_library;
+    QList<ProjectEntry> m_entryList;
+    std::optional<QUuid> m_libraryId;
+    QString m_documentPath;
+    bool m_dirty = false;
+    QTimer m_autosave;
+    QDateTime m_lastThumbnail;
+    QSet<QUuid> m_thumbnailAttempts;
+
+    ExportSettings m_exportSettings;
+    QString m_exportPhase = QStringLiteral("configuring");
+    qreal m_exportProgress = 0;
+    QString m_exportRemaining;
+    QString m_exportResult;
+    QString m_exportResultPath;
+    QString m_exportError;
+    QElapsedTimer m_exportClock;
+
+    KeyedListModel *m_entries;
+    KeyedListModel *m_materials;
+    KeyedListModel *m_tracks;
+    KeyedListModel *m_clips;
+    KeyedListModel *m_junctions;
+    KeyedListModel *m_cues;
+
+    PreviewEngine *m_preview = nullptr;
+    ExportJob *m_exportJob = nullptr;
+};
+
+/// Expõe ao QML a instância única criada no main, como o singleton `Editor`
+/// (o padrão do Qt para um objeto que já existe: QML_FOREIGN + create).
+struct EditorSingleton {
+    Q_GADGET
+    QML_FOREIGN(EditorModel)
+    QML_SINGLETON
+    QML_NAMED_ELEMENT(Editor)
+
+public:
+    static EditorModel *create(QQmlEngine *, QJSEngine *engine);
+};
+
+} // namespace of

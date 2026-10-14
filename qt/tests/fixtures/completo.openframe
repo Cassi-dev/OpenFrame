@@ -1,0 +1,360 @@
+{
+  "canvas" : {
+    "aspect" : "r9x16",
+    "background" : {
+      "color" : {
+        "_0" : {
+          "a" : 1,
+          "b" : 0.3,
+          "g" : 0.2,
+          "r" : 0.1
+        }
+      }
+    }
+  },
+  "formatVersion" : 1,
+  "fps" : 29.97,
+  "materials" : [
+    {
+      "duration" : 12345678,
+      "hasAudio" : true,
+      "height" : 1920,
+      "id" : "00000000-0000-4000-8000-000000000010",
+      "kind" : "video",
+      "name" : "clipe.mov",
+      "path" : "\/media\/clipe.mov",
+      "width" : 1080
+    },
+    {
+      "duration" : 0,
+      "hasAudio" : false,
+      "height" : 3024,
+      "id" : "00000000-0000-4000-8000-000000000011",
+      "kind" : "photo",
+      "name" : "foto.jpg",
+      "path" : "\/media\/foto.jpg",
+      "width" : 4032
+    },
+    {
+      "duration" : 60000000,
+      "hasAudio" : true,
+      "height" : 0,
+      "id" : "00000000-0000-4000-8000-000000000012",
+      "kind" : "audio",
+      "name" : "música.m4a",
+      "path" : "\/media\/música.m4a",
+      "width" : 0
+    }
+  ],
+  "name" : "Projeto completo",
+  "tracks" : [
+    {
+      "hidden" : false,
+      "id" : "00000000-0000-4000-8000-000000000001",
+      "isMain" : true,
+      "kind" : "video",
+      "muted" : false,
+      "segments" : [
+        {
+          "adjust" : {
+            "brightness" : 0.1,
+            "contrast" : -0.2,
+            "exposure" : 0.05,
+            "fade" : 0.25,
+            "grain" : 0.35,
+            "highlights" : 0.2,
+            "hue" : 0.15,
+            "saturation" : 0.3,
+            "shadows" : -0.3,
+            "sharpen" : 0.5,
+            "temperature" : 0.4,
+            "tint" : -0.1,
+            "vignette" : 0.6
+          },
+          "animationIn" : {
+            "duration" : 400000,
+            "kind" : "zoomIn"
+          },
+          "animationOut" : {
+            "duration" : 600000,
+            "kind" : "slideLeft"
+          },
+          "effects" : [
+            {
+              "id" : "00000000-0000-4000-8000-000000000030",
+              "intensity" : 0.4,
+              "kind" : "rgbSplit"
+            },
+            {
+              "id" : "00000000-0000-4000-8000-000000000031",
+              "intensity" : 0.7,
+              "kind" : "shake"
+            }
+          ],
+          "fadeIn" : 250000,
+          "fadeOut" : 500000,
+          "filter" : {
+            "intensity" : 0.75,
+            "preset" : "cinematic"
+          },
+          "id" : "00000000-0000-4000-8000-000000000020",
+          "materialId" : "00000000-0000-4000-8000-000000000010",
+          "opacity" : 0.9,
+          "source" : {
+            "duration" : 4000000,
+            "start" : 1000000
+          },
+          "speed" : 2,
+          "targetStart" : 0,
+          "transform" : {
+            "rotation" : 15,
+            "scale" : 1.25,
+            "x" : -0.1,
+            "y" : 0.2
+          },
+          "transition" : {
+            "duration" : 500000,
+            "kind" : "dissolve"
+          },
+          "volume" : 0.8
+        },
+        {
+          "adjust" : {
+            "brightness" : 0,
+            "contrast" : 0,
+            "exposure" : 0,
+            "fade" : 0,
+            "grain" : 0,
+            "highlights" : 0,
+            "hue" : 0,
+            "saturation" : 0,
+            "shadows" : 0,
+            "sharpen" : 0,
+            "temperature" : 0,
+            "tint" : 0,
+            "vignette" : 0
+          },
+          "effects" : [
+
+          ],
+          "fadeIn" : 0,
+          "fadeOut" : 0,
+          "id" : "00000000-0000-4000-8000-000000000021",
+          "materialId" : "00000000-0000-4000-8000-000000000011",
+          "opacity" : 1,
+          "source" : {
+            "duration" : 3000000,
+            "start" : 0
+          },
+          "speed" : 1,
+          "targetStart" : 1500000,
+          "transform" : {
+            "rotation" : 0,
+            "scale" : 1,
+            "x" : 0,
+            "y" : 0
+          },
+          "volume" : 1
+        }
+      ]
+    },
+    {
+      "hidden" : false,
+      "id" : "00000000-0000-4000-8000-000000000004",
+      "isMain" : false,
+      "kind" : "video",
+      "muted" : false,
+      "segments" : [
+        {
+          "adjust" : {
+            "brightness" : 0,
+            "contrast" : 0,
+            "exposure" : 0,
+            "fade" : 0,
+            "grain" : 0,
+            "highlights" : 0,
+            "hue" : 0,
+            "saturation" : 0,
+            "shadows" : 0,
+            "sharpen" : 0,
+            "temperature" : 0,
+            "tint" : 0,
+            "vignette" : 0
+          },
+          "effects" : [
+
+          ],
+          "fadeIn" : 0,
+          "fadeOut" : 0,
+          "id" : "00000000-0000-4000-8000-000000000024",
+          "materialId" : "00000000-0000-4000-8000-000000000011",
+          "opacity" : 1,
+          "source" : {
+            "duration" : 2000000,
+            "start" : 0
+          },
+          "speed" : 1,
+          "targetStart" : 750000,
+          "transform" : {
+            "rotation" : 0,
+            "scale" : 0.5,
+            "x" : 0,
+            "y" : 0
+          },
+          "volume" : 1
+        }
+      ]
+    },
+    {
+      "hidden" : false,
+      "id" : "00000000-0000-4000-8000-000000000002",
+      "isMain" : false,
+      "kind" : "audio",
+      "muted" : true,
+      "segments" : [
+        {
+          "adjust" : {
+            "brightness" : 0,
+            "contrast" : 0,
+            "exposure" : 0,
+            "fade" : 0,
+            "grain" : 0,
+            "highlights" : 0,
+            "hue" : 0,
+            "saturation" : 0,
+            "shadows" : 0,
+            "sharpen" : 0,
+            "temperature" : 0,
+            "tint" : 0,
+            "vignette" : 0
+          },
+          "effects" : [
+
+          ],
+          "fadeIn" : 0,
+          "fadeOut" : 0,
+          "id" : "00000000-0000-4000-8000-000000000022",
+          "materialId" : "00000000-0000-4000-8000-000000000012",
+          "opacity" : 1,
+          "source" : {
+            "duration" : 5000000,
+            "start" : 0
+          },
+          "speed" : 1,
+          "targetStart" : 500000,
+          "transform" : {
+            "rotation" : 0,
+            "scale" : 1,
+            "x" : 0,
+            "y" : 0
+          },
+          "volume" : 1
+        }
+      ]
+    },
+    {
+      "hidden" : true,
+      "id" : "00000000-0000-4000-8000-000000000003",
+      "isMain" : false,
+      "kind" : "text",
+      "muted" : false,
+      "segments" : [
+        {
+          "adjust" : {
+            "brightness" : 0,
+            "contrast" : 0,
+            "exposure" : 0,
+            "fade" : 0,
+            "grain" : 0,
+            "highlights" : 0,
+            "hue" : 0,
+            "saturation" : 0,
+            "shadows" : 0,
+            "sharpen" : 0,
+            "temperature" : 0,
+            "tint" : 0,
+            "vignette" : 0
+          },
+          "animationIn" : {
+            "duration" : 1000000,
+            "kind" : "typewriter"
+          },
+          "effects" : [
+
+          ],
+          "fadeIn" : 0,
+          "fadeOut" : 0,
+          "id" : "00000000-0000-4000-8000-000000000023",
+          "opacity" : 1,
+          "source" : {
+            "duration" : 2000000,
+            "start" : 0
+          },
+          "speed" : 1,
+          "targetStart" : 1000000,
+          "text" : {
+            "style" : {
+              "alignment" : "left",
+              "backgroundColor" : {
+                "a" : 0.7,
+                "b" : 0.2,
+                "g" : 0.2,
+                "r" : 0.2
+              },
+              "backgroundEnabled" : true,
+              "backgroundPaddingX" : 0.4,
+              "backgroundPaddingY" : 0.2,
+              "backgroundRadius" : 0.3,
+              "bold" : false,
+              "color" : {
+                "a" : 1,
+                "b" : 0.1,
+                "g" : 0.85,
+                "r" : 1
+              },
+              "fontFace" : "Semibold",
+              "fontName" : "Inter",
+              "fontSize" : 0.05,
+              "italic" : true,
+              "letterSpacing" : 0.05,
+              "lineSpacing" : -0.1,
+              "maxWidth" : 0.8,
+              "opacity" : 0.95,
+              "rotation" : -5,
+              "scale" : 1.5,
+              "shadow" : false,
+              "shadowAngle" : -45,
+              "shadowBlur" : 0.2,
+              "shadowColor" : {
+                "a" : 0.4,
+                "b" : 0,
+                "g" : 0,
+                "r" : 0
+              },
+              "shadowDistance" : 0.06,
+              "strokeColor" : {
+                "a" : 0.5,
+                "b" : 0,
+                "g" : 0,
+                "r" : 0
+              },
+              "strokeWidth" : 8,
+              "textCase" : "upper",
+              "underline" : true,
+              "x" : 0.1,
+              "y" : 0.5
+            },
+            "text" : "Olá, mundo!\nSegunda linha 🎬"
+          },
+          "transform" : {
+            "rotation" : 0,
+            "scale" : 1,
+            "x" : 0,
+            "y" : 0
+          },
+          "volume" : 1
+        }
+      ]
+    }
+  ]
+}
