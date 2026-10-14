@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tipo dos projetos .openframe (para quem instalar o .desktop no sistema). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-openframe">
+    <comment>Projeto do OpenFrame</comment>
+    <comment xml:lang="en">OpenFrame project</comment>
+    <glob pattern="*.openframe"/>
+    <icon name="openframe"/>
+  </mime-type>
+</mime-info>

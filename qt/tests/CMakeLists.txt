@@ -1,0 +1,30 @@
+# Uma suíte Qt Test por arquivo: openframe_add_test(NomeTests NomeTests.cpp)
+function(openframe_add_test name)
+    add_executable(${name} ${ARGN})
+    target_link_libraries(${name} PRIVATE openframe_core Qt6::Test)
+    target_compile_definitions(${name} PRIVATE OPENFRAME_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    add_test(NAME ${name} COMMAND ${name})
+    # Sem janela: o QFontDatabase e o QImage funcionam sem servidor gráfico (CI).
+    # No Windows fica a plataforma nativa: o banco de fontes do offscreen depende
+    # do contexto da plataforma "windows" e derruba os testes que consultam fontes.
+    if(NOT WIN32)
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
+endfunction()
+
+openframe_add_test(TimelineTests TimelineTests.cpp)
+openframe_add_test(ProjectTests ProjectTests.cpp)
+openframe_add_test(SubtitleTests SubtitleTests.cpp)
+openframe_add_test(ExportSettingsTests ExportSettingsTests.cpp)
+openframe_add_test(ProjectLibraryTests ProjectLibraryTests.cpp)
+openframe_add_test(FontCatalogTests FontCatalogTests.cpp)
+openframe_add_test(MediaTests MediaTests.cpp)
+openframe_add_test(RenderTests RenderTests.cpp)
+openframe_add_test(TextTests TextTests.cpp)
+openframe_add_test(AudioMixTests AudioMixTests.cpp)
+openframe_add_test(PlayerTests PlayerTests.cpp)
+openframe_add_test(ExportTests ExportTests.cpp)
+# Lê o arquivo exportado direto pelo FFmpeg (codec, fps, marcas de cor).
+include(FFmpeg)
+target_link_libraries(ExportTests PRIVATE FFmpeg::FFmpeg)
+set_tests_properties(ExportTests PROPERTIES TIMEOUT 600)

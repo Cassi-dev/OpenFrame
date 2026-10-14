@@ -6,11 +6,13 @@
 </p>
 
 <p align="center">
-  <strong>Editor de vídeo nativo para Mac. Leve e offline.</strong>
+  <strong>Editor de vídeo para Mac, Windows e Linux. Leve e offline.</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/talescavalcanti/OpenFrame/releases/latest"><img alt="Baixar para macOS" src="https://img.shields.io/badge/Baixar_para_macOS-.dmg-00C2CC?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://github.com/talescavalcanti/OpenFrame/releases/latest"><img alt="Baixar para Windows" src="https://img.shields.io/badge/Baixar_para_Windows-.exe-00C2CC?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/talescavalcanti/OpenFrame/releases/latest"><img alt="Baixar para Linux" src="https://img.shields.io/badge/Baixar_para_Linux-AppImage-00C2CC?style=for-the-badge&logo=linux&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -18,6 +20,8 @@
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-17171C">
   <img alt="Apple Silicon e Intel" src="https://img.shields.io/badge/Apple_Silicon_%2B_Intel-universal-17171C">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-17171C?logo=swift&logoColor=white">
+  <img alt="Windows 10+ e Linux" src="https://img.shields.io/badge/Windows_10%2B_e_Linux-Qt_6-17171C">
+  <img alt="Licença GPL-3.0" src="https://img.shields.io/badge/licen%C3%A7a-GPL--3.0-17171C">
 </p>
 
 <p align="center">
@@ -31,9 +35,11 @@
 Editar um vídeo curto não devia exigir um app de vários gigabytes, uma conta ou
 uma conexão com a internet. O **OpenFrame** é um editor de vídeo feito do zero
 para o Mac, em Swift, com a experiência dos editores populares de timeline
-(faixas, clipes, texto, transições, efeitos) e nada além do necessário:
+(faixas, clipes, texto, transições, efeitos) e nada além do necessário. A versão
+para **Windows e Linux** (C++, Qt e FFmpeg) tem a mesma interface e abre os
+mesmos projetos `.openframe`.
 
-- **Nativo e leve.** Usa AVFoundation e Core Image, os mesmos motores do macOS.
+- **Nativo e leve.** No Mac, usa AVFoundation e Core Image, os mesmos motores do macOS.
   O instalador tem cerca de 3 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
 - **Seu material fica com você.** Não há conta, nuvem nem telemetria: o app não
   faz nenhuma chamada de rede. Tudo roda localmente, inclusive sem internet.
@@ -44,6 +50,10 @@ para o Mac, em Swift, com a experiência dos editores populares de timeline
   compositor, e as cores originais de vídeos e fotos são preservadas.
 
 ## Baixar e instalar
+
+Os arquivos de cada sistema ficam na [página da última versão](https://github.com/talescavalcanti/OpenFrame/releases/latest).
+
+### macOS
 
 1. Baixe o **`OpenFrame-<versão>.dmg`** na [página da última versão](https://github.com/talescavalcanti/OpenFrame/releases/latest).
 2. Abra o `.dmg` e arraste o **OpenFrame** para a pasta **Aplicativos**.
@@ -59,7 +69,41 @@ ainda não é notarizado pela Apple. Para liberar:
 Depois disso, ele abre normalmente. Requer **macOS 14 (Sonoma) ou superior**, em
 Mac com Apple Silicon ou Intel.
 
+### Windows
+
+- **Instalador:** baixe o `OpenFrame-<versão>-windows-x64-instalador.exe` e
+  execute. Sem permissão de administrador, ele instala só para o seu usuário. Os
+  projetos `.openframe` passam a abrir com duplo clique.
+- **Portátil:** baixe o `OpenFrame-<versão>-windows-x64-portatil.zip`, extraia
+  e abra o `OpenFrame.exe` de dentro da pasta.
+
+**Na primeira abertura**, o Windows SmartScreen pode avisar que o app não é
+reconhecido, porque ele ainda não é assinado. Clique em **Mais informações →
+Executar assim mesmo**. Requer Windows 10 ou 11 de 64 bits.
+
+### Linux
+
+Baixe o `OpenFrame-<versão>-x86_64.AppImage`, dê permissão de execução e abra:
+
+```bash
+chmod +x OpenFrame-*-x86_64.AppImage
+./OpenFrame-*-x86_64.AppImage
+```
+
+Funciona nas distribuições x86-64 recentes (Ubuntu 24.04 ou superior, Fedora 40
+ou superior e equivalentes), em X11 ou Wayland (pelo XWayland). Se o AppImage
+reclamar de FUSE, instale o `libfuse2` (no Ubuntu 24.04: `sudo apt install libfuse2t64`).
+
+Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
+(`Filmes` no Mac, `Vídeos` no Windows e no Linux), em `OpenFrame/Projetos`.
+
 ## Funcionalidades
+
+**Projetos**
+- Tela inicial com todos os projetos: miniatura, duração, formato e data da última edição; busca por nome
+- Novo projeto vazio ou num formato pronto: 16:9 (YouTube), 9:16 (Reels, TikTok, Shorts), 1:1 e 4:5
+- Salvamento automático em `~/Movies/OpenFrame/Projetos`, sem janela de salvar
+- Renomear, duplicar, mostrar no Finder e apagar (vai para o Lixo); abrir ou exportar arquivos `.openframe`
 
 **Edição**
 - Importar vídeos, fotos e áudios pelo botão ou arrastando arquivos para a janela
@@ -124,6 +168,36 @@ swift run OpenFrame              # modo debug
 Para abrir um projeto pela linha de comando: `OpenFrame -open caminho/projeto.openframe`.
 Com o app instalado, arquivos `.openframe` abrem com duplo clique.
 
+### Compilar a versão Windows e Linux
+
+Fica em `qt/`: C++20, Qt 6.8 ou superior (Quick, Quick Controls, Multimedia) e
+FFmpeg 6.1 a 9 (bibliotecas de desenvolvimento). Também compila no Mac, para
+desenvolvimento.
+
+```bash
+# Linux (com o Qt e o FFmpeg instalados; ou FFMPEG_ROOT apontando para um build "shared")
+cmake -S qt -B build/qt -G Ninja -DCMAKE_PREFIX_PATH=<pasta do Qt>
+cmake --build build/qt
+ctest --test-dir build/qt --output-on-failure
+./build/qt/src/app/OpenFrame
+
+# macOS (Homebrew: brew install qt ffmpeg ninja pkgconf)
+cmake -S qt -B build/qt -G Ninja -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt
+```
+
+No Windows, use o "x64 Native Tools Command Prompt" do Visual Studio 2022,
+defina `FFMPEG_ROOT` com um build "gpl-shared" do
+[BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) (pastas `include`, `lib` e
+`bin`), ponha o `bin` do FFmpeg e o do Qt no `PATH` e use os mesmos comandos
+`cmake` acima.
+
+Capturas sem tela: `.github/scripts/capturas.sh <executável> <pasta>` gera mídia
+de teste com o ffmpeg e salva PNGs da tela inicial, do editor (todas as abas do
+inspetor, timeline, reprodução e exportação), de um projeto completo e dos
+arrastes. A CI ([qt.yml](.github/workflows/qt.yml)) compila e testa em Windows e
+Ubuntu, roda as capturas e gera o instalador, o zip e o AppImage como artefatos.
+Arquitetura e decisões em [qt/ARQUITETURA.md](qt/ARQUITETURA.md).
+
 ### Arquitetura
 
 ```
@@ -174,3 +248,10 @@ e fecha o app. Serve para conferir a interface sem permissão de gravação de t
 ### Marca
 
 Logo, ícone, paleta e regras de uso em [assets/brand](assets/brand/README.md).
+
+## Licença
+
+O OpenFrame é software livre, sob a [GNU General Public License versão 3 ou
+posterior](LICENSE) (GPL-3.0-or-later). A versão Windows e Linux distribui o
+FFmpeg (com x264 e x265, GPL) e o Qt (LGPL-3.0); as licenças de terceiros estão
+em [qt/packaging/TERCEIROS.txt](qt/packaging/TERCEIROS.txt) e acompanham os pacotes.

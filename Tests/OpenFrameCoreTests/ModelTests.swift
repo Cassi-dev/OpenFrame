@@ -41,6 +41,29 @@ struct SubtitleTests {
     }
 }
 
+@Suite("Importação")
+struct ImportTests {
+    @Test("Aceita vídeos, fotos e áudios, inclusive .MOV em maiúsculas")
+    func supportedExtensions() {
+        for name in ["a.mov", "IMG_7565.MOV", "a.mp4", "a.M4V", "a.m4a", "a.mp3", "a.wav",
+                     "a.png", "a.JPG", "a.heic"] {
+            #expect(MediaProbe.isSupported(URL(fileURLWithPath: "/tmp/\(name)")), "\(name)")
+        }
+        for name in ["a.txt", "a.srt", "a.openframe", "sem-extensao"] {
+            #expect(!MediaProbe.isSupported(URL(fileURLWithPath: "/tmp/\(name)")), "\(name)")
+        }
+    }
+
+    @Test(".MOV de iPhone vira vídeo")
+    func probeUppercaseMov() async throws {
+        let src = try await TestMedia.makeVideo(seconds: 0.5)
+        let upper = src.deletingPathExtension().appendingPathExtension("MOV")
+        try FileManager.default.moveItem(at: src, to: upper)
+        let m = try await MediaProbe.probe(upper)
+        #expect(m.kind == .video)
+    }
+}
+
 @Suite("Projeto")
 struct ProjectTests {
     @Test("Salvar e abrir preserva tudo")

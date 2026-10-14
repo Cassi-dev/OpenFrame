@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=OpenFrame
+GenericName=Editor de vídeo
+GenericName[en]=Video Editor
+Comment=Editor de vídeo
+Comment[en]=Video editor
+Exec=OpenFrame %f
+Icon=openframe
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-openframe;
+Keywords=vídeo;video;editor;timeline;legendas;
+StartupWMClass=OpenFrame

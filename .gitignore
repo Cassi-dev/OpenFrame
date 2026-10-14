@@ -6,3 +6,4 @@ build/
 
 # Contexto local das sessões (não versionado)
 CONTEXTO.md
+CONTEXTO-*.md

@@ -1,0 +1,28 @@
+{
+  "canvas" : {
+    "aspect" : "original",
+    "background" : {
+      "black" : {
+
+      }
+    }
+  },
+  "formatVersion" : 1,
+  "fps" : 30,
+  "materials" : [
+
+  ],
+  "name" : "Sem título",
+  "tracks" : [
+    {
+      "hidden" : false,
+      "id" : "00000000-0000-4000-8000-000000000001",
+      "isMain" : true,
+      "kind" : "video",
+      "muted" : false,
+      "segments" : [
+
+      ]
+    }
+  ]
+}

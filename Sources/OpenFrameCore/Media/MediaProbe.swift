@@ -15,12 +15,17 @@ public enum MediaError: LocalizedError {
 }
 
 public enum MediaProbe {
-    public static let supportedTypes: [UTType] = [.movie, .video, .audio, .image]
+    /// Se o arquivo é uma mídia que o `probe` aceita (foto, vídeo ou áudio),
+    /// pela extensão, sem diferenciar maiúsculas (`.MOV` do iPhone).
+    public static func isSupported(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .audiovisualContent)
+    }
 
     /// Lê o arquivo e cria o `Material` correspondente.
     public static func probe(_ url: URL) async throws -> Material {
         let name = url.lastPathComponent
-        guard let type = UTType(filenameExtension: url.pathExtension) else {
+        guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else {
             throw MediaError.unsupported(name)
         }
         if type.conforms(to: .image) {
