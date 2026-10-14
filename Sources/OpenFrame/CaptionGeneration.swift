@@ -37,7 +37,8 @@ final class CaptionGeneration {
     /// O idioma já foi preenchido com o do sistema (só na primeira abertura).
     var languageChosen = false
     var model = recommended
-    var layout = CaptionLayout.phrases
+    var preset = CaptionPreset.phrases
+    /// Cor de destaque: vai para onde a predefinição a usa (`usesAccent`).
     var highlightColor = WordHighlight().color
     var replacePrevious = true
     var phase = Phase.configuring
@@ -124,3 +125,4 @@ final class CaptionGeneration {
         return codes.contains(code) ? code : nil
     }
 }
+

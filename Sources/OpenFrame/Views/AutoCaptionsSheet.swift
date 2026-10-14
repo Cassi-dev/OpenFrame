@@ -30,8 +30,8 @@ struct AutoCaptionsSheet: View {
                 failedView(message)
             }
         }
-        .frame(width: 720)
-        .frame(minHeight: 620)
+        .frame(width: 760)
+        .frame(minHeight: 700)
         .background(Theme.surface)
         .font(Theme.font(12))
         .foregroundStyle(Theme.textPrimary)
@@ -126,6 +126,7 @@ struct AutoCaptionsSheet: View {
 
 private struct CaptionOptionsForm: View {
     @Environment(EditorModel.self) private var model
+    static let columns = 4
 
     var body: some View {
         @Bindable var generation = model.captionGeneration
@@ -164,14 +165,22 @@ private struct CaptionOptionsForm: View {
                 }
 
                 SectionHeader(title: "Estilo")
-                HStack(spacing: 12) {
-                    ForEach(CaptionLayout.allCases) { layout in
-                        CaptionStyleCard(layout: layout, selected: generation.layout == layout) {
-                            generation.layout = layout
+                ForEach(CaptionPresetGroup.allCases) { group in
+                    Text(group.displayName)
+                        .font(Theme.font(11, .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.top, group == .classic ? 0 : 6)
+                    // Uma fileira por grupo (o maior tem 4): os títulos ficam alinhados com as fileiras.
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top),
+                                             count: Self.columns), alignment: .leading, spacing: 12) {
+                        ForEach(CaptionPreset.allCases.filter { $0.group == group }) { preset in
+                            CaptionStyleCard(preset: preset, selected: generation.preset == preset) {
+                                generation.preset = preset
+                            }
                         }
                     }
                 }
-                if generation.layout == .highlight {
+                if generation.preset.usesAccent {
                     ColorRow(title: "Cor do destaque",
                              color: Binding(get: { generation.highlightColor.color },
                                             set: { generation.highlightColor = RGBA($0) }))
@@ -314,32 +323,26 @@ struct ProgressBar: View {
     }
 }
 
-/// Cartão de um visual de legenda, com a prévia animada sobre um quadro do vídeo.
-/// A prévia é feita pelo mesmo render da exportação, com o estilo padrão do layout.
+/// Cartão de uma predefinição de legenda, com a prévia animada sobre um quadro do vídeo.
+/// A prévia é feita pelo mesmo render da exportação, com o estilo padrão da predefinição.
 private struct CaptionStyleCard: View {
     @Environment(EditorModel.self) private var model
-    let layout: CaptionLayout
+    let preset: CaptionPreset
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
 
-    private static let details: [CaptionLayout: String] = [
-        .phrases: "Até duas linhas embaixo, como no cinema.",
-        .highlight: "Uma linha; a palavra falada acende.",
-        .punch: "Poucas palavras grandes no centro.",
-    ]
-
     var body: some View {
         let color = model.captionGeneration.highlightColor
-        let key = CaptionPreviewFrames.Key(layout: layout, color: layout == .highlight ? color : nil)
+        let key = CaptionPreviewFrames.Key(preset: preset, color: preset.usesAccent ? color : nil)
         let store = model.animationStrips
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 ZStack {
                     CardBackdrop()
                     FrameStripView(frames: store.strip(key), rest: CaptionPreviewFrames.restIndex,
                                    playing: hovering || selected, cycle: CaptionPreviewFrames.cycle) {
-                        CaptionSample(layout: layout, highlight: color.color)
+                        CaptionSample(layout: preset.layout, highlight: color.color)
                     }
                 }
                 .aspectRatio(16 / 9, contentMode: .fit)
@@ -347,14 +350,16 @@ private struct CaptionStyleCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(selected ? Theme.accent : (hovering ? Color.white.opacity(0.22) : Theme.hairline),
                                   lineWidth: selected ? 1.5 : 1))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(layout.displayName)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(preset.displayName)
                         .font(Theme.font(12, .medium))
                         .foregroundStyle(selected ? Theme.accent : Theme.textPrimary)
-                    Text(Self.details[layout] ?? "")
-                        .font(Theme.font(11))
+                        .lineLimit(1)
+                    Text(preset.detail)
+                        .font(Theme.font(10.5))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(2, reservesSpace: true)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 2)
             }
@@ -363,6 +368,7 @@ private struct CaptionStyleCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .frame(maxWidth: .infinity)
+        .help(preset.detail)
         .task(id: key) {
             store.request(key, urgent: true) { CaptionPreviewFrames.frames(key) }
         }
@@ -535,12 +541,12 @@ extension Int64 {
     var megabytes: String { "\(Int((Double(self) / 1_000_000).rounded())) MB" }
 }
 
-/// Quadros da prévia de cada layout: uma frase falsa com tempo por palavra, montada pelo
+/// Quadros da prévia de cada predefinição: uma frase falsa com tempo por palavra, montada pelo
 /// `CaptionBuilder` e desenhada pelo `FrameRenderer` num canvas transparente 16:9.
 enum CaptionPreviewFrames {
     struct Key: Hashable {
-        let layout: CaptionLayout
-        /// Cor do destaque (só no layout Destaque).
+        let preset: CaptionPreset
+        /// Cor do destaque (só nas predefinições que a usam).
         let color: RGBA?
     }
 
@@ -568,13 +574,8 @@ enum CaptionPreviewFrames {
     static func frames(_ key: Key) -> [CGImage] {
         var project = Project()
         project.canvas.background = .color(RGBA(0, 0, 0, 0))
-        let cues = CaptionBuilder.cues(from: words(), layout: key.layout)
-        CaptionBuilder.apply(cues, layout: key.layout, style: nil, to: &project, replacing: false)
-        if let color = key.color {
-            for t in project.tracks.indices {
-                for i in project.tracks[t].segments.indices { project.tracks[t].segments[i].text?.highlight?.color = color }
-            }
-        }
+        let cues = CaptionBuilder.cues(from: words(), preset: key.preset)
+        CaptionBuilder.apply(cues, preset: key.preset, accent: key.color, to: &project, replacing: false)
         let plan = RenderPlan(project: project, renderSize: pixelSize)
         let rect = CGRect(origin: .zero, size: pixelSize)
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
