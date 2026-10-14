@@ -56,6 +56,26 @@ Diferenças em relação ao Swift:
   no Swift (erro médio de 0,2 a 8 níveis por canal; ver `FilterModels.h`).
 - HDR (HLG/PQ) ainda não é convertido para SDR.
 
+## Etapa 4: áudio e reprodução
+
+| Cabeçalho | O que tem |
+|---|---|
+| `Player.h` | `Player` (QObject, thread principal): `setProject(p)` a cada edição, `setPreviewShortSide(720)`, `play()`, `pause()`, `seek(t)`, `time()`, `duration()`, `isPlaying()`, `setAudioEnabled(bool)`; sinais `frameReady(QImage)`, `timeChanged(Micros)` (~30 Hz tocando, e em `seek`/`pause`), `playingChanged(bool)`, `finished()` |
+| `AudioMix.h` | `AudioMix::clips(project)` (o que soa, com as regras do Swift), `AudioMix::gain`, `AudioMixer` (48 kHz estéreo float, `seek`/`read`); base do Player e da exportação |
+
+Para o app:
+- `setProject` pode ser chamado a cada mudança: pausado, redesenha o quadro;
+  o som só é refeito quando trechos, volume, fades ou velocidade mudam.
+- `seek` é perseguido: no scrub, pode chamar à vontade; só o mais recente é
+  desenhado depois do quadro em andamento.
+- Tocando, a resolução cai sozinha (até 1/3 de `previewShortSide`) se o render
+  não acompanhar; pausado, o quadro sai na resolução cheia.
+- Ao chegar ao fim: `playingChanged(false)`, `timeChanged(duração)`, último
+  quadro e `finished()`. `play()` no fim recomeça do zero.
+- O som sai pelo `QAudioSink` (Qt Multimedia) numa thread própria. Sem
+  dispositivo de som, toca mudo. Só usa `QAudioSink`/`QMediaDevices`: o
+  plugin de mídia FFmpeg do Qt não é necessário.
+
 Convenções:
 - Enums são `enum class` em PascalCase (`AspectRatio::R9x16`, `TrackKind::Text`).
 - O `throws` do Swift virou `std::optional`/`bool` com `QString *error` opcional.

@@ -22,9 +22,15 @@ add_library(openframe_core STATIC
     Motion.h Motion.cpp
     TextRenderer.h TextRenderer.cpp
     Renderer.h Renderer.cpp
+    AudioMix.h AudioMix.cpp
+    Player.h Player.cpp
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)
+
+# Saída de som do Player (QAudioSink).
+find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+target_link_libraries(openframe_core PRIVATE Qt6::Multimedia)
 
 include(FFmpeg)
 target_link_libraries(openframe_core PRIVATE FFmpeg::FFmpeg)
