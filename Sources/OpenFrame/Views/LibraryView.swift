@@ -439,6 +439,11 @@ private struct CaptionsPanel: View {
             .sorted { $0.targetStart < $1.targetStart }
         VStack(alignment: .leading, spacing: 12) {
             PanelHeader(title: "Legendas", detail: cues.isEmpty ? nil : "\(cues.count)")
+            Button { model.presentAutoCaptions() } label: {
+                Label("Legendas automáticas", systemImage: "waveform.and.mic").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PillButtonStyle(kind: .primary))
+            .help("Transcrever o áudio e criar as legendas")
             HStack(spacing: 8) {
                 Button { model.importSubtitles() } label: {
                     Label("Importar SRT", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity)
@@ -449,8 +454,15 @@ private struct CaptionsPanel: View {
                 .disabled(cues.isEmpty)
             }
             .buttonStyle(PillButtonStyle(compact: true))
+            if model.hasAutoCaptions, model.selectedSegment?.text != nil {
+                Button { model.applyStyleToAutoCaptions() } label: {
+                    Label("Aplicar este estilo a todas", systemImage: "paintbrush").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillButtonStyle(compact: true))
+                .help("Copia o estilo do texto selecionado para todas as legendas automáticas")
+            }
             if cues.isEmpty {
-                Text("Nenhum texto na timeline. Importe um arquivo SRT ou adicione textos pelo painel Texto.")
+                Text("Nenhum texto na timeline. Gere legendas a partir do áudio, importe um arquivo SRT ou adicione textos pelo painel Texto.")
                     .font(Theme.font(11))
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.top, 4)
@@ -470,35 +482,103 @@ private struct CaptionsPanel: View {
     }
 }
 
+/// Uma legenda da lista: clique seleciona e leva o cursor até ela; duplo clique
+/// (ou o lápis) edita o texto ali mesmo; a lixeira apaga.
 private struct CueRow: View {
     @Environment(EditorModel.self) private var model
     let segment: Segment
     @State private var hovering = false
+    @State private var draft = ""
+    /// A edição desta linha ainda não foi gravada (vale mesmo se outra linha passar a ser editada).
+    @State private var pending = false
+    @FocusState private var focused: Bool
+
+    private var editing: Bool { model.editingCaption == segment.id }
 
     var body: some View {
         let selected = model.selection == segment.id
-        Button {
-            model.selection = segment.id
-            model.inspectorTab = .text
-            model.seek(to: segment.targetStart)
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(Time.format(segment.targetStart))
-                    .font(Theme.mono(10))
-                    .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
+        let row = HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(Time.format(segment.targetStart))
+                .font(Theme.mono(10))
+                .foregroundStyle(selected || editing ? Theme.accent : Theme.textTertiary)
+            if editing {
+                TextField("", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1...4)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand {
+                        pending = false
+                        model.editingCaption = nil
+                    }
+                    .onChange(of: focused) { if !focused { commit() } }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
                 Text(segment.text?.text.replacingOccurrences(of: "\n", with: " ") ?? "")
                     .font(Theme.font(12))
                     .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(selected || hovering ? Theme.raised : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
+            if hovering, !editing {
+                HStack(spacing: 8) {
+                    Button(action: beginEditing) { Image(systemName: "pencil") }
+                        .help("Editar o texto")
+                    Button { model.deleteSegment(segment.id) } label: { Image(systemName: "trash") }
+                        .help("Apagar a legenda")
+                }
+                .font(Theme.font(11))
+                .buttonStyle(GlyphButtonStyle())
+                .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] }
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(selected || hovering || editing ? Theme.raised : .clear,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .strokeBorder(editing ? Theme.accent.opacity(0.6) : .clear))
+        .contentShape(Rectangle())
+
+        Group {
+            if editing {
+                row
+            } else {
+                // O clique simples age na hora; o duplo vem por cima e abre a edição.
+                row.onTapGesture(perform: select)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded(beginEditing))
+            }
+        }
         .onHover { hovering = $0 }
+        .onAppear { if editing { startEditing() } }
+        .onChange(of: editing) { if editing { startEditing() } else { commit() } }
+    }
+
+    private func select() {
+        model.selection = segment.id
+        model.inspectorTab = .text
+        model.seek(to: segment.targetStart)
+    }
+
+    private func beginEditing() {
+        model.editingCaption = segment.id
+    }
+
+    private func startEditing() {
+        draft = segment.text?.text ?? ""
+        pending = true
+        Task { @MainActor in focused = true }
+    }
+
+    private func commit() {
+        guard pending else { return }
+        pending = false
+        if editing { model.editingCaption = nil }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text != segment.text?.text else { return }
+        model.setText(segment.id, text)
     }
 }
 

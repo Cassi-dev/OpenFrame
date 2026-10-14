@@ -77,6 +77,7 @@ struct OpenFrameApp: App {
                     Divider()
                     Button("Adicionar texto") { model.addText() }
                         .keyboardShortcut("t")
+                    Button("Legendas automáticas…") { model.presentAutoCaptions() }
                 }
                 .disabled(!inEditor)
             }

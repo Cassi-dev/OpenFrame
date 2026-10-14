@@ -34,6 +34,11 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "legendas" {
+                await captionsScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -663,6 +668,135 @@ enum DebugSnapshot {
                 await wait(0.5)
             }
         }
+    }
+
+    /// Legendas automáticas (rodar com `OPENFRAME_FAKE_TRANSCRIPTION=1` e `OPENFRAME_MODELS_DIR` numa pasta
+    /// temporária; `OPENFRAME_SNAPSHOT_SPEECH` = áudio de fala, como o do `say`, posto na timeline antes).
+    /// A janela em cada estado, a geração de verdade com as palavras falsas, os três layouts no preview com
+    /// o destaque no meio de uma frase, o inspetor "Destaque da palavra" e a edição no painel.
+    private static func captionsScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let env = ProcessInfo.processInfo.environment
+        let generation = model.captionGeneration
+        model.libraryPanel = .captions
+        model.libraryVisible = true
+
+        if let speech = env["OPENFRAME_SNAPSHOT_SPEECH"] {
+            let url = URL(fileURLWithPath: speech)
+            model.importMedia([url])
+            for _ in 0..<50 where !model.project.materials.contains(where: { $0.path == url.path }) { await wait(0.1) }
+            if let m = model.project.materials.first(where: { $0.path == url.path }) { model.addToTimeline(m) }
+            log("fala na timeline: \(url.lastPathComponent), duração \(Time.format(model.project.duration))")
+        }
+        await wait(1)
+        capture("legendas-0-painel", to: dir)
+
+        // Janela sem modelo instalado.
+        model.presentAutoCaptions()
+        await wait(1.5)
+        capture("legendas-1-opcoes-sem-modelo", to: dir)
+        generation.layout = .highlight
+        generation.downloads[.turbo] = 0.37
+        await wait(1.5)
+        capture("legendas-2-destaque-baixando-modelo", to: dir)
+        generation.downloads = [:]
+        generation.layout = .punch
+        await wait(1.5)
+        capture("legendas-3-impacto", to: dir)
+        generation.includesDownload = true
+        generation.setPhase(.downloading(received: 182_000_000, total: WhisperModel.small.byteSize))
+        await wait(0.6)
+        capture("legendas-4-gerando-baixando", to: dir)
+        generation.setPhase(.failed(TranscriptionError.engineUnavailable.localizedDescription))
+        await wait(0.6)
+        capture("legendas-5-erro", to: dir)
+        generation.setPhase(.configuring)
+
+        // Um "modelo" do tamanho certo na pasta temporária conta como instalado (a transcrição é falsa).
+        if env["OPENFRAME_MODELS_DIR"] != nil, env["OPENFRAME_FAKE_TRANSCRIPTION"] == "1" {
+            let url = generation.store.url(for: .base)
+            try? FileManager.default.createDirectory(at: generation.store.directory, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let h = try? FileHandle(forWritingTo: url) {
+                try? h.truncate(atOffset: UInt64(WhisperModel.base.byteSize))
+                try? h.close()
+            }
+            generation.refreshInstalled()
+        }
+        generation.model = .base
+        generation.layout = .phrases
+        await wait(0.6)
+        capture("legendas-6-opcoes-modelo-instalado", to: dir)
+
+        // Geração de verdade (palavras falsas), com captura durante a transcrição.
+        var shotProgress = false
+        for (index, layout) in CaptionLayout.allCases.enumerated() {
+            if !model.showAutoCaptions { model.presentAutoCaptions() }
+            generation.layout = layout
+            generation.replacePrevious = true
+            await wait(0.5)
+            model.generateCaptions()
+            for _ in 0..<300 where generation.phase.isRunning {
+                if !shotProgress, case .transcribing(let overall) = generation.phase, overall > 0.3 {
+                    capture("legendas-7-gerando-transcrevendo", to: dir)
+                    shotProgress = true
+                }
+                await wait(0.02)
+            }
+            log("\(layout.rawValue): \(generation.phase)")
+            if index == 0 {
+                await wait(0.4)
+                capture("legendas-8-pronto", to: dir)
+            }
+            model.showAutoCaptions = false
+            generation.setPhase(.configuring)
+            await wait(0.8)
+
+            guard let track = model.project.tracks.first(where: { $0.isAutoCaptions }) else { continue }
+            log("\(layout.rawValue): \(model.project.tracks.filter(\.isAutoCaptions).count) faixa(s) automática(s), "
+                + "\(track.segments.count) legendas; desfazer disponível: \(model.canUndo)")
+            // Meio de uma frase: a palavra do meio da 3ª legenda (ou da última).
+            let seg = track.segments[min(2, track.segments.count - 1)]
+            if let words = seg.text?.words, !words.isEmpty {
+                let w = words[words.count / 2]
+                model.seek(to: seg.targetStart + (w.start + w.end) / 2)
+            }
+            model.selection = nil
+            await wait(1.2)
+            await captureComposite("legendas-9-preview-\(layout.rawValue)", model: model, to: dir)
+            if index == 0 {
+                capture("legendas-10-painel-automaticas", to: dir)
+                model.editingCaption = seg.id
+                await wait(0.8)
+                capture("legendas-11-painel-editando", to: dir)
+                model.editingCaption = nil
+            }
+            if layout == .highlight {
+                model.selection = seg.id
+                model.inspectorTab = .text
+                await wait(1)
+                await captureInspectorScrolled("legendas-12-inspetor-destaque", fractions: [0.35, 0.5], to: dir)
+                // Texto editado com outra contagem de palavras: o destaque é ignorado e o inspetor avisa.
+                model.setText(seg.id, (seg.text?.text ?? "") + " extra")
+                await wait(0.8)
+                await captureInspectorScrolled("legendas-13-inspetor-destaque-desligado", fractions: [0.35], to: dir)
+                model.undo()
+                // Aplicar estilo a todas: muda a cor da selecionada e copia.
+                model.mutate { TimelineEditor.update(&$0, segment: seg.id) { $0.text?.style.color = RGBA(0.4, 1, 0.9) } }
+                model.applyStyleToAutoCaptions()
+                let colors = Set(model.project.tracks.filter(\.isAutoCaptions).flatMap(\.segments).compactMap { $0.text?.style.color })
+                log("aplicar estilo a todas: \(colors.count) cor(es) nas legendas automáticas")
+                await wait(1)
+                capture("legendas-14-aplicar-estilo", to: dir)
+                model.undo()
+                model.undo()
+            }
+        }
+        // Um desfazer tira a geração inteira.
+        let before = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments.count ?? 0
+        model.undo()
+        let after = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments.count ?? 0
+        log("desfazer a última geração: \(before) → \(after) legendas automáticas")
     }
 
     private static func logZoom(_ step: String, _ model: EditorModel) {
