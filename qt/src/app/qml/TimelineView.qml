@@ -227,10 +227,6 @@ Item {
                     z: 6
                 }
 
-                Playhead {
-                    z: 8
-                    height: content.height + 8
-                }
                 ClipActionBar {
                     z: 9
                     viewportWidth: viewport.width
@@ -272,6 +268,19 @@ Item {
                 position: Editor.timelineScrollX / Math.max(Editor.timelineContentWidth, 1)
                 active: hovered || pressed
                 onPositionChanged: if (pressed) Editor.timelineScrollX = position * Editor.timelineContentWidth
+            }
+        }
+        // Playhead numa camada própria, que começa meia cabeça antes da área das
+        // faixas: em 0 s a cabeça aparece inteira em vez de cortada.
+        Item {
+            x: timeline.headerWidth - 30
+            width: viewport.width + 30
+            height: body.height
+            clip: true
+            Playhead {
+                originX: 30 - Editor.timelineScrollX
+                y: content.y
+                height: content.height + 8
             }
         }
         OfScrollBar {

@@ -161,6 +161,10 @@ EditorModel::EditorModel(QObject *parent)
     m_autosave.setInterval(800);
     connect(&m_autosave, &QTimer::timeout, this, &EditorModel::saveNow);
 
+    // O resumo da exportação depende das opções e do projeto (duração, proporção).
+    connect(this, &EditorModel::exportSettingsChanged, this, &EditorModel::exportSummaryChanged);
+    connect(this, &EditorModel::projectChanged, this, &EditorModel::exportSummaryChanged);
+
     m_slideTimer.setSingleShot(true);
     m_slideTimer.setInterval(200);
     connect(&m_slideTimer, &QTimer::timeout, this, [this] {

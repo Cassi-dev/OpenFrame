@@ -7,7 +7,10 @@ Item {
     readonly property real headWidth: 60
     readonly property real glow: 6
 
-    x: Editor.playhead * Editor.zoom - headWidth / 2
+    /// Posição do tempo 0 no item pai.
+    property real originX: 0
+
+    x: originX + Editor.playhead * Editor.zoom - headWidth / 2
     width: headWidth
 
     // Linha com um brilho suave.

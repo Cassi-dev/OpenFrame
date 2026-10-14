@@ -96,10 +96,22 @@ QQuickWindow *Snapshot::window() const
     return nullptr;
 }
 
+/// Procura pela árvore visual: itens criados por Loader/Repeater nem sempre são
+/// filhos (QObject) do item em que aparecem.
+static QQuickItem *findVisualChild(QQuickItem *item, const QString &objectName)
+{
+    if (item->objectName() == objectName)
+        return item;
+    for (QQuickItem *child : item->childItems())
+        if (QQuickItem *found = findVisualChild(child, objectName))
+            return found;
+    return nullptr;
+}
+
 QQuickItem *Snapshot::findItem(const QString &objectName) const
 {
     QQuickWindow *w = window();
-    return w ? w->contentItem()->findChild<QQuickItem *>(objectName) : nullptr;
+    return w ? findVisualChild(w->contentItem(), objectName) : nullptr;
 }
 
 void Snapshot::log(const QString &message) const

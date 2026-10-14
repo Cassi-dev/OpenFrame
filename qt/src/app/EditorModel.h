@@ -115,7 +115,7 @@ class EditorModel : public QObject
 
     // Exportação
     Q_PROPERTY(QVariantMap exportSettings READ exportSettings NOTIFY exportSettingsChanged)
-    Q_PROPERTY(QVariantMap exportSummary READ exportSummary NOTIFY exportSettingsChanged)
+    Q_PROPERTY(QVariantMap exportSummary READ exportSummary NOTIFY exportSummaryChanged)
     Q_PROPERTY(QString exportPhase READ exportPhase NOTIFY exportStateChanged)
     Q_PROPERTY(qreal exportProgress READ exportProgress NOTIFY exportStateChanged)
     Q_PROPERTY(QString exportRemaining READ exportRemaining NOTIFY exportStateChanged)
@@ -337,6 +337,7 @@ signals:
     void dragChanged();
     void slideAnimationChanged();
     void exportSettingsChanged();
+    void exportSummaryChanged();
     void exportStateChanged();
     void dialogRequested(const QString &kind);
 

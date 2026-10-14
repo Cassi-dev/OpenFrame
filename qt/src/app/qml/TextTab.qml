@@ -25,6 +25,8 @@ Column {
             T.TextArea {
                 id: editor
                 width: textScroll.width
+                // O template não tem tamanho implícito: sem isto a altura fica 0 e a linha sai cortada.
+                implicitHeight: contentHeight + topPadding + bottomPadding
                 text: Fmt.at(tab.seg, "text.text", "")
                 color: Theme.textPrimary
                 selectionColor: Theme.alpha(Theme.accent, 0.45)
