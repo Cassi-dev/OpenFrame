@@ -101,7 +101,9 @@ final class EditorModel {
     private(set) var dragPreview: DragPreview?
     /// Material da biblioteca sendo arrastado, para prever onde ele cai.
     var draggingMaterial: UUID?
-    var exportSettings = ExportSettings()
+    var exportSettings = ExportSettings() {
+        didSet { if exportSettings.outputSize(for: project) != oldValue.outputSize(for: project) { updatePreviewResolution() } }
+    }
     var showExport = false
     var errorMessage: String?
     /// Tela inicial (projetos) ou editor.
@@ -133,6 +135,11 @@ final class EditorModel {
     @ObservationIgnored private var structureKey: CompositionBuilder.StructureKey?
     @ObservationIgnored private var planBox: PlanBox?
     @ObservationIgnored private var previewRenderSize: CGSize = .zero
+    /// Lado menor do preview em pixels: segue o player na tela (ver `PreviewResolution`).
+    @ObservationIgnored private(set) var previewShortSide = 720
+    /// Último tamanho do player informado pela view: pontos e escala da tela.
+    @ObservationIgnored private var previewViewport: (points: CGSize, scale: CGFloat)?
+    @ObservationIgnored private var previewResolutionTask: Task<Void, Never>?
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
     @ObservationIgnored private var isSeeking = false
     @ObservationIgnored private var pendingSeek: CMTime?
@@ -322,7 +329,40 @@ final class EditorModel {
 
     // MARK: - Preview
 
-    private var previewSize: CGSize { project.canvasSize(shortSide: 720) }
+    private var previewSize: CGSize { project.canvasSize(shortSide: previewShortSide) }
+
+    /// A view do player mudou de tamanho ou de tela. O primeiro tamanho vale na hora;
+    /// os seguintes, ~300 ms depois que o tamanho parar (redimensionar a janela ou a timeline).
+    func previewViewportChanged(points: CGSize, scale: CGFloat) {
+        guard points.width > 1, points.height > 1 else { return }
+        let first = previewViewport == nil
+        previewViewport = (points, scale)
+        previewResolutionTask?.cancel()
+        if first {
+            updatePreviewResolution()
+            return
+        }
+        previewResolutionTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.updatePreviewResolution()
+        }
+    }
+
+    /// Recalcula o degrau; só refaz o preview se ele mudou.
+    private func updatePreviewResolution() {
+        guard let viewport = previewViewport else { return }
+        let export = exportSettings.outputSize(for: project)
+        setPreviewShortSide(PreviewResolution.shortSide(points: viewport.points, scale: viewport.scale,
+                                                        exportShortSide: Int(min(export.width, export.height))))
+    }
+
+    /// Troca o lado menor do preview (o DebugSnapshot também usa, para medir cada degrau).
+    func setPreviewShortSide(_ side: Int) {
+        guard side != previewShortSide else { return }
+        previewShortSide = side
+        projectDidChange()
+    }
 
     private func projectDidChange() {
         let key = CompositionBuilder.structureKey(project)

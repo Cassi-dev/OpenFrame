@@ -24,6 +24,11 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "resolucao" {
+                await resolutionScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "motion" {
                 await motionScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -367,6 +372,153 @@ enum DebugSnapshot {
             log("motion: depois: \(Time.format(model.playhead)) tocando=\(model.isPlaying) (antes \(Time.format(before)))")
             model.undo()
         }
+    }
+
+    /// Resolução do preview: degrau escolhido para o player na tela, quadro de 720 contra o
+    /// novo (recorte ampliado do texto) e quadros entregues por segundo em cada degrau, com
+    /// vídeo e texto animado (Cascata + Reflexo de luz).
+    private static func resolutionScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let auto = model.previewShortSide
+        if let view = playerView() {
+            log("resolução: player \(Int(view.bounds.width))×\(Int(view.bounds.height)) pt, escala "
+                + "\(view.window?.backingScaleFactor ?? 0), contentsScale \(view.layer?.sublayers?.first?.contentsScale ?? 0), "
+                + "degrau automático \(auto), exportação \(model.exportSettings.resolution.label)")
+        }
+        let texts = model.project.tracks.filter { $0.kind == .text }.flatMap(\.segments)
+        guard let text = texts.last else { return }
+        model.mutate {
+            TimelineEditor.update(&$0, segment: text.id) {
+                $0.animationIn = SegmentAnimation(kind: .cascade, duration: 1_000_000)
+                $0.animationLoop = LoopAnimation(kind: .shine, intensity: 1)
+            }
+        }
+        let rest = (text.targetStart + text.targetEnd) / 2
+        let box = CanvasLayout.boxes(in: model.project, at: rest).first { $0.id == text.id }
+
+        // Quadros de 720, do degrau automático e de 2160, e o recorte ampliado do texto.
+        var frames: [(Int, CGImage)] = []
+        for side in Array(Set([720, auto, 2160])).sorted() {
+            model.setPreviewShortSide(side)
+            await waitForPresentation(model, side: side)
+            model.seek(to: rest)
+            guard let frame = await playerFrame(model) else { continue }
+            frames.append((side, frame))
+            try? NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:])?
+                .write(to: dir.appendingPathComponent("0-preview-frame-\(side).png"))
+            log("resolução: quadro \(side) → \(frame.width)×\(frame.height)")
+        }
+        if let box {
+            let b = CanvasLayout.bounds(of: box, aspect: model.project.aspectValue)
+            // Primeiro terço da caixa do texto, para ver as bordas das letras.
+            let region = CGRect(x: b.minX, y: b.minY, width: b.width / 3, height: b.height)
+            saveCrops(frames, region: region, height: 420, to: dir.appendingPathComponent("0-preview-texto-comparacao.png"))
+        }
+
+        // Desempenho: reprodução de 3 s a partir de 0,3 s antes do texto, em cada degrau.
+        for side in [720, 1080, 1440, 2160] {
+            model.setPreviewShortSide(side)
+            await waitForPresentation(model, side: side)
+            model.seek(to: text.targetStart - 300_000)
+            await wait(0.8)
+            let (fps, advance) = await measurePlayback(model, seconds: 3)
+            log(String(format: "resolução: degrau %d → %.1f quadros/s entregues, playhead andou %.2f s em 3 s", side, fps, advance))
+        }
+        model.setPreviewShortSide(auto)
+        model.undo()
+
+        // Debounce: encolher a janela em 6 passos rápidos; o degrau só muda ~300 ms depois.
+        guard let window = playerView()?.window else { return }
+        let original = window.frame
+        for i in 1...6 {
+            var f = original
+            f.size.width = original.width * (1 - 0.07 * Double(i))
+            f.size.height = original.height * (1 - 0.07 * Double(i))
+            window.setFrame(f, display: true)
+            await wait(0.05)
+        }
+        let size = playerView()?.bounds.size ?? .zero
+        log("resolução: janela encolhida, player \(Int(size.width))×\(Int(size.height)) pt; degrau logo depois: \(model.previewShortSide)")
+        await wait(0.6)
+        log("resolução: 0,6 s depois: \(model.previewShortSide)")
+        window.setFrame(original, display: true)
+        await wait(0.6)
+        log("resolução: janela restaurada, 0,6 s depois: \(model.previewShortSide)")
+        for (pts, scale, export) in [(CGSize(width: 939, height: 528), 2.0, 2160), (CGSize(width: 939, height: 528), 2.0, 1080),
+                                     (CGSize(width: 400, height: 225), 2.0, 2160), (CGSize(width: 1600, height: 900), 2.0, 4320),
+                                     (CGSize(width: 939, height: 528), 1.0, 2160), (CGSize(width: 939, height: 528), 2.0, 480)] {
+            log("resolução: \(Int(pts.width))×\(Int(pts.height)) pt ×\(scale), exportação \(export) → "
+                + "\(PreviewResolution.shortSide(points: pts, scale: scale, exportShortSide: export))")
+        }
+    }
+
+    /// Espera o player mostrar o item novo no tamanho pedido.
+    private static func waitForPresentation(_ model: EditorModel, side: Int) async {
+        for _ in 0..<80 {
+            if let size = model.player.currentItem?.presentationSize, Int(min(size.width, size.height)) == side,
+               model.player.currentItem?.status == .readyToPlay {
+                try? await Task.sleep(for: .seconds(0.5))
+                return
+            }
+            try? await Task.sleep(for: .seconds(0.1))
+        }
+        log("resolução: o player não chegou a \(side)")
+    }
+
+    /// Conta os quadros novos que o compositor entrega durante a reprodução.
+    private static func measurePlayback(_ model: EditorModel, seconds: Double) async -> (fps: Double, advance: Double) {
+        guard let item = model.player.currentItem else { return (0, 0) }
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
+        item.add(output)
+        defer { item.remove(output) }
+        try? await Task.sleep(for: .seconds(0.3))
+        let start = model.player.currentTime().seconds
+        model.togglePlay()
+        let count = await Task.detached(priority: .userInitiated) { () -> Int in
+            var frames = 0
+            let end = CACurrentMediaTime() + seconds
+            while CACurrentMediaTime() < end {
+                let t = output.itemTime(forHostTime: CACurrentMediaTime())
+                if output.hasNewPixelBuffer(forItemTime: t),
+                   output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) != nil {
+                    frames += 1
+                }
+                usleep(2000)
+            }
+            return frames
+        }.value
+        let advance = model.player.currentTime().seconds - start
+        if model.isPlaying { model.togglePlay() }
+        return (Double(count) / seconds, advance)
+    }
+
+    /// Recortes da mesma região (normalizada, y para cima) de cada quadro, ampliados sem
+    /// suavização até a mesma altura, lado a lado (do menor para o maior).
+    private static func saveCrops(_ frames: [(Int, CGImage)], region: CGRect, height: Int, to url: URL) {
+        let crops: [CGImage] = frames.compactMap { _, image in
+            let w = CGFloat(image.width), h = CGFloat(image.height)
+            let rect = CGRect(x: (region.minX + 1) / 2 * w, y: (1 - region.maxY) / 2 * h,
+                              width: region.width / 2 * w, height: region.height / 2 * h).integral
+            return image.cropping(to: rect)
+        }
+        guard !crops.isEmpty else { return }
+        let widths = crops.map { Int(Double($0.width) * Double(height) / Double($0.height)) }
+        let gap = 16
+        guard let ctx = CGContext(data: nil, width: widths.reduce(0, +) + gap * (crops.count - 1), height: height,
+                                  bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.interpolationQuality = .none
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: ctx.width, height: ctx.height))
+        var x = 0
+        for (crop, w) in zip(crops, widths) {
+            ctx.draw(crop, in: CGRect(x: x, y: 0, width: w, height: height))
+            x += w + gap
+        }
+        if let image = ctx.makeImage() {
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+        }
+        log("resolução: recortes \(frames.map { String($0.0) }.joined(separator: " | ")) → \(url.lastPathComponent)")
     }
 
     private static func captureAnimationTab(_ model: EditorModel, segment original: Segment, name: String, to dir: URL) async {
