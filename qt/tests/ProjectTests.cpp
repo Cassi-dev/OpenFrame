@@ -234,6 +234,40 @@ private slots:
     }
 
     // Animações novas do app do Mac: tipo desconhecido vira esmaecer e o loop é ignorado
+    // Legendas automáticas do Mac: `words`/`highlight` no texto e `isAutoCaptions` na faixa são
+    // ignorados na leitura e se perdem ao regravar (o porte das legendas para o Qt vem depois).
+    void captionFieldsAreTolerated()
+    {
+        Project p;
+        TE::addText(text(QStringLiteral("um dois")), p, 0);
+        QJsonObject o = ProjectStore::toJson(p);
+        QJsonArray tracks = o["tracks"].toArray();
+        QJsonObject track = tracks[1].toObject();
+        track["isAutoCaptions"] = true;
+        QJsonArray segments = track["segments"].toArray();
+        QJsonObject seg = segments[0].toObject();
+        QJsonObject content = seg["text"].toObject();
+        content["words"] = QJsonArray{QJsonObject{{"text", "um"}, {"start", 0}, {"end", 300000}},
+                                      QJsonObject{{"text", "dois"}, {"start", 350000}, {"end", 700000}}};
+        content["highlight"] = QJsonObject{{"color", QJsonObject{{"r", 1}, {"g", 0.85}, {"b", 0.1}, {"a", 1}}},
+                                           {"scale", 1.12}, {"backgroundEnabled", true}, {"mode", "progressive"}};
+        seg["text"] = content;
+        segments[0] = seg;
+        track["segments"] = segments;
+        tracks[1] = track;
+        o["tracks"] = tracks;
+
+        QString error;
+        const auto back = ProjectStore::fromJson(o, &error);
+        QVERIFY2(back, qPrintable(error));
+        QCOMPARE(back->tracks[1].segments[0].text->text, QStringLiteral("um dois"));
+        const QJsonObject again = ProjectStore::toJson(*back)["tracks"][1].toObject();
+        QVERIFY(!again.contains(QStringLiteral("isAutoCaptions")));
+        const QJsonObject againText = again["segments"][0]["text"].toObject();
+        QVERIFY(!againText.contains(QStringLiteral("words")));
+        QVERIFY(!againText.contains(QStringLiteral("highlight")));
+    }
+
     void unknownAnimationsAreTolerated()
     {
         Project p;
