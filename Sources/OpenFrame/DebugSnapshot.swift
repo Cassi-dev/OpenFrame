@@ -23,6 +23,11 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "motion" {
+                await motionScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -218,6 +223,25 @@ enum DebugSnapshot {
         model.refreshLibrary()
         await wait(1)
         capture("inicio-3-de-volta", to: dir)
+    }
+
+    /// Texto motion: aba Animação do texto e do clipe.
+    private static func motionScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let p = model.project
+        if let text = p.tracks.first(where: { $0.kind == .text })?.segments.first {
+            await captureAnimationTab(model, segment: text, name: "motion-2-animacao-texto", to: dir)
+        }
+        if let main = p.mainTrackIndex, let first = p.tracks[main].segments.first {
+            await captureAnimationTab(model, segment: first, name: "motion-3-animacao-clipe", to: dir)
+        }
+    }
+
+    private static func captureAnimationTab(_ model: EditorModel, segment: Segment, name: String, to dir: URL) async {
+        model.selection = segment.id
+        model.inspectorTab = .animation
+        try? await Task.sleep(for: .seconds(1.5))
+        await captureInspectorScrolled(name, fractions: [0, 1], region: true, to: dir)
     }
 
     private static func dragScenario(_ model: EditorModel, dir: URL) async {

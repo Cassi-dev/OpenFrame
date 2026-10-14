@@ -76,6 +76,8 @@ final class EditorModel {
         didSet { if selection != oldValue { ensureValidTab() } }
     }
     var inspectorTab = InspectorTab.basic
+    /// Pedido para pôr o foco no campo do texto (duplo clique num texto no preview).
+    var focusTextEditor = false
     var libraryPanel = LibraryPanel.media
     var libraryVisible = true
     /// Grade dos terços sobre o preview.
@@ -128,6 +130,8 @@ final class EditorModel {
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
     @ObservationIgnored private var isSeeking = false
     @ObservationIgnored private var pendingSeek: CMTime?
+    /// Trecho tocado uma vez ao escolher um efeito: onde parar e para onde voltar.
+    @ObservationIgnored private var excerpt: (end: Micros, resume: Micros)?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private(set) weak var timelineScrollView: NSScrollView?
@@ -292,6 +296,14 @@ final class EditorModel {
         return tabs
     }
 
+    /// Seleciona o texto e abre a aba Texto com o foco no campo.
+    func editText(_ id: UUID) {
+        guard project.segment(id)?.text != nil else { return }
+        selection = id
+        inspectorTab = .text
+        focusTextEditor = true
+    }
+
     func isOnMainTrack(_ id: UUID) -> Bool {
         guard let loc = project.locate(id) else { return false }
         return project.tracks[loc.track].isMain
@@ -358,13 +370,35 @@ final class EditorModel {
     private func playerTimeChanged(_ time: CMTime) {
         guard isPlaying else { return }
         playhead = min(time.micros, duration)
+        if let excerpt, playhead >= excerpt.end || player.rate == 0 {
+            player.pause()
+            isPlaying = false
+            self.excerpt = nil
+            seek(to: excerpt.resume)
+            return
+        }
         revealPlayhead()
         if player.rate == 0 || playhead >= duration {
             isPlaying = false
         }
     }
 
+    /// Toca o trecho uma vez e volta ao ponto em que o playhead estava
+    /// (prévia de um efeito recém-escolhido).
+    func playExcerpt(_ range: Range<Micros>) {
+        let resume = excerpt?.resume ?? playhead
+        if isPlaying { player.pause() }
+        let start = min(max(0, range.lowerBound), duration)
+        let end = min(range.upperBound, duration)
+        guard end > start else { return }
+        excerpt = (end, resume)
+        seek(to: start)
+        isPlaying = true
+        player.play()
+    }
+
     func togglePlay() {
+        excerpt = nil
         if isPlaying {
             player.pause()
             isPlaying = false
@@ -390,6 +424,7 @@ final class EditorModel {
 
     /// Scrub pela régua ou pela agulha do playhead.
     func scrub(to t: Micros) {
+        excerpt = nil
         if isPlaying { togglePlay() }
         seek(to: t)
     }
