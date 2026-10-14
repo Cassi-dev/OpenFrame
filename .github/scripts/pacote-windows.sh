@@ -15,7 +15,8 @@ ffmpeg=$(cygpath -u "$FFMPEG_ROOT")
 
 rm -rf "$out"
 mkdir -p "$app/licencas"
-cp "$build/src/app/OpenFrame.exe" "$app/"
+# O qt_standard_project_setup põe os executáveis na raiz do build no Windows.
+cp "$build/OpenFrame.exe" "$app/"
 
 # Qt (sem os plugins de mídia: o som usa só o QAudioSink, e o plugin FFmpeg do
 # Qt traria uma segunda cópia do FFmpeg).

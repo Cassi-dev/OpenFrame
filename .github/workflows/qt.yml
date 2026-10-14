@@ -42,7 +42,8 @@ jobs:
             qt-arch: win64_msvc2022_64
             ffmpeg-asset: win64-gpl-shared-9.0.zip
             ffmpeg-sha256: 3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696
-            app: build/src/app/OpenFrame.exe
+            # No Windows o qt_standard_project_setup põe os executáveis na raiz do build.
+            app: build/OpenFrame.exe
           - name: Linux (Ubuntu 24.04)
             os: ubuntu-24.04
             qt-version: "6.12.0"
