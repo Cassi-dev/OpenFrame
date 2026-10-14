@@ -103,6 +103,10 @@ final class EditorModel {
     var draggingMaterial: UUID?
     var exportSettings = ExportSettings()
     var showExport = false
+    var showAutoCaptions = false
+    /// Legenda com o texto em edição no painel Legendas.
+    var editingCaption: UUID?
+    @ObservationIgnored let captionGeneration = CaptionGeneration()
     var errorMessage: String?
     /// Tela inicial (projetos) ou editor.
     private(set) var screen = Screen.home
@@ -709,6 +713,63 @@ final class EditorModel {
             errorMessage = error.localizedDescription
         }
     }
+
+    // MARK: - Legendas
+
+    /// Troca o texto de uma legenda (edição em linha do painel Legendas).
+    func setText(_ id: UUID, _ text: String) {
+        mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.text = text } }
+    }
+
+    func deleteSegment(_ id: UUID) {
+        mutate { TimelineEditor.delete(&$0, segment: id) }
+        if selection == id { selection = nil }
+    }
+
+    /// O clipe selecionado, se tiver áudio para transcrever.
+    var selectedClipWithAudio: Segment? {
+        guard let seg = selectedSegment, let m = project.material(seg.materialId),
+              m.kind == .audio || m.hasAudio else { return nil }
+        return seg
+    }
+
+    /// Por que a fonte escolhida não pode ser transcrita (`nil` = pode).
+    var captionSourceProblem: String? {
+        switch captionGeneration.source {
+        case .clip:
+            return selectedClipWithAudio == nil ? "Selecione um clipe com áudio para transcrever só ele." : nil
+        case .timeline:
+            let audible = project.tracks.contains { track in
+                !track.muted && track.segments.contains { seg in
+                    guard seg.volume > 0, let m = project.material(seg.materialId) else { return false }
+                    return m.kind == .audio || m.hasAudio
+                }
+            }
+            return audible ? nil : "A timeline não tem áudio para transcrever."
+        }
+    }
+
+    func presentAutoCaptions() {
+        if !captionGeneration.phase.isRunning { captionGeneration.setPhase(.configuring) }
+        if selectedClipWithAudio == nil { captionGeneration.source = .timeline }
+        showAutoCaptions = true
+    }
+
+    func generateCaptions() {
+        captionGeneration.setPhase(.failed("O motor de transcrição ainda não foi integrado."))
+    }
+
+    func cancelCaptionGeneration() {
+        captionGeneration.setPhase(.configuring)
+    }
+
+    func downloadModel(_ id: String) {}
+
+    func cancelModelDownload(_ id: String) {
+        captionGeneration.downloads[id] = nil
+    }
+
+    func deleteModel(_ id: String) {}
 
     // MARK: - Arrastar na timeline
 

@@ -34,6 +34,11 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "legendas" {
+                await captionsScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -663,6 +668,55 @@ enum DebugSnapshot {
                 await wait(0.5)
             }
         }
+    }
+
+    /// Janela "Legendas automáticas" em cada estado e a edição em linha do painel Legendas.
+    private static func captionsScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let generation = model.captionGeneration
+        model.libraryPanel = .captions
+        model.libraryVisible = true
+        await wait(1)
+        capture("legendas-0-painel", to: dir)
+        let texts = model.project.tracks.filter { $0.kind == .text }.flatMap(\.segments)
+        if let first = texts.first {
+            model.editingCaption = first.id
+            await wait(0.8)
+            capture("legendas-0b-painel-editando", to: dir)
+            model.editingCaption = nil
+        }
+
+        model.presentAutoCaptions()
+        await wait(1.5)
+        capture("legendas-1-opcoes", to: dir)
+        generation.layoutID = "highlight"
+        generation.downloads["turbo"] = 0.37
+        await wait(0.6)
+        capture("legendas-2-destaque-baixando-modelo", to: dir)
+        generation.downloads = [:]
+        generation.layoutID = "punch"
+        await wait(0.6)
+        capture("legendas-3-impacto", to: dir)
+
+        generation.includesDownload = true
+        generation.setPhase(.downloading(received: 182_000_000, total: 487_601_967))
+        await wait(0.6)
+        capture("legendas-4-gerando-baixando", to: dir)
+        generation.setPhase(.mixing(0.6))
+        await wait(0.6)
+        capture("legendas-5-gerando-misturando", to: dir)
+        generation.setPhase(.transcribing(0.42))
+        await wait(0.6)
+        capture("legendas-6-gerando-transcrevendo", to: dir)
+        generation.setPhase(.finished(count: 24))
+        await wait(0.6)
+        capture("legendas-7-pronto", to: dir)
+        generation.setPhase(.failed("O arquivo do modelo está corrompido (o sha256 não confere). Baixe de novo."))
+        await wait(0.6)
+        capture("legendas-8-erro", to: dir)
+        generation.setPhase(.configuring)
+        model.showAutoCaptions = false
+        await wait(0.6)
     }
 
     private static func logZoom(_ step: String, _ model: EditorModel) {
