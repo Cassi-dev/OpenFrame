@@ -8,6 +8,9 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <algorithm>
 
 using namespace of;
@@ -39,6 +42,64 @@ class MediaTests : public QObject
     Q_OBJECT
 
 private slots:
+    // Vídeo HDR (HEVC 10 bits BT.2100, como os do iPhone) → SDR, comparado com
+    // o que o macOS mostra (qt/tests/tools/gerar-hdr.sh mediu os fixtures).
+    void hdrToSdr_data()
+    {
+        QTest::addColumn<QString>("curve");
+        QTest::newRow("HLG") << QStringLiteral("hlg");
+        QTest::newRow("PQ") << QStringLiteral("pq");
+    }
+
+    void hdrToSdr()
+    {
+        QFETCH(QString, curve);
+        QFile file(QStringLiteral(OPENFRAME_FIXTURES "/hdr.json"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        const QJsonArray patches = root[QStringLiteral("patches")].toArray();
+        const QJsonObject measured = root[curve].toObject();
+        const QJsonArray displayed = measured[QStringLiteral("displayed")].toArray();
+
+        const QString path = QStringLiteral(OPENFRAME_FIXTURES "/") + measured[QStringLiteral("file")].toString();
+        QString error;
+        auto decoder = VideoDecoder::open(path, &error);
+        QVERIFY2(decoder, qPrintable(error));
+        const QImage frame = decoder->frameAt(Time::seconds(0.5));
+        QVERIFY(!frame.isNull());
+
+        double total = 0;
+        int previousGray = -1;
+        for (qsizetype i = 0; i < patches.size(); ++i) {
+            const QJsonArray in = patches[i].toArray(), want = displayed[i].toArray();
+            const QColor expected(want[0].toInt(), want[1].toInt(), want[2].toInt());
+            const QColor got = test::pixel(frame, (double(i) + 0.5) / double(patches.size()), 0.5);
+            const int diff = std::max({std::abs(got.red() - expected.red()), std::abs(got.green() - expected.green()),
+                                       std::abs(got.blue() - expected.blue())});
+            total += (std::abs(got.red() - expected.red()) + std::abs(got.green() - expected.green()) +
+                      std::abs(got.blue() - expected.blue())) / 3.0;
+            const bool gray = in[0] == in[1] && in[1] == in[2];
+            // Cinzas: até 4 níveis. Cores: até 12; no PQ, as muito claras (sinal ≥ 180,
+            // acima de ~700 nits) até 50, porque o macOS preserva mais a saturação
+            // nos realces do que a curva na luminância.
+            const int maxChannel = std::max({in[0].toInt(), in[1].toInt(), in[2].toInt()});
+            const int tolerance = gray ? 4 : curve == u"pq" && maxChannel >= 180 ? 50 : 12;
+            QVERIFY2(diff <= tolerance, qPrintable(QStringLiteral("faixa %1 (%2, %3, %4): sistema %5, nosso %6")
+                                                       .arg(i)
+                                                       .arg(in[0].toInt())
+                                                       .arg(in[1].toInt())
+                                                       .arg(in[2].toInt())
+                                                       .arg(test::describe(expected), test::describe(got))));
+            if (gray) {
+                // Os tons de cinza sobem em ordem até saturar no branco (folga
+                // para o ruído de croma do codec).
+                QVERIFY(got.green() >= previousGray - 3);
+                previousGray = std::max(previousGray, got.green());
+            }
+        }
+        QVERIFY2(total / double(patches.size()) < 2, qPrintable(QString::number(total / double(patches.size()))));
+    }
+
     // OPENFRAME_KEEP_MEDIA=1 guarda os arquivos gerados para inspeção.
     void cleanupTestCase()
     {

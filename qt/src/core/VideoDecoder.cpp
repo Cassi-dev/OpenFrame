@@ -1,6 +1,7 @@
 #include "VideoDecoder.h"
 
 #include "FFmpeg.h"
+#include "ToneMap.h"
 
 #include <QTransform>
 #include <cmath>
@@ -46,6 +47,18 @@ bool hasAlpha(int format)
     return desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
 }
 
+/// Curva HDR do quadro (ou da trilha, se o quadro não disser).
+ToneMap::Transfer transferOf(const AVFrame *f, const AVStream *stream)
+{
+    const AVColorTransferCharacteristic trc =
+        f->color_trc != AVCOL_TRC_UNSPECIFIED ? f->color_trc : stream->codecpar->color_trc;
+    switch (trc) {
+    case AVCOL_TRC_ARIB_STD_B67: return ToneMap::Transfer::Hlg;
+    case AVCOL_TRC_SMPTE2084: return ToneMap::Transfer::Pq;
+    default: return ToneMap::Transfer::Sdr;
+    }
+}
+
 bool isRgb(int format)
 {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(AVPixelFormat(format));
@@ -78,6 +91,7 @@ struct VideoDecoder::Impl {
     int swsFormat = -1, swsW = 0, swsH = 0, swsOutW = 0, swsOutH = 0;
     AVColorSpace swsSpace = AVCOL_SPC_UNSPECIFIED;
     bool swsFull = false;
+    bool swsHdr = false;
     QImage image;
     QSize imageMaxSize;
 
@@ -170,10 +184,13 @@ struct VideoDecoder::Impl {
     {
         const QSize out = outputSize(maxSize);
         const bool full = isFullRange(f);
+        // HDR sai em 16 bits por canal (ainda em BT.2020) e passa pelo ToneMap.
+        const ToneMap::Transfer transfer = transferOf(f, stream);
+        const bool hdr = transfer != ToneMap::Transfer::Sdr;
         if (!sws || swsFormat != f->format || swsW != f->width || swsH != f->height || swsOutW != out.width() ||
-            swsOutH != out.height() || swsSpace != f->colorspace || swsFull != full) {
+            swsOutH != out.height() || swsSpace != f->colorspace || swsFull != full || swsHdr != hdr) {
             sws.reset(sws_getContext(f->width, f->height, AVPixelFormat(f->format), out.width(), out.height(),
-                                     AV_PIX_FMT_BGRA,
+                                     hdr ? AV_PIX_FMT_RGBA64 : AV_PIX_FMT_BGRA,
                                      SWS_BICUBIC | SWS_ACCURATE_RND | SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP,
                                      nullptr, nullptr, nullptr));
             if (!sws)
@@ -190,6 +207,14 @@ struct VideoDecoder::Impl {
             swsOutH = out.height();
             swsSpace = f->colorspace;
             swsFull = full;
+            swsHdr = hdr;
+        }
+        if (hdr) {
+            QImage wide(out, QImage::Format_RGBA64);
+            uint8_t *dst[4] = {wide.bits(), nullptr, nullptr, nullptr};
+            const int dstStride[4] = {int(wide.bytesPerLine()), 0, 0, 0};
+            sws_scale(sws.get(), f->data, f->linesize, 0, f->height, dst, dstStride);
+            return oriented(ToneMap::toSdr(wide, transfer));
         }
         // BGRA na memória = ARGB32 no Qt (little-endian, como todas as plataformas-alvo).
         QImage img(out, QImage::Format_ARGB32);
@@ -201,6 +226,12 @@ struct VideoDecoder::Impl {
             img.convertTo(QImage::Format_ARGB32_Premultiplied);
         else
             img.reinterpretAsFormat(QImage::Format_ARGB32_Premultiplied);
+        return oriented(std::move(img));
+    }
+
+    /// Aplica a rotação/espelhamento da trilha.
+    QImage oriented(QImage img) const
+    {
         if (transform.rotation != 0 || transform.mirrored) {
             QTransform m;
             if (transform.mirrored)

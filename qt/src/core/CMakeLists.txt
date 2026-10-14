@@ -13,6 +13,7 @@ add_library(openframe_core STATIC
     FFmpeg.h FFmpeg.cpp
     MediaProbe.h MediaProbe.cpp
     VideoDecoder.h VideoDecoder.cpp
+    ToneMap.h ToneMap.cpp
     Thumbnails.h Thumbnails.cpp
     Waveform.h Waveform.cpp
     MediaWriter.h MediaWriter.cpp

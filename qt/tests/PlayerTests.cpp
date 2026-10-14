@@ -217,6 +217,44 @@ private slots:
         player.pause();
     }
 
+    void resolutionDropsWhenRenderIsSlow()
+    {
+        // Foto com desfoque forte e fundo desfocado em 4K: nenhum computador
+        // desenha isso a 30 quadros/s na CPU, então a resolução tem de cair.
+        Project p;
+        QString error;
+        const auto still = MediaProbe::probe(
+            test::makeImage(QStringLiteral("png"), 1920, 1080, QColor(200, 80, 40), QColor(40, 80, 200)), &error);
+        QVERIFY2(still, qPrintable(error));
+        p.materials = {*still};
+        Segment seg(still->id, {0, Time::seconds(30)}, 0);
+        VideoEffect blur;
+        blur.kind = VideoEffectKind::Blur;
+        blur.intensity = 1;
+        seg.effects = {blur};
+        seg.transform.scale = 0.8;
+        p.tracks[0].segments = {seg};
+        p.canvas.background = CanvasBackground::blur(1);
+
+        Player player;
+        player.setAudioEnabled(false);
+        player.setPreviewShortSide(2160);
+        player.setProject(p);
+        QSignalSpy frames(&player, &Player::frameReady);
+        // Quadros de 4K demoram, ainda mais com outros testes rodando: espera pela condição.
+        QTRY_VERIFY_WITH_TIMEOUT(!frames.isEmpty() && lastFrame(frames).height() == 2160, 30'000);
+        settle(frames, 500);
+
+        frames.clear();
+        player.play();
+        QTRY_VERIFY_WITH_TIMEOUT(!frames.isEmpty() && lastFrame(frames).height() < 2160, 30'000);
+        player.pause();
+        for (const auto &args : std::as_const(frames))
+            QVERIFY(args.at(0).value<QImage>().height() >= 2160 / 3 - 2);
+        // Pausado, volta à resolução cheia.
+        QTRY_COMPARE_WITH_TIMEOUT(lastFrame(frames).height(), 2160, 30'000);
+    }
+
     void emptyProject()
     {
         Player player;
