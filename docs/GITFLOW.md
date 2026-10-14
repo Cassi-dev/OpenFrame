@@ -65,7 +65,18 @@ git branch -d release/0.2.0 && git push origin --delete release/0.2.0
 ```
 
 Cada release no GitHub leva o instalador `.dmg` (app universal, Apple Silicon e
-Intel, assinatura ad-hoc, sem notarização).
+Intel, assinatura ad-hoc, sem notarização) e os pacotes da versão Windows e Linux
+(`qt/`): o instalador e o zip portátil do Windows e o AppImage do Linux. Eles saem
+da CI (`.github/workflows/qt.yml`) do push na `main` marcada, nos artefatos
+`OpenFrame-Windows` e `OpenFrame-Linux`:
+
+```bash
+run=$(gh run list --branch main --workflow qt.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run watch "$run" --exit-status
+gh run download "$run" -n OpenFrame-Windows -D build/pacotes
+gh run download "$run" -n OpenFrame-Linux -D build/pacotes
+gh release upload v0.2.0 build/pacotes/*
+```
 
 ### Hotfix
 
