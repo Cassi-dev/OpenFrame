@@ -268,6 +268,48 @@ private slots:
         QVERIFY(!againText.contains(QStringLiteral("highlight")));
     }
 
+    // Estilos de legenda do Mac: `balanceLines`/`fitLines` no estilo, `maxWidth` acima de 1, `reveal`/
+    // `dimOpacity` no destaque e `emphasis` no texto são ignorados (ou lidos como estão) na leitura.
+    void captionStyleFieldsAreTolerated()
+    {
+        Project p;
+        TE::addText(text(QStringLiteral("um dois")), p, 0);
+        QJsonObject o = ProjectStore::toJson(p);
+        QJsonArray tracks = o["tracks"].toArray();
+        QJsonObject track = tracks[1].toObject();
+        track["isAutoCaptions"] = true;
+        QJsonArray segments = track["segments"].toArray();
+        QJsonObject seg = segments[0].toObject();
+        QJsonObject content = seg["text"].toObject();
+        content["text"] = QStringLiteral("um dois\ntrês");
+        QJsonObject style = content["style"].toObject();
+        style["balanceLines"] = true;
+        style["fitLines"] = true;
+        style["maxWidth"] = 2.5;
+        content["style"] = style;
+        content["words"] = QJsonArray{QJsonObject{{"text", "um"}, {"start", 0}, {"end", 300000}},
+                                      QJsonObject{{"text", "dois"}, {"start", 350000}, {"end", 700000}},
+                                      QJsonObject{{"text", "três"}, {"start", 750000}, {"end", 900000}}};
+        content["highlight"] = QJsonObject{{"scale", 1.05}, {"mode", "progressive"}, {"reveal", "fill"},
+                                           {"dimOpacity", 0.35}};
+        content["emphasis"] = QJsonObject{{"words", QJsonArray{1}}, {"fontName", "Didot"}, {"fontFace", "Italic"},
+                                          {"scale", 1.3}, {"color", QJsonObject{{"r", 1}, {"g", 0.8}, {"b", 0.1}, {"a", 1}}}};
+        seg["text"] = content;
+        segments[0] = seg;
+        track["segments"] = segments;
+        tracks[1] = track;
+        o["tracks"] = tracks;
+
+        QString error;
+        const auto back = ProjectStore::fromJson(o, &error);
+        QVERIFY2(back, qPrintable(error));
+        QCOMPARE(back->tracks[1].segments[0].text->text, QStringLiteral("um dois\ntrês"));
+        QCOMPARE(back->tracks[1].segments[0].text->style.maxWidth, 2.5);
+        const QJsonObject againText = ProjectStore::toJson(*back)["tracks"][1]["segments"][0]["text"].toObject();
+        QVERIFY(!againText.contains(QStringLiteral("emphasis")));
+        QVERIFY(!againText["style"].toObject().contains(QStringLiteral("fitLines")));
+    }
+
     void unknownAnimationsAreTolerated()
     {
         Project p;

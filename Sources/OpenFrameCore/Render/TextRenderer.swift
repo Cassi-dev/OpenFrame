@@ -31,7 +31,8 @@ final class TextRenderer: @unchecked Sendable {
         // `content` é Hashable por inteiro: qualquer campo novo do estilo entra na chave.
         let key = "\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))|\(visible)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
-        guard let image = render(text, style: content.style, canvas: canvas, visibleCharacters: visible) else { return nil }
+        guard let image = render(text, style: content.style, emphasis: content.emphasis, canvas: canvas,
+                                 visibleCharacters: visible) else { return nil }
         cache.setObject(image, forKey: key)
         return image
     }
@@ -55,37 +56,138 @@ final class TextRenderer: @unchecked Sendable {
     struct Layout {
         let face: FontFace
         let fontPx: CGFloat
+        /// Maior fonte do texto (palavra-chave e linhas ampliadas pelo `fitLines`): as margens contam com ela.
+        let peakFontPx: CGFloat
         let textSize: CGSize
         let frame: CTFrame
         /// Espaço extra entre letras, em pixels.
         let kern: CGFloat
+        /// Trechos (UTF-16) das palavras-chave e a cor delas (`nil` = a do texto).
+        let accentRanges: [NSRange]
+        let accentColor: RGBA?
     }
 
-    func layout(_ text: String, style: TextStyle, canvas: CGSize) -> Layout {
+    private static let fontKey = NSAttributedString.Key(kCTFontAttributeName as String)
+    private static let kernKey = NSAttributedString.Key(kCTKernAttributeName as String)
+    private static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
+
+    /// Monta o texto: fonte, palavras-chave (`emphasis`), linhas ajustadas à largura (`fitLines`) e quebra
+    /// (comum, equilibrada ou só nos `\n`).
+    func layout(_ text: String, style: TextStyle, canvas: CGSize, emphasis: WordEmphasis? = nil) -> Layout {
         let fontPx = max(4, CGFloat(style.fontSize) * canvas.height)
         let face = makeFont(style, size: fontPx)
 
-        var attrs: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): face.font,
+        let string = NSMutableAttributedString(string: text, attributes: [
+            Self.fontKey: face.font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): style.color.cgColor,
-            NSAttributedString.Key(kCTParagraphStyleAttributeName as String):
-                makeParagraphStyle(style.alignment, lineHeight: lineHeight(face.font, style: style, fontPx: fontPx)),
-        ]
-        if style.letterSpacing != 0 {
-            attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = CGFloat(style.letterSpacing) * fontPx
+            Self.paragraphKey: makeParagraphStyle(style.alignment, lineHeight: lineHeight(face.font, style: style, fontPx: fontPx)),
+        ])
+        let all = NSRange(location: 0, length: string.length)
+        if style.letterSpacing != 0 { string.addAttribute(Self.kernKey, value: CGFloat(style.letterSpacing) * fontPx, range: all) }
+
+        // Palavras-chave: outra fonte, maior, desenhada com a cor da ênfase.
+        var accent: [NSRange] = []
+        var peak = fontPx
+        if let emphasis, !emphasis.words.isEmpty {
+            var es = style
+            es.fontName = emphasis.fontName
+            es.fontFace = emphasis.fontFace
+            es.bold = false
+            es.italic = false
+            let size = fontPx * CGFloat(min(max(emphasis.scale, 0.2), 5))
+            let font = makeFont(es, size: size).font
+            let words = Self.wordRanges(text)
+            for i in Set(emphasis.words).sorted() where words.indices.contains(i) {
+                string.addAttribute(Self.fontKey, value: font, range: words[i])
+                if style.letterSpacing != 0 { string.addAttribute(Self.kernKey, value: CGFloat(style.letterSpacing) * size, range: words[i]) }
+                accent.append(words[i])
+            }
+            if !accent.isEmpty { peak = max(peak, size) }
         }
-        let string = NSAttributedString(string: text, attributes: attrs)
+        if style.fitLines {
+            peak = max(peak, fitLines(string, style: style, face: face, fontPx: fontPx,
+                                      width: max(fontPx, CGFloat(style.maxWidth) * canvas.width)))
+        }
+
         let framesetter = CTFramesetterCreateWithAttributedString(string)
         var wrap = max(fontPx, CGFloat(style.maxWidth) * canvas.width)
-        if style.balanceLines { wrap = Self.balancedWidth(framesetter, length: string.length, maxWidth: wrap) }
+        if style.fitLines {
+            // As linhas já têm a largura da caixa: só os `\n` quebram (o que passar dos limites de escala, sai).
+            wrap = 1_000_000
+        } else if style.balanceLines {
+            wrap = Self.balancedWidth(framesetter, length: string.length, maxWidth: wrap)
+        }
         let suggested = CTFramesetterSuggestFrameSizeWithConstraints(
             framesetter, CFRange(location: 0, length: 0), nil,
             CGSize(width: wrap, height: .greatestFiniteMagnitude), nil)
         let textSize = CGSize(width: ceil(suggested.width) + 1, height: ceil(suggested.height) + 1)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0),
                                              CGPath(rect: CGRect(origin: .zero, size: textSize), transform: nil), nil)
-        return Layout(face: face, fontPx: fontPx, textSize: textSize, frame: frame,
-                      kern: CGFloat(style.letterSpacing) * fontPx)
+        return Layout(face: face, fontPx: fontPx, peakFontPx: peak, textSize: textSize, frame: frame,
+                      kern: CGFloat(style.letterSpacing) * fontPx, accentRanges: accent,
+                      accentColor: accent.isEmpty ? nil : emphasis?.color)
+    }
+
+    /// Trechos (UTF-16) das palavras do texto: a divisão de `TextContent.words(of:)`.
+    static func wordRanges(_ text: String) -> [NSRange] {
+        var ranges: [NSRange] = []
+        var start: Int?
+        var offset = 0
+        for ch in text {
+            let n = ch.utf16.count
+            if ch.isWhitespace {
+                if let s = start { ranges.append(NSRange(location: s, length: offset - s)) }
+                start = nil
+            } else if start == nil {
+                start = offset
+            }
+            offset += n
+        }
+        if let s = start { ranges.append(NSRange(location: s, length: offset - s)) }
+        return ranges
+    }
+
+    /// Faixa de escala de cada linha no `fitLines`.
+    static let fitRange: ClosedRange<CGFloat> = 0.6...2.5
+
+    /// Escala cada linha (separada por `\n`) para ocupar `width`, dentro de `fitRange`, com a altura de linha
+    /// da própria fonte. Devolve o maior tamanho de fonte.
+    private func fitLines(_ string: NSMutableAttributedString, style: TextStyle, face: FontFace, fontPx: CGFloat,
+                          width: CGFloat) -> CGFloat {
+        let ns = string.string as NSString
+        var peak = fontPx
+        var start = 0
+        while start < ns.length {
+            let newline = ns.range(of: "\n", range: NSRange(location: start, length: ns.length - start)).location
+            let end = newline == NSNotFound ? ns.length : newline
+            let range = NSRange(location: start, length: end - start)
+            start = end + 1
+            guard range.length > 0 else { continue }
+            let line = CTLineCreateWithAttributedString(string.attributedSubstring(from: range))
+            let natural = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(line))
+                - CGFloat(style.letterSpacing) * fontPx
+            guard natural > 0 else { continue }
+            let k = min(max(width / natural, Self.fitRange.lowerBound), Self.fitRange.upperBound)
+            string.enumerateAttribute(Self.fontKey, in: range) { value, r, _ in
+                guard let value else { return }
+                let font = value as! CTFont
+                string.addAttribute(Self.fontKey, value: CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * k, nil, nil),
+                                    range: r)
+            }
+            if style.letterSpacing != 0 {
+                string.enumerateAttribute(Self.kernKey, in: range) { value, r, _ in
+                    if let kern = value as? CGFloat { string.addAttribute(Self.kernKey, value: kern * k, range: r) }
+                }
+            }
+            let size = fontPx * k
+            let scaled = CTFontCreateCopyWithAttributes(face.font, size, nil, nil)
+            let paragraph = NSRange(location: range.location, length: min(range.length + 1, ns.length - range.location))
+            string.addAttribute(Self.paragraphKey,
+                                value: makeParagraphStyle(style.alignment, lineHeight: lineHeight(scaled, style: style, fontPx: size)),
+                                range: paragraph)
+            peak = max(peak, size)
+        }
+        return peak
     }
 
     /// Número de linhas da quebra automática na largura `width`.
@@ -131,7 +233,7 @@ final class TextRenderer: @unchecked Sendable {
     func lineTexts(for content: TextContent, canvas: CGSize) -> [String] {
         let text = Self.cased(content.text, content.style.textCase)
         guard !text.isEmpty, canvas.height > 0 else { return [] }
-        let l = layout(text, style: content.style, canvas: canvas)
+        let l = layout(text, style: content.style, canvas: canvas, emphasis: content.emphasis)
         let ns = text as NSString
         return (CTFrameGetLines(l.frame) as! [CTLine]).map { line in
             let r = CTLineGetStringRange(line)
@@ -150,7 +252,7 @@ final class TextRenderer: @unchecked Sendable {
         let key = "\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))" as NSString
         if let cached = sizes.object(forKey: key) { return cached.sizeValue }
         let style = content.style
-        let l = layout(text, style: style, canvas: canvas)
+        let l = layout(text, style: style, canvas: canvas, emphasis: content.emphasis)
         let bgX = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingX)) * l.fontPx : 0
         let bgY = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingY)) * l.fontPx : 0
         let size = CGSize(width: l.textSize.width + bgX * 2, height: l.textSize.height + bgY * 2)
@@ -183,9 +285,11 @@ final class TextRenderer: @unchecked Sendable {
         let shadowBlur = style.shadow ? max(0, CGFloat(style.shadowBlur)) * fontPx : 0
         let shadowX = style.shadow ? abs(shadowOffset.width) + shadowBlur * 1.5 : 0
         let shadowY = style.shadow ? abs(shadowOffset.height) + shadowBlur * 1.5 : 0
-        let slant = (style.italic || l.face.syntheticItalic) ? fontPx * 0.25 : 0
-        let tight = max(0, -CGFloat(style.lineSpacing)) * fontPx
-        let base = ceil(fontPx * 0.35)
+        // A palavra-chave (às vezes itálica) e as linhas ampliadas pedem margens pela maior fonte.
+        let peak = l.peakFontPx
+        let slant = (style.italic || l.face.syntheticItalic || !l.accentRanges.isEmpty) ? peak * 0.25 : 0
+        let tight = max(0, -CGFloat(style.lineSpacing)) * peak
+        let base = ceil(peak * 0.35)
         let padX = max(base, ceil(fontPx * 0.12 + max(strokeOut, bgX) + shadowX + slant))
         let padY = max(base, ceil(fontPx * 0.12 + max(strokeOut, bgY) + shadowY + tight))
         return Metrics(strokeOut: strokeOut, bgX: bgX, bgY: bgY, shadowOffset: shadowOffset, shadowBlur: shadowBlur,
@@ -199,7 +303,7 @@ final class TextRenderer: @unchecked Sendable {
         guard !text.isEmpty, canvas.height > 0 else { return nil }
         let key = "img|\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))" as NSString
         if let cached = sizes.object(forKey: key) { return cached.sizeValue }
-        let m = metrics(layout(text, style: content.style, canvas: canvas), style: content.style)
+        let m = metrics(layout(text, style: content.style, canvas: canvas, emphasis: content.emphasis), style: content.style)
         let size = CGSize(width: m.width, height: m.height)
         sizes.setObject(NSValue(size: size), forKey: key)
         return size
@@ -217,8 +321,9 @@ final class TextRenderer: @unchecked Sendable {
         return min(CGFloat(wanted), Self.maxRasterSide / max(size.width, size.height))
     }
 
-    private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
-        let l = layout(text, style: style, canvas: canvas)
+    private func render(_ text: String, style: TextStyle, emphasis: WordEmphasis?, canvas: CGSize,
+                        visibleCharacters: Int) -> CIImage? {
+        let l = layout(text, style: style, canvas: canvas, emphasis: emphasis)
         let fontPx = l.fontPx
         let m = metrics(l, style: style)
         let cut = text.index(text.startIndex, offsetBy: min(visibleCharacters, text.count)).utf16Offset(in: text)
@@ -278,7 +383,7 @@ final class TextRenderer: @unchecked Sendable {
         if stroke, m.strokeOut > 0 {
             ctx.setStrokeColor(style.strokeColor.cgColor)
             ctx.setLineWidth(m.strokeOut * 2)
-            for path in [shapes.glyphs, shapes.underlines] where !path.isEmpty {
+            for path in [shapes.glyphs, shapes.accentGlyphs, shapes.underlines] where !path.isEmpty {
                 ctx.addPath(path)
                 ctx.strokePath()
             }
@@ -293,6 +398,11 @@ final class TextRenderer: @unchecked Sendable {
         }
         for path in [shapes.glyphs, shapes.underlines] where !path.isEmpty {
             ctx.addPath(path)
+            ctx.fillPath()
+        }
+        if !shapes.accentGlyphs.isEmpty {
+            ctx.setFillColor((l.accentColor ?? style.color).cgColor)
+            ctx.addPath(shapes.accentGlyphs)
             ctx.fillPath()
         }
         // Glifos coloridos (emoji) não têm contorno vetorial: são desenhados como estão.
@@ -311,6 +421,8 @@ final class TextRenderer: @unchecked Sendable {
 
     struct Shapes {
         let glyphs: CGPath
+        /// Glifos das palavras-chave (outra cor, sem o negrito e o itálico sintéticos do texto).
+        let accentGlyphs: CGPath
         let underlines: CGPath
         let colorGlyphs: [ColorGlyphs]
         /// Caixa de tudo, sem o contorno.
@@ -329,6 +441,8 @@ final class TextRenderer: @unchecked Sendable {
         let line: Int
         /// Espaço ou quebra de linha.
         let blank: Bool
+        /// Parte de uma palavra-chave.
+        var accent = false
     }
 
     struct LineInfo {
@@ -373,9 +487,11 @@ final class TextRenderer: @unchecked Sendable {
                 CTRunGetStringIndices(run, all, &indices)
                 for i in 0..<count {
                     let blank = Unicode.Scalar(text.character(at: indices[i])).map { blanks.contains($0) } ?? false
+                    let accent = l.accentRanges.contains { NSLocationInRange(indices[i], $0) }
                     result.append(GlyphInfo(glyph: glyphs[i], font: font, isColor: isColor,
                                             position: CGPoint(x: origin.x + positions[i].x, y: origin.y + positions[i].y),
-                                            advance: advances[i].width, utf16: indices[i], line: n, blank: blank))
+                                            advance: advances[i].width, utf16: indices[i], line: n, blank: blank,
+                                            accent: accent))
                 }
             }
         }
@@ -392,6 +508,7 @@ final class TextRenderer: @unchecked Sendable {
     /// Junta os contornos dos glifos e os retângulos do sublinhado, nas coordenadas da caixa de texto.
     func makeShapes(_ glyphs: [GlyphInfo], underlines: [CGRect], face: FontFace) -> Shapes {
         let glyphPath = CGMutablePath()
+        let accentPath = CGMutablePath()
         let underlinePath = CGMutablePath()
         var colorGlyphs: [ColorGlyphs] = []
         var bounds = CGRect.null
@@ -406,13 +523,20 @@ final class TextRenderer: @unchecked Sendable {
                 CTFontGetBoundingRectsForGlyphs(g.font, .default, &glyph, &rect, 1)
                 bounds = bounds.union(rect.offsetBy(dx: g.position.x, dy: g.position.y))
             } else if let outline = CTFontCreatePathForGlyph(g.font, g.glyph, nil) {
-                glyphPath.addPath(outline, transform: skew.concatenating(CGAffineTransform(translationX: g.position.x, y: g.position.y)))
+                let move = CGAffineTransform(translationX: g.position.x, y: g.position.y)
+                if g.accent {
+                    accentPath.addPath(outline, transform: move)
+                } else {
+                    glyphPath.addPath(outline, transform: skew.concatenating(move))
+                }
             }
         }
         for rect in underlines { underlinePath.addRect(rect) }
         if !glyphPath.isEmpty { bounds = bounds.union(glyphPath.boundingBoxOfPath) }
+        if !accentPath.isEmpty { bounds = bounds.union(accentPath.boundingBoxOfPath) }
         if !underlinePath.isEmpty { bounds = bounds.union(underlinePath.boundingBoxOfPath) }
-        return Shapes(glyphs: glyphPath, underlines: underlinePath, colorGlyphs: colorGlyphs, bounds: bounds)
+        return Shapes(glyphs: glyphPath, accentGlyphs: accentPath, underlines: underlinePath, colorGlyphs: colorGlyphs,
+                      bounds: bounds)
     }
 
     private func shadowOffset(_ style: TextStyle, fontPx: CGFloat) -> CGSize {

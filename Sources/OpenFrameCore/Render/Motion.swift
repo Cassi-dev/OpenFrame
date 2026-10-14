@@ -148,10 +148,13 @@ enum Animations {
 
     /// Granularidade usada no instante: a da animação ativa; em repouso, a da entrada
     /// (ou da saída), para o desenho não mudar quando a animação termina.
-    /// Com o destaque da palavra, nunca mais grossa que a palavra.
+    /// Com o destaque da palavra, nunca mais grossa que a palavra (na digitação, letra).
     static func granularity(for seg: Segment, state: AnimationState) -> TextGranularity {
         let g = baseGranularity(for: seg, state: state)
-        return g == .line && seg.text?.activeHighlight != nil ? .word : g
+        guard let h = seg.text?.activeHighlight else { return g }
+        // A digitação revela letra a letra.
+        if h.style.reveal == .type { return .letter }
+        return g == .line ? .word : g
     }
 
     private static func baseGranularity(for seg: Segment, state: AnimationState) -> TextGranularity {

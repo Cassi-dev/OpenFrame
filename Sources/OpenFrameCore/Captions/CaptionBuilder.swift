@@ -89,18 +89,43 @@ public enum CaptionBuilder {
         var widths: [Double]
         var space: Double
         var line: Double
+        /// Quanto cada palavra alarga se virar palavra-chave (0 nas que não podem).
+        var extras: [Double]
 
-        init(_ words: [TranscribedWord], style: TextStyle, aspect: Double) {
+        init(_ words: [TranscribedWord], style: TextStyle, aspect: Double, emphasis: WordEmphasis? = nil) {
             let px: CGFloat = 100
             let r = TextRenderer.shared
-            widths = words.map { Double(r.lineWidth($0.text, style: style, fontPx: px) / px) }
+            let widths = words.map { Double(r.lineWidth($0.text, style: style, fontPx: px) / px) }
+            self.widths = widths
+            if let emphasis {
+                var es = style
+                es.fontName = emphasis.fontName
+                es.fontFace = emphasis.fontFace
+                es.bold = false
+                es.italic = false
+                let size = px * CGFloat(emphasis.scale)
+                extras = words.indices.map { k in
+                    guard CaptionBuilder.canBeKeyword(words[k].text) else { return 0 }
+                    return max(0, Double(r.lineWidth(words[k].text, style: es, fontPx: size) / px) - widths[k])
+                }
+            } else {
+                extras = Array(repeating: 0, count: words.count)
+            }
             space = Double((r.lineWidth("a a", style: style, fontPx: px) - 2 * r.lineWidth("a", style: style, fontPx: px)) / px)
             // Folga de 3% para a diferença entre as palavras medidas soltas e a linha inteira.
             line = style.fitLines ? .infinity : style.maxWidth * aspect / max(style.fontSize, 0.001) * 0.97
         }
 
-        /// Linhas da quebra gulosa (a do Core Text) das palavras `r`. `glued(k)`: não quebra depois de `k`.
+        /// Folga para as palavras-chave da legenda `r` (as que mais alargariam): uma, ou duas com mais de 6 palavras.
+        func reserve(_ r: Range<Int>) -> Double {
+            let top = extras[r].sorted(by: >)
+            return top.prefix(r.count > 6 ? 2 : 1).reduce(0, +)
+        }
+
+        /// Linhas da quebra gulosa (a do Core Text) das palavras `r`, com a folga das palavras-chave.
+        /// `glued(k)`: não quebra depois de `k`.
         func lineCount(_ r: Range<Int>, glued: (Int) -> Bool = { _ in false }) -> Int {
+            let line = self.line - reserve(r)
             var lines = 1
             var width = -1.0
             var k = r.lowerBound
@@ -141,7 +166,9 @@ public enum CaptionBuilder {
         let words = normalized(words)
         guard !words.isEmpty else { return [] }
         let lim = limits(preset: preset)
-        let measure = Measure(words, style: style(preset, aspect: aspect), aspect: aspect)
+        let style = defaultStyle(preset, aspect: aspect)
+        let measure = Measure(words, style: style, aspect: aspect,
+                              emphasis: preset == .editorial ? emphasis(preset, style: style, accent: nil) : nil)
         let n = words.count
 
         // Programação dinâmica: best[j] = menor custo para quebrar as palavras 0..<j.
@@ -309,9 +336,8 @@ public enum CaptionBuilder {
                                     .interjection, .number]
         var scored: [(score: Double, index: Int)] = []
         for (i, word) in words.enumerated() {
-            let core = word.trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.symbols))
-            let letters = core.filter(\.isLetter).count
-            guard letters >= 5, !isFunctionWord(core), !weakWords.contains(core.lowercased()) else { continue }
+            guard canBeKeyword(word) else { continue }
+            let letters = word.filter(\.isLetter).count
             if let tag = classes[i], excluded.contains(tag) { continue }
             var score = Double(min(letters, 12))
             switch classes[i] {
@@ -331,6 +357,12 @@ public enum CaptionBuilder {
             picked.append(second)
         }
         return picked.sorted()
+    }
+
+    /// Pode ser palavra-chave: 5 letras ou mais, fora das palavras funcionais e das fracas.
+    static func canBeKeyword(_ word: String) -> Bool {
+        let core = word.trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.symbols))
+        return core.filter(\.isLetter).count >= 5 && !isFunctionWord(core) && !weakWords.contains(core.lowercased())
     }
 
     /// Palavras de 5 letras ou mais sem peso (advérbios e pronomes comuns), caso a classe gramatical falhe.
@@ -450,7 +482,7 @@ public enum CaptionBuilder {
     @discardableResult
     public static func apply(_ cues: [CaptionCue], preset: CaptionPreset, accent: RGBA?, to project: inout Project,
                              replacing: Bool, range: TimeRange? = nil) -> UUID {
-        let style = style(preset, aspect: project.aspectValue)
+        let style = defaultStyle(preset, aspect: project.aspectValue)
         return insert(segments(cues, preset: preset, style: style, accent: accent), cues: cues, into: &project,
                       replacing: replacing, range: range)
     }
@@ -460,7 +492,7 @@ public enum CaptionBuilder {
     public static func apply(_ cues: [CaptionCue], layout: CaptionLayout, style: TextStyle?, to project: inout Project,
                              replacing: Bool, range: TimeRange? = nil) -> UUID {
         let preset = CaptionPreset(layout)
-        let style = style ?? self.style(preset, aspect: project.aspectValue)
+        let style = style ?? defaultStyle(preset, aspect: project.aspectValue)
         return insert(segments(cues, preset: preset, style: style, accent: nil), cues: cues, into: &project,
                       replacing: replacing, range: range)
     }
@@ -577,12 +609,16 @@ public enum CaptionBuilder {
     /// Largura máxima da caixa das legendas (fração do quadro), em qualquer proporção.
     static let widestBox = 0.9
 
-    /// O estilo padrão na proporção do canvas: a caixa mantém a largura em em do 16:9 (a mesma quebra),
-    /// sem passar de 90% do quadro. No 9:16 cabe menos numa linha, e a segmentação já conta com isso.
-    static func style(_ preset: CaptionPreset, aspect: Double) -> TextStyle {
+    /// O estilo padrão do visual na proporção `aspect` (largura/altura) do canvas. Em pé (9:16, 4:5…), o tamanho
+    /// da fonte é medido pelo lado menor, como no 16:9: no mesmo tamanho de quadro, a letra tem os mesmos pixels
+    /// e não cresce em relação à largura útil. No 1:1 e nos deitados, o tamanho não muda (o lado menor já é a
+    /// altura). A caixa mantém a largura em em do 16:9 (a mesma quebra), sem passar de 90% do quadro.
+    public static func defaultStyle(_ preset: CaptionPreset, aspect: Double) -> TextStyle {
         var s = defaultStyle(preset)
         guard aspect > 0, aspect.isFinite else { return s }
-        s.maxWidth = min(max(s.maxWidth, widestBox), s.maxWidth * ((16.0 / 9) / aspect))
+        let font = min(1, aspect)
+        s.fontSize *= font
+        s.maxWidth = min(max(s.maxWidth, widestBox), s.maxWidth * ((16.0 / 9) / aspect) * font)
         return s
     }
 
@@ -687,7 +723,8 @@ public enum CaptionBuilder {
             s.maxWidth = 0.5
         case .stacked:
             s.fontFace = "Condensed Black"
-            s.fontSize = 0.1
+            // Grande: as linhas curtas chegam à largura antes do limite de 2,5×.
+            s.fontSize = 0.13
             s.textCase = .upper
             s.fitLines = true
             s.balanceLines = false
