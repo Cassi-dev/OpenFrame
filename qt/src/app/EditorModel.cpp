@@ -8,7 +8,6 @@
 #include "TextPresets.h"
 #include "TimelineEditor.h"
 
-#include <QBuffer>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -752,15 +751,8 @@ void EditorModel::writeThumbnail(const Project &snapshot, const QUuid &id)
     QPointer<EditorModel> self(this);
     const ProjectLibrary library = m_library;
     auto future = QtConcurrent::run([snapshot, id, library] {
-        const Micros t = Micros(std::min(double(snapshot.duration()) / 3, 2'000'000.0));
-        const QImage image = Bridge::renderFrame(snapshot, t, snapshot.canvasSize(360));
-        if (image.isNull())
-            return false;
-        QByteArray data;
-        QBuffer buffer(&data);
-        buffer.open(QIODevice::WriteOnly);
-        image.save(&buffer, "JPG", 80);
-        return library.writeThumbnail(data, id);
+        const QByteArray data = Bridge::projectThumbnail(snapshot);
+        return !data.isEmpty() && library.writeThumbnail(data, id);
     });
     future.then(this, [self](bool written) {
         if (self && written && self->m_screen == "home")
@@ -1109,6 +1101,20 @@ std::optional<int> EditorModel::trackIndex(int row) const
     if (row < 0 || row >= order.size())
         return std::nullopt;
     return order[row];
+}
+
+bool EditorModel::isRowFree(int row, qreal from, qreal to) const
+{
+    const QList<int> order = displayTrackOrder();
+    if (row < 0)
+        return false;
+    if (row >= order.size())
+        return true;
+    const Micros a = Time::seconds(from), b = Time::seconds(to);
+    for (const Segment &s : m_project.tracks[order[row]].segments)
+        if (s.targetStart < b && s.targetEnd() > a)
+            return false;
+    return true;
 }
 
 QVariantMap EditorModel::dropPreview(const QString &materialId, qreal time, int row) const

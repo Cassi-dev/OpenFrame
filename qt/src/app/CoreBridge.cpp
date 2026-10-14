@@ -100,6 +100,16 @@ QImage renderFrame(const Project &p, Micros t, QSize size)
 #endif
 }
 
+QByteArray projectThumbnail(const Project &p)
+{
+#ifdef OF_HAS_RENDERER
+    return ProjectThumbnail::jpeg(p);
+#else
+    Q_UNUSED(p)
+    return {};
+#endif
+}
+
 QImage filterPreview(const QImage &base, FilterPreset preset)
 {
 #ifdef OF_HAS_RENDERER
@@ -181,6 +191,7 @@ PreviewEngine::PreviewEngine(QObject *parent) : QObject(parent), d(new Impl)
         d->time = t;
         emit timeChanged(t);
     });
+    connect(&d->player, &Player::playingChanged, this, [this](bool playing) { d->playing = playing; });
     connect(&d->player, &Player::finished, this, [this] {
         d->playing = false;
         emit finished();

@@ -38,6 +38,8 @@ private:
     using Step = std::function<void()>;
     /// Agenda `step` depois de `ms` milissegundos, na ordem.
     void then(int ms, Step step);
+    /// Espera `done` ficar verdadeiro (conferindo a cada 200 ms, até `timeoutMs`).
+    void waitUntil(std::function<bool()> done, int timeoutMs);
     void next();
     void finish();
 
@@ -58,7 +60,13 @@ private:
     QQmlApplicationEngine *m_engine;
     EditorModel *m_model;
     QDir m_dir;
-    std::deque<std::pair<int, Step>> m_steps;
+    struct Pending {
+        int ms = 0;
+        Step step;
+        std::function<bool()> until;
+        int timeoutMs = 0;
+    };
+    std::deque<Pending> m_steps;
 };
 
 } // namespace of

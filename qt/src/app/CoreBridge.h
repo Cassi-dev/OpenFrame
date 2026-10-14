@@ -25,6 +25,8 @@ QList<QImage> thumbnails(const Material &m);
 QVector<float> peaks(const Material &m);
 /// Um quadro do projeto renderizado; imagem nula se o render não estiver disponível.
 QImage renderFrame(const Project &p, Micros t, QSize size);
+/// Miniatura do projeto em JPEG (vazia se não houver render ou o projeto estiver vazio).
+QByteArray projectThumbnail(const Project &p);
 /// Miniatura com o filtro aplicado (aba Filtros); nula se não houver render.
 QImage filterPreview(const QImage &base, FilterPreset preset);
 

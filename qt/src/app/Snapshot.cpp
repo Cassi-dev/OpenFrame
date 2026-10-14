@@ -5,10 +5,13 @@
 
 #include <QCoreApplication>
 #include <QDirIterator>
+#include <QElapsedTimer>
+#include <QFile>
 #include <QImage>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <cstdio>
@@ -67,18 +70,41 @@ Snapshot::Snapshot(QQmlApplicationEngine *engine, EditorModel *model, const QStr
 
 void Snapshot::then(int ms, Step step)
 {
-    m_steps.emplace_back(ms, std::move(step));
+    m_steps.push_back({ms, std::move(step), {}, 0});
+}
+
+void Snapshot::waitUntil(std::function<bool()> done, int timeoutMs)
+{
+    m_steps.push_back({0, [] {}, std::move(done), timeoutMs});
 }
 
 void Snapshot::next()
 {
     if (m_steps.empty())
         return;
-    auto [ms, step] = std::move(m_steps.front());
+    Pending pending = std::move(m_steps.front());
     m_steps.pop_front();
-    QTimer::singleShot(ms, this, [this, step] {
-        step();
-        next();
+    QTimer::singleShot(pending.ms, this, [this, pending] {
+        pending.step();
+        if (!pending.until) {
+            next();
+            return;
+        }
+        auto *poll = new QTimer(this);
+        auto *clock = new QElapsedTimer;
+        clock->start();
+        poll->setInterval(200);
+        connect(poll, &QTimer::timeout, this, [this, poll, clock, pending] {
+            const bool done = pending.until();
+            if (!done && clock->elapsed() < pending.timeoutMs)
+                return;
+            if (!done)
+                log(QStringLiteral("tempo esgotado esperando (%1 ms)").arg(pending.timeoutMs));
+            poll->deleteLater();
+            delete clock;
+            next();
+        });
+        poll->start();
     });
 }
 
@@ -375,7 +401,27 @@ void Snapshot::editorScenario()
     then(800, [this] { capture("20-painel-midia"); });
     then(0, [this] { m_model->setShowExport(true); });
     then(1200, [this] { capture("6-exportar"); });
-    then(0, [this] { m_model->setShowExport(false); });
+
+    // Exportação de verdade (480p, para ser rápida), durante e no fim.
+    then(0, [this] {
+        m_model->setExportValue("resolution", "p480");
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                                 .filePath("openframe-captura.mp4");
+        QFile::remove(path);
+        m_model->startExport(QUrl::fromLocalFile(path));
+        log("exportando para " + path);
+    });
+    waitUntil([this] { return m_model->exportProgress() > 0.3 || m_model->exportPhase() != "exporting"; }, 60'000);
+    then(0, [this] { capture("6b-exportando"); });
+    waitUntil([this] { return m_model->exportPhase() != "exporting"; }, 300'000);
+    then(300, [this] {
+        log(QStringLiteral("exportação: %1 %2%3")
+                .arg(m_model->exportPhase(), m_model->exportResult(), m_model->exportError()));
+        capture("6c-exportado");
+        QFile::remove(m_model->exportResultPath());
+        m_model->resetExport();
+        m_model->setShowExport(false);
+    });
 }
 
 /// Todas as abas do inspetor do segmento (texto ou primeiro da faixa principal),
