@@ -124,7 +124,11 @@ struct TextSharpnessTests {
     }
 
     @Test("Desempenho ao arrastar a escala (cache por passos de 1/8)")
-    func dragPerformance() {
+    func dragPerformance() async throws {
+        try await HeavyWork.run { measureDrag() }
+    }
+
+    private func measureDrag() {
         let hd = CGSize(width: 1920, height: 1080)
         let context = CIContext()
         var bytes = [UInt8](repeating: 0, count: 1920 * 1080 * 4)
@@ -143,8 +147,9 @@ struct TextSharpnessTests {
                                format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 times.append(Date().timeIntervalSince(start))
             }
-            let average = times.reduce(0, +) / Double(times.count)
-            report.append("\(kind?.rawValue ?? "estático"): média \(String(format: "%.1f", average * 1000)) ms, primeiro \(String(format: "%.1f", times[0] * 1000)) ms, pior dos demais \(String(format: "%.1f", times.dropFirst().max()! * 1000)) ms")
+            // Mediana: um quadro solto atrasado pela máquina ocupada não derruba a medição.
+            let average = median(times)
+            report.append("\(kind?.rawValue ?? "estático"): mediana \(String(format: "%.1f", average * 1000)) ms, primeiro \(String(format: "%.1f", times[0] * 1000)) ms, pior dos demais \(String(format: "%.1f", times.dropFirst().max()! * 1000)) ms")
             #expect(average < 0.1)
         }
         print("ARRASTE DE ESCALA 1080p: " + report.joined(separator: "; "))

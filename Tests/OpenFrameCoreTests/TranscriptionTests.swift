@@ -183,8 +183,10 @@ enum Speech {
         options.timing = timing
         options.refine = refine
         options.useGPU = gpu
-        return try await Transcriber.transcribe(project: p, source: source, modelURL: modelURL(model)!, model: model,
-                                                options: options, progress: progress)
+        return try await HeavyWork.run {
+            try await Transcriber.transcribe(project: p, source: source, modelURL: modelURL(model)!, model: model,
+                                             options: options, progress: progress)
+        }
     }
 }
 
