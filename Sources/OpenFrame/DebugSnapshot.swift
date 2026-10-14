@@ -342,8 +342,8 @@ enum DebugSnapshot {
         if let textSeg = texts.first {
             model.mutate {
                 TimelineEditor.update(&$0, segment: textSeg.id) {
-                    $0.animationIn = SegmentAnimation(kind: .slideUp)
-                    $0.animationLoop = LoopAnimation(kind: .float)
+                    $0.animationIn = SegmentAnimation(kind: .cascade)
+                    $0.animationLoop = LoopAnimation(kind: .shine)
                 }
             }
             await captureAnimationTab(model, segment: textSeg, name: "motion-2-animacao-texto", to: dir)
@@ -379,13 +379,17 @@ enum DebugSnapshot {
         let strips = model.animationStrips.strips
         let animated = strips.filter { $0.value.count > 1 }
         log("\(name): \(strips.count) tiras prontas, \(animated.count) animadas")
-        // Folha de contato das tiras dos efeitos escolhidos (a cada 3 quadros).
-        let chosen = [segment.animationIn.map { "entry(OpenFrameCore.AnimationKind.\($0.kind))" },
-                      segment.animationLoop.map { "loop(OpenFrameCore.LoopKind.\($0.kind))" }]
+        // Folhas de contato (a cada 3 quadros) das tiras dos efeitos novos.
+        let chosen = ["cascade", "elastic", "wave", "wordByWord", "maskReveal", "tracking", "decode", "focus"]
+            .map { "entry(OpenFrameCore.AnimationKind.\($0))" }
+            + LoopKind.allCases.map { "loop(OpenFrameCore.LoopKind.\($0))" }
+        var written = Set<String>()
         for (key, frames) in animated {
             let text = String(describing: key)
             guard let match = chosen.compactMap({ $0 }).first(where: { text.contains($0) }),
-                  text.contains(segment.text.map { ThumbSubject.short($0.text) } ?? "") else { continue }
+                  text.contains(segment.text.map { "text: \"\(ThumbSubject.short($0.text))\"" } ?? "") else { continue }
+            let file = "\(name)-tira-\(match.split(separator: ".").last!.filter(\.isLetter)).png"
+            guard written.insert(file).inserted else { continue }
             let picks = stride(from: 0, to: frames.count, by: 3).map { frames[$0] }
             let w = picks[0].width, h = picks[0].height
             guard let ctx = CGContext(data: nil, width: w * picks.count, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -394,7 +398,6 @@ enum DebugSnapshot {
             ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
             ctx.fill(CGRect(x: 0, y: 0, width: w * picks.count, height: h))
             for (i, image) in picks.enumerated() { ctx.draw(image, in: CGRect(x: i * w, y: 0, width: w, height: h)) }
-            let file = "\(name)-tira-\(match.split(separator: ".").last!.filter(\.isLetter)).png"
             if let image = ctx.makeImage() {
                 try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
                     .write(to: dir.appendingPathComponent(file))

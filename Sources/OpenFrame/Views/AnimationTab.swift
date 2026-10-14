@@ -66,14 +66,14 @@ private struct AnimationGrid: View {
         let current = segment[keyPath: keyPath]
         SectionHeader(title: title)
         LazyVGrid(columns: tileColumns, spacing: 12) {
-            ChoiceTile(title: "Nenhuma", selected: current == nil, twoLineTitle: true) {
+            ChoiceTile(title: "Nenhuma", selected: current == nil) {
                 model.mutate { TimelineEditor.update(&$0, segment: id) { $0[keyPath: keyPath] = nil } }
             } hoverPreview: { _ in
                 AnimatedThumb(subject: subject, part: nil, playing: false, symbol: "nosign", selected: false)
             }
             ForEach(kinds) { kind in
                 let selected = current?.kind == kind
-                ChoiceTile(title: kind.displayName, selected: selected, twoLineTitle: true) {
+                ChoiceTile(title: AnimationIcons.shortTitle(kind), selected: selected) {
                     choose(kind)
                 } hoverPreview: { hovering in
                     AnimatedThumb(subject: subject, part: isEntry ? .entry(kind) : .exit(kind),
@@ -119,14 +119,14 @@ private struct LoopGrid: View {
         let current = segment.animationLoop
         SectionHeader(title: "Loop")
         LazyVGrid(columns: tileColumns, spacing: 12) {
-            ChoiceTile(title: "Nenhum", selected: current == nil, twoLineTitle: true) {
+            ChoiceTile(title: "Nenhum", selected: current == nil) {
                 model.mutate { TimelineEditor.update(&$0, segment: id) { $0.animationLoop = nil } }
             } hoverPreview: { _ in
                 AnimatedThumb(subject: subject, part: nil, playing: false, symbol: "nosign", selected: false)
             }
             ForEach(LoopKind.allCases) { kind in
                 let selected = current?.kind == kind
-                ChoiceTile(title: kind.displayName, selected: selected, twoLineTitle: true) {
+                ChoiceTile(title: kind.displayName, selected: selected) {
                     choose(kind)
                 } hoverPreview: { hovering in
                     AnimatedThumb(subject: subject, part: .loop(kind), playing: hovering || selected,
@@ -273,7 +273,7 @@ enum AnimationPlayback {
     }
 }
 
-/// Símbolo provisório enquanto a miniatura animada não fica pronta.
+/// Símbolo provisório enquanto a miniatura animada não fica pronta, e nomes curtos.
 enum AnimationIcons {
     private static let symbols: [String: String] = [
         "fade": "circle.lefthalf.filled", "zoomIn": "plus.magnifyingglass", "zoomOut": "minus.magnifyingglass",
@@ -282,6 +282,14 @@ enum AnimationIcons {
     ]
 
     static func symbol(_ kind: AnimationKind) -> String { symbols[kind.rawValue] ?? "sparkles" }
+
+    /// Nomes curtos para caber numa linha do cartão (o nome completo fica na dica).
+    private static let shortTitles: [AnimationKind: String] = [
+        .zoomIn: "Aproximar", .zoomOut: "Afastar", .typewriter: "Digitação",
+        .wordByWord: "Por palavra", .maskReveal: "Máscara",
+    ]
+
+    static func shortTitle(_ kind: AnimationKind) -> String { shortTitles[kind] ?? kind.displayName }
 
     static func symbol(_ kind: LoopKind) -> String {
         switch kind {
