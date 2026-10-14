@@ -303,6 +303,17 @@ enum TextMotion {
         return pose
     }
 
+    /// Índices dos glifos sorteáveis para uma célula: os que cabem com até 30% de folga; se forem
+    /// menos de 4, os 4 de largura mais próxima. A ordem segue a do conjunto (determinístico).
+    static func scrambleCandidates(_ glyphs: [ScrambleGlyph], cellWidth: CGFloat) -> [Int] {
+        let fitting = glyphs.indices.filter { glyphs[$0].advance <= cellWidth * 1.3 }
+        if fitting.count >= 4 { return fitting }
+        let nearest = glyphs.indices.sorted {
+            (abs(glyphs[$0].advance - cellWidth), $0) < (abs(glyphs[$1].advance - cellWidth), $1)
+        }
+        return Array(nearest.prefix(4)).sorted()
+    }
+
     /// Caractere aleatório determinístico da unidade `index` no passo de tempo `step` (~20 trocas/s).
     static func scrambleIndex(index: Int, step: Int, count: Int) -> Int {
         var z = UInt64(bitPattern: Int64(index)) &* 0x9E37_79B9_7F4A_7C15 &+ UInt64(bitPattern: Int64(step)) &* 0xBF58_476D_1CE4_E5B9
@@ -338,12 +349,11 @@ enum TextMotion {
             var fill = unit.fill
             var stroke = unit.stroke
             if pose.scramble, !scramble.isEmpty {
-                let g = scramble[scrambleIndex(index: i, step: step, count: scramble.count)]
-                // Centralizado na célula da letra; mais estreito quando o sorteado é mais largo.
-                let fit = min(1, max(unit.cellWidth, 1) / max(g.advance, 1))
-                let move = CGAffineTransform(translationX: -g.advance / 2, y: 0)
-                    .concatenating(CGAffineTransform(scaleX: fit, y: fit))
-                    .concatenating(CGAffineTransform(translationX: unit.cellCenterX, y: unit.baseline))
+                // Mesmo tamanho de fonte e mesma linha de base da letra, centralizado na célula.
+                // O sorteio só usa glifos de largura parecida, para não encavalar nas vizinhas.
+                let pool = scrambleCandidates(scramble, cellWidth: unit.cellWidth)
+                let g = scramble[pool[scrambleIndex(index: i, step: step, count: pool.count)]]
+                let move = CGAffineTransform(translationX: unit.cellCenterX - g.advance / 2, y: unit.baseline)
                 fill = g.fill.transformed(by: move)
                 stroke = g.stroke?.transformed(by: move)
             }
