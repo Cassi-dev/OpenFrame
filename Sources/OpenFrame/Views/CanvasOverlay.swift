@@ -149,8 +149,11 @@ struct PlacementDrag {
     /// Ponto inicial do ponteiro e centro do elemento, em pontos da view.
     let startPoint: CGPoint
     let startCenterView: CGPoint
-    /// Largura da caixa (fração da largura do canvas) de onde parte o arraste lateral.
+    /// Largura da caixa (fração da largura do canvas) de onde parte o arraste lateral, e a largura
+    /// da caixa visível no início: a moldura parte dela, para a alça não pular quando as duas diferem
+    /// (linhas equilibradas ou texto curto).
     let startWidth: Double
+    let startVisibleWidth: Double
 
     static let scaleRange = 0.05...10.0
     /// Distância de encaixe na tela.
@@ -164,12 +167,14 @@ struct PlacementDrag {
         var guides: [SnapGuide] = []
         /// Graus mostrados na etiqueta durante o giro.
         var rotationLabel: Double?
-        /// Largura pedida pelas alças laterais (fração da largura do canvas).
+        /// Largura pedida pelas alças laterais (fração da largura do canvas) e a da moldura.
         var width: Double?
+        var frameWidth: Double?
     }
 
     init(handle: OverlayHandle, box: ElementBox, others: [ElementBox], at point: CGPoint, mapping: CanvasMapping,
          startWidth: Double = 0) {
+        startVisibleWidth = Double(box.size.width) / 2
         self.handle = handle
         self.box = box
         self.others = others
@@ -199,7 +204,10 @@ struct PlacementDrag {
             out.rotation = snapping ? Snapping.snapRotation(r).degrees : r
             out.rotationLabel = out.rotation
         case .edge(let side):
-            out.width = proposedWidth(at: p, side: side, mapping: mapping)
+            let width = proposedWidth(at: p, side: side, mapping: mapping)
+            out.width = width
+            // A moldura anda o mesmo que a largura, a partir da caixa visível.
+            out.frameWidth = max(startVisibleWidth + width - startWidth, 0.01)
         }
         return out
     }
@@ -212,7 +220,7 @@ struct PlacementDrag {
         let outward = (d.x * axis.x + d.y * axis.y) * side.sign
         let pointsPerWidth = max(abs(box.scale), 0.01) * mapping.size.width
         let w = startWidth + Double(2 * outward / max(pointsPerWidth, 1))
-        return min(max(w, TextBoxWidth.range.lowerBound), TextBoxWidth.range.upperBound)
+        return min(max(w, TextStyle.maxWidthRange.lowerBound), TextStyle.maxWidthRange.upperBound)
     }
 
     /// Centro proposto (normalizado) para um arraste do corpo.
@@ -256,28 +264,13 @@ extension SelectionFrame {
     }
 }
 
-/// Largura da caixa de um texto (`TextStyle.maxWidth`, fração da largura do canvas).
-/// PROVISÓRIO até a etapa 1 do núcleo: troca por `TextStyle.maxWidthRange` e
-/// `TimelineEditor.setTextWidth`, que fazem o mesmo (numa faixa de legendas automáticas,
-/// a largura vale para todos os textos dela).
-enum TextBoxWidth {
-    static let range: ClosedRange<Double> = 0.1...3.0
-
-    static func set(_ p: inout Project, segment id: UUID, maxWidth: Double) {
-        guard let loc = p.locate(id) else { return }
-        let w = min(max(maxWidth, range.lowerBound), range.upperBound)
-        let track = p.tracks[loc.track]
-        let targets = track.isAutoCaptions ? track.segments.map(\.id) : [id]
-        for target in targets {
-            TimelineEditor.update(&p, segment: target) { $0.text?.style.maxWidth = w }
-        }
-    }
-}
-
 /// Estado do arraste lateral mostrado no preview.
 struct WidthDragState: Equatable {
-    /// Largura pedida (fração da largura do canvas): a moldura mostra a caixa de quebra.
+    /// Largura pedida (fração da largura do canvas).
     var width: Double
+    /// Largura da moldura: a caixa visível no início mais o que a largura mudou. Não acompanha a
+    /// quebra das linhas (que muda aos saltos), então a alça segue o ponteiro.
+    var frameWidth: Double
     /// O texto está numa faixa de legendas automáticas: a largura vale para todas.
     var wholeTrack: Bool
 
@@ -303,10 +296,10 @@ extension EditorModel {
     func canvasBoxes() -> [ElementBox] { CanvasLayout.boxes(in: project, at: playhead) }
 
     /// Contorno do elemento selecionado, se ele aparece no playhead. Some durante a reprodução.
-    /// Durante o arraste lateral, mostra a largura pedida (a caixa de quebra), não a do texto.
+    /// Durante o arraste lateral, mostra a largura pedida, não a do texto.
     func selectionFrame(mapping: CanvasMapping) -> SelectionFrame? {
         guard !isPlaying, let id = selection, var box = canvasBoxes().first(where: { $0.id == id }) else { return nil }
-        if let widthDrag = canvasWidthDrag { box.size.width = widthDrag.width * 2 }
+        if let widthDrag = canvasWidthDrag { box.size.width = widthDrag.frameWidth * 2 }
         return SelectionFrame(box, mapping: mapping, aspect: project.aspectValue)
     }
 
@@ -358,11 +351,11 @@ extension EditorModel {
                                     snapping: PlacementDrag.snappingEnabled)
         if canvasGuides != result.guides { canvasGuides = result.guides }
         if canvasRotationLabel != result.rotationLabel { canvasRotationLabel = result.rotationLabel }
-        if case .edge = drag.handle, let width = result.width {
+        if case .edge = drag.handle, let width = result.width, let frameWidth = result.frameWidth {
             // O clique sem arrastar não muda nada (nem cria um passo de desfazer).
             guard p != drag.startPoint || canvasWidthDrag != nil else { return }
-            canvasWidthDrag = WidthDragState(width: width, wholeTrack: isInAutoCaptions(drag.box.id))
-            updateGesture { TextBoxWidth.set(&$0, segment: drag.box.id, maxWidth: width) }
+            canvasWidthDrag = WidthDragState(width: width, frameWidth: frameWidth, wholeTrack: isInAutoCaptions(drag.box.id))
+            updateGesture { TimelineEditor.setTextWidth(&$0, segment: drag.box.id, maxWidth: width) }
             return
         }
         updateGesture {

@@ -37,7 +37,8 @@ final class CaptionGeneration {
     /// O idioma já foi preenchido com o do sistema (só na primeira abertura).
     var languageChosen = false
     var model = recommended
-    var look = CaptionLookDraft.phrases
+    var preset = CaptionPreset.phrases
+    /// Cor de destaque: vai para onde a predefinição a usa (`usesAccent`).
     var highlightColor = WordHighlight().color
     var replacePrevious = true
     var phase = Phase.configuring
@@ -125,82 +126,3 @@ final class CaptionGeneration {
     }
 }
 
-// MARK: - Predefinições (provisório)
-
-/// PROVISÓRIO até a etapa 1 do núcleo: troca por `CaptionPresetGroup` (mesmos casos e nomes).
-enum CaptionLookGroupDraft: String, CaseIterable, Identifiable {
-    case classic, reveal, editorial
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .classic: "Clássicos"
-        case .reveal: "Revelação"
-        case .editorial: "Editorial"
-        }
-    }
-}
-
-/// PROVISÓRIO até a etapa 1 do núcleo: troca por `CaptionPreset` (mesmos casos, nomes, grupos e
-/// `usesAccent`). Por enquanto, as novas geram e mostram a segmentação mais próxima (`layout`).
-enum CaptionLookDraft: String, CaseIterable, Identifiable {
-    case phrases, highlight, punch
-    case rise, guided, fill, typing
-    case editorial, cinema, stacked
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .phrases: "Frases"
-        case .highlight: "Destaque"
-        case .punch: "Impacto"
-        case .rise: "Surgir"
-        case .guided: "Leitura guiada"
-        case .fill: "Preenchimento"
-        case .typing: "Digitação"
-        case .editorial: "Editorial"
-        case .cinema: "Cinema"
-        case .stacked: "Empilhado"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .phrases: "Até duas linhas embaixo, como no cinema."
-        case .highlight: "Uma linha; a palavra falada acende."
-        case .punch: "Poucas palavras grandes no centro."
-        case .rise: "Cada palavra surge quando é dita."
-        case .guided: "As próximas palavras esperam apagadas."
-        case .fill: "A cor enche a palavra enquanto ela é dita."
-        case .typing: "As letras aparecem como se digitadas."
-        case .editorial: "Leve, com a palavra-chave em itálico."
-        case .cinema: "Pequena e espaçada, entra em foco."
-        case .stacked: "Blocos justificados em caixa alta."
-        }
-    }
-
-    var group: CaptionLookGroupDraft {
-        switch self {
-        case .phrases, .highlight, .punch: .classic
-        case .rise, .guided, .fill, .typing: .reveal
-        case .editorial, .cinema, .stacked: .editorial
-        }
-    }
-
-    var layout: CaptionLayout {
-        switch self {
-        case .phrases, .guided, .editorial: .phrases
-        case .highlight, .rise, .fill, .typing, .cinema: .highlight
-        case .punch, .stacked: .punch
-        }
-    }
-
-    var usesAccent: Bool {
-        switch self {
-        case .phrases, .punch, .cinema: false
-        default: true
-        }
-    }
-}

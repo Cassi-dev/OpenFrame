@@ -701,12 +701,12 @@ enum DebugSnapshot {
         model.presentAutoCaptions()
         await wait(1.5)
         capture("legendas-1-opcoes-sem-modelo", to: dir)
-        generation.look = .highlight
+        generation.preset = .highlight
         generation.downloads[.turbo] = 0.37
         await wait(1.5)
         capture("legendas-2-destaque-baixando-modelo", to: dir)
         generation.downloads = [:]
-        generation.look = .punch
+        generation.preset = .punch
         await wait(1.5)
         capture("legendas-3-impacto", to: dir)
         generation.includesDownload = true
@@ -730,7 +730,7 @@ enum DebugSnapshot {
             generation.refreshInstalled()
         }
         generation.model = .base
-        generation.look = .phrases
+        generation.preset = .phrases
         await wait(0.6)
         capture("legendas-6-opcoes-modelo-instalado", to: dir)
 
@@ -738,7 +738,7 @@ enum DebugSnapshot {
         var shotProgress = false
         for (index, layout) in CaptionLayout.allCases.enumerated() {
             if !model.showAutoCaptions { model.presentAutoCaptions() }
-            generation.look = CaptionLookDraft(rawValue: layout.rawValue) ?? .phrases
+            generation.preset = CaptionPreset(rawValue: layout.rawValue) ?? .phrases
             generation.replacePrevious = true
             await wait(0.5)
             model.generateCaptions()
@@ -836,22 +836,22 @@ enum DebugSnapshot {
 
         // A janela: as prévias de todos os cartões precisam de alguns segundos.
         model.presentAutoCaptions()
-        generation.look = .phrases
+        generation.preset = .phrases
         await wait(6)
         capture("estilos-1-janela", to: dir)
-        generation.look = .rise
+        generation.preset = .rise
         await wait(1.5)
         capture("estilos-2-janela-surgir-cor", to: dir)
 
         /// Gera com a predefinição e devolve a faixa automática.
-        func generate(_ look: CaptionLookDraft) async -> Track? {
+        func generate(_ preset: CaptionPreset) async -> Track? {
             if !model.showAutoCaptions { model.presentAutoCaptions() }
-            generation.look = look
+            generation.preset = preset
             generation.replacePrevious = true
             await wait(0.3)
             model.generateCaptions()
             for _ in 0..<300 where generation.phase.isRunning { await wait(0.02) }
-            log("\(look.rawValue): \(generation.phase)")
+            log("\(preset.rawValue): \(generation.phase)")
             model.showAutoCaptions = false
             generation.setPhase(.configuring)
             await wait(0.8)
@@ -864,17 +864,52 @@ enum DebugSnapshot {
             model.seek(to: seg.targetStart + (w.start + w.end) / 2)
         }
 
-        for look in CaptionLookDraft.allCases where look.group != .classic {
-            guard let track = await generate(look) else { continue }
+        for preset in CaptionPreset.allCases where preset.group != .classic {
+            guard let track = await generate(preset) else { continue }
             seekMid(track.segments[min(2, track.segments.count - 1)])
             model.selection = nil
             await wait(1.2)
-            await captureComposite("estilos-preview-\(look.rawValue)", model: model, to: dir)
+            await captureComposite("estilos-preview-\(preset.rawValue)", model: model, to: dir)
+            let segs = track.segments
+            log("\(preset.rawValue): revelação \(segs.first?.text?.highlight?.reveal.rawValue ?? "-"), "
+                + "palavras-chave \(segs.map { $0.text?.emphasis?.words ?? [] }), "
+                + "\\n no texto: \(segs.contains { $0.text?.text.contains("\n") == true })")
+            guard preset == .guided || preset == .editorial else { continue }
+            let seg = segs[min(2, segs.count - 1)]
+            model.selection = seg.id
+            model.inspectorTab = .text
+            await wait(1)
+            await captureInspectorScrolled("estilos-7-inspetor-\(preset.rawValue)", fractions: [0.3, 0.45, 0.6], to: dir)
+            if preset == .editorial {
+                // Ficha: liga a primeira palavra; aplicar a todas copia fonte/escala/cor, não as palavras.
+                model.mutate { TimelineEditor.update(&$0, segment: seg.id) {
+                    $0.text?.emphasis?.words = [0]
+                    $0.text?.emphasis?.color = RGBA(0.4, 1, 0.9)
+                    $0.text?.emphasis?.scale = 1.5
+                } }
+                model.applyStyleToAutoCaptions()
+                let after = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments ?? []
+                log("aplicar a todas (editorial): cores \(Set(after.compactMap { $0.text?.emphasis?.color }).count), "
+                    + "escalas \(Set(after.compactMap { $0.text?.emphasis?.scale })), "
+                    + "palavras \(after.map { $0.text?.emphasis?.words ?? [] })")
+                model.undo()
+                model.undo()
+            }
+            model.selection = nil
         }
 
-        // Largura da caixa: Frases, a legenda mais longa (2 linhas) selecionada.
-        guard let track = await generate(.phrases), let player = playerView(),
-              let seg = track.segments.max(by: { ($0.text?.text.count ?? 0) < ($1.text?.text.count ?? 0) }) else { return }
+        // Largura da caixa: Frases, a legenda de 2 linhas mais curta.
+        guard let track = await generate(.phrases), let player = playerView() else { return }
+        let boxes = Dictionary(uniqueKeysWithValues: track.segments.compactMap { seg in
+            CanvasLayout.boxes(in: model.project, at: seg.targetStart + 1).first { $0.id == seg.id }.map { (seg.id, $0) }
+        })
+        for seg in track.segments {
+            log(String(format: "largura: legenda de %d caracteres, caixa %.3f × %.3f", seg.text?.text.count ?? 0,
+                       boxes[seg.id]?.size.width ?? 0, boxes[seg.id]?.size.height ?? 0))
+        }
+        let twoLines = track.segments.filter { (boxes[$0.id]?.size.height ?? 0) > 0.2 }
+        guard let seg = twoLines.min(by: { ($0.text?.text.count ?? 0) < ($1.text?.text.count ?? 0) }) ?? track.segments.first
+        else { return }
         seekMid(seg)
         model.selection = seg.id
         await wait(1.2)
@@ -895,8 +930,17 @@ enum DebugSnapshot {
         await captureComposite("estilos-3-alcas", model: model, to: dir)
 
         model.canvasPointerDown(at: start, mapping: mapping)
+        // A alça não pode pular: depois de 2 pt, a da moldura fica a 2 pt de onde estava.
+        model.canvasPointerMoved(to: start + frame.right * 2, mapping: mapping)
+        if let moved = model.selectionFrame(mapping: mapping)?.edgeHandle(.right) {
+            log(String(format: "largura: alça depois de 2 pt andou %.2f pt", (moved - start).length))
+        }
         let steps = 12
-        let travel = mapping.size.width * 0.22
+        // Até 108% do quadro (uma legenda de ~42 caracteres em uma linha): a alça anda metade da
+        // diferença, na escala do texto.
+        let startWidth = seg.text?.style.maxWidth ?? 0.9
+        let scale = seg.text?.style.scale ?? 1
+        let travel = CGFloat(1.08 - startWidth) * CGFloat(scale) * mapping.size.width / 2 - 2
         for step in 1...steps {
             model.canvasPointerMoved(to: start + frame.right * (travel * CGFloat(step) / CGFloat(steps)), mapping: mapping)
             await wait(0.05)

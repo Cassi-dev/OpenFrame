@@ -789,7 +789,7 @@ final class EditorModel {
             return
         }
         if isPlaying { togglePlay() }
-        let whisper = g.model, layout = g.look.layout, language = g.language
+        let whisper = g.model, preset = g.preset, language = g.language
         let replacing = g.replacePrevious, color = g.highlightColor
         let store = g.store
         g.cancelDownload(whisper)
@@ -816,11 +816,11 @@ final class EditorModel {
                     }
                 }
                 try Task.checkCancellation()
-                let cues = CaptionBuilder.cues(from: words, layout: layout)
+                let cues = CaptionBuilder.cues(from: words, preset: preset, aspect: snapshot.aspectValue)
                 guard !cues.isEmpty else {
                     throw TranscriptionError.failed("nenhuma fala foi reconhecida nesse trecho.")
                 }
-                self?.applyCaptions(cues, layout: layout, highlightColor: color, replacing: replacing, range: range)
+                self?.applyCaptions(cues, preset: preset, accent: color, replacing: replacing, range: range)
                 g.setPhase(.finished(count: cues.count))
             } catch {
                 if Task.isCancelled || error is CancellationError {
@@ -833,16 +833,9 @@ final class EditorModel {
         }
     }
 
-    private func applyCaptions(_ cues: [CaptionCue], layout: CaptionLayout, highlightColor: RGBA,
+    private func applyCaptions(_ cues: [CaptionCue], preset: CaptionPreset, accent: RGBA,
                                replacing: Bool, range: TimeRange) {
-        mutate { p in
-            let before = Set(p.tracks.lazy.flatMap(\.segments).map(\.id))
-            let track = CaptionBuilder.apply(cues, layout: layout, style: nil, to: &p, replacing: replacing, range: range)
-            guard let t = p.tracks.firstIndex(where: { $0.id == track }) else { return }
-            for i in p.tracks[t].segments.indices where !before.contains(p.tracks[t].segments[i].id) {
-                p.tracks[t].segments[i].text?.highlight?.color = highlightColor
-            }
-        }
+        mutate { CaptionBuilder.apply(cues, preset: preset, accent: accent, to: &$0, replacing: replacing, range: range) }
         selection = nil
         libraryPanel = .captions
         libraryVisible = true
@@ -854,16 +847,24 @@ final class EditorModel {
         captionGeneration.setPhase(.configuring)
     }
 
-    /// Copia o estilo (e o destaque, se houver) do texto selecionado para todas as legendas automáticas.
+    /// Copia o estilo do texto selecionado para todas as legendas automáticas: o destaque inteiro
+    /// (revelação incluída) e o visual da palavra-chave (fonte, escala e cor), sem as palavras
+    /// escolhidas, que são de cada legenda.
     func applyStyleToAutoCaptions() {
         guard let source = selectedSegment?.text else { return }
         mutate { p in
             for t in p.tracks.indices where p.tracks[t].isAutoCaptions {
-                for i in p.tracks[t].segments.indices where p.tracks[t].segments[i].text != nil {
-                    p.tracks[t].segments[i].text?.style = source.style
-                    if let highlight = source.highlight, p.tracks[t].segments[i].text?.words != nil {
-                        p.tracks[t].segments[i].text?.highlight = highlight
+                for i in p.tracks[t].segments.indices {
+                    guard var text = p.tracks[t].segments[i].text else { continue }
+                    text.style = source.style
+                    if let highlight = source.highlight, text.words != nil {
+                        text.highlight = highlight
                     }
+                    if var emphasis = source.emphasis {
+                        emphasis.words = text.emphasis?.words ?? []
+                        text.emphasis = emphasis
+                    }
+                    p.tracks[t].segments[i].text = text
                 }
             }
         }

@@ -461,6 +461,7 @@ private struct TextTab: View {
         spacingSection
         colorSection
         highlightSection
+        emphasisSection
         backgroundSection
         shadowSection
         positionSection
@@ -507,46 +508,13 @@ private struct TextTab: View {
             .help("Maiúsculas e minúsculas")
     }
 
-    /// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
     private var familyMenu: some View {
-        let current = style.wrappedValue.fontName
-        let pick: (String) -> Void = { family in
+        FontFamilyMenu(current: style.wrappedValue.fontName, suggested: Self.suggested, installed: Self.installed) { family in
             var s = style.wrappedValue
             s.fontName = family
             if !Self.faces(of: family).contains(s.fontFace) { s.fontFace = "" }
             style.wrappedValue = s
         }
-        return Menu {
-            Section("Sugeridas") {
-                ForEach(Self.suggested.filter(Self.installed.contains), id: \.self) { family in
-                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
-                }
-            }
-            Section("Todas") {
-                ForEach(Self.installed, id: \.self) { family in
-                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text(current)
-                    .font(Theme.font(12))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.down")
-                    .font(Theme.font(9, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .frame(maxWidth: .infinity)
-            .field()
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
     }
 
     @ViewBuilder private var spacingSection: some View {
@@ -593,6 +561,14 @@ private struct TextTab: View {
                     PillPicker(selection: highlightValue(\.mode), options: HighlightMode.allCases,
                                title: { $0 == .current ? "Só a atual" : "Progressivo" })
                 }
+                FieldRow(label: "Revelação") {
+                    MenuField(selection: highlightValue(\.reveal), options: WordReveal.allCases,
+                              title: \.displayName)
+                }
+                if current.reveal == .dim {
+                    ParamSlider(title: "Opacidade das próximas", value: highlightValue(\.dimOpacity), range: 0...1,
+                                defaultValue: WordHighlight().dimOpacity, format: percent)
+                }
                 ColorRow(title: "Cor", color: color(highlightValue(\.color)))
                 ParamSlider(title: "Escala", value: highlightValue(\.scale), range: 1...1.6,
                             defaultValue: WordHighlight().scale, format: percent)
@@ -602,6 +578,50 @@ private struct TextTab: View {
                 }
             }
         }
+    }
+
+    /// Só para textos com palavra-chave (visuais Editorial e Empilhado).
+    @ViewBuilder private var emphasisSection: some View {
+        if let text = model.project.segment(id)?.text, let emphasis = text.emphasis {
+            let words = TextContent.words(of: text.text)
+            SectionHeader(title: "Palavra-chave")
+            Text("Clique numa palavra para ligar ou desligar a ênfase.")
+                .font(Theme.font(11))
+                .foregroundStyle(Theme.textTertiary)
+            WordChips(words: words.map(String.init), selected: Set(emphasis.words)) { index in
+                var e = emphasis
+                if let i = e.words.firstIndex(of: index) { e.words.remove(at: i) } else { e.words = (e.words + [index]).sorted() }
+                model.mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.emphasis = e } }
+            }
+            ColorRow(title: "Cor", color: color(Binding(
+                get: { emphasisValue(\.color).wrappedValue ?? style.wrappedValue.color },
+                set: { emphasisValue(\.color).wrappedValue = $0 })))
+            FieldRow(label: "Fonte") {
+                FontFamilyMenu(current: emphasis.fontName, suggested: Self.suggested, installed: Self.installed) { family in
+                    var e = emphasis
+                    e.fontName = family
+                    if !Self.faces(of: family).contains(e.fontFace) { e.fontFace = "" }
+                    model.mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.emphasis = e } }
+                }
+            }
+            FieldRow(label: "Estilo") {
+                MenuField(selection: emphasisValue(\.fontFace), options: [""] + Self.faces(of: emphasis.fontName),
+                          title: { $0.isEmpty ? "Padrão" : $0 })
+            }
+            ParamSlider(title: "Tamanho", value: emphasisValue(\.scale), range: 0.6...2.5,
+                        defaultValue: WordEmphasis().scale, format: percent)
+        }
+    }
+
+    private func emphasisValue<T: Equatable>(_ keyPath: WritableKeyPath<WordEmphasis, T>) -> Binding<T> {
+        let emphasis = model.binding(id, \.text!.emphasis)
+        return Binding(
+            get: { (emphasis.wrappedValue ?? WordEmphasis())[keyPath: keyPath] },
+            set: { value in
+                var e = emphasis.wrappedValue ?? WordEmphasis()
+                e[keyPath: keyPath] = value
+                emphasis.wrappedValue = e
+            })
     }
 
     private func highlightValue<T: Equatable>(_ keyPath: WritableKeyPath<WordHighlight, T>) -> Binding<T> {
@@ -671,7 +691,118 @@ private struct TextTab: View {
     /// Largura da caixa pela mesma função das alças do preview: numa legenda automática, vale para a faixa.
     private var boxWidth: Binding<Double> {
         Binding(get: { style.wrappedValue.maxWidth },
-                set: { w in model.mutate(coalesce: "\(id)boxWidth") { TextBoxWidth.set(&$0, segment: id, maxWidth: w) } })
+                set: { w in model.mutate(coalesce: "\(id)boxWidth") { TimelineEditor.setTextWidth(&$0, segment: id, maxWidth: w) } })
+    }
+}
+
+/// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
+private struct FontFamilyMenu: View {
+    let current: String
+    let suggested: [String]
+    let installed: [String]
+    let pick: (String) -> Void
+
+    var body: some View {
+        Menu {
+            Section("Sugeridas") {
+                ForEach(suggested.filter(installed.contains), id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+            Section("Todas") {
+                ForEach(installed, id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(current)
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(Theme.font(9, .medium))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity)
+            .field()
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+}
+
+/// Palavras da legenda como fichas que ligam e desligam a ênfase; quebram linha como texto.
+private struct WordChips: View {
+    let words: [String]
+    let selected: Set<Int>
+    let toggle: (Int) -> Void
+
+    var body: some View {
+        ChipFlow(spacing: 5) {
+            ForEach(Array(words.enumerated()), id: \.offset) { index, word in
+                let on = selected.contains(index)
+                Button { toggle(index) } label: {
+                    Text(word)
+                        .font(Theme.font(12, on ? .medium : .regular))
+                        .foregroundStyle(on ? Theme.onAccent : Theme.textPrimary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(on ? Theme.accent : Theme.raised, in: Capsule())
+                        .overlay(Capsule().strokeBorder(on ? .clear : Theme.hairline))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// Fileiras que quebram como texto.
+private struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map { $0.width }.max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for i in row.items {
+                let size = subviews[i].sizeThatFits(.unspecified)
+                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = [Row()]
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(.unspecified)
+            let extra = rows[rows.count - 1].items.isEmpty ? size.width : size.width + spacing
+            if rows[rows.count - 1].width + extra > width, !rows[rows.count - 1].items.isEmpty {
+                rows.append(Row())
+            }
+            let last = rows.count - 1
+            rows[last].width += rows[last].items.isEmpty ? size.width : size.width + spacing
+            rows[last].height = max(rows[last].height, size.height)
+            rows[last].items.append(i)
+        }
+        return rows
     }
 }
 
@@ -706,7 +837,7 @@ private struct BoxWidthControl: View {
                 Text("%").foregroundStyle(Theme.textTertiary)
             }
             .font(Theme.font(12))
-            ThinSlider(value: $value, range: TextBoxWidth.range)
+            ThinSlider(value: $value, range: TextStyle.maxWidthRange)
         }
         .onAppear { typed = Self.percent(value) }
         .onChange(of: value) { if !focused { typed = Self.percent(value) } }
@@ -715,7 +846,8 @@ private struct BoxWidthControl: View {
     private static func percent(_ w: Double) -> Int { Int((w * 100).rounded()) }
 
     private func commit() {
-        let w = min(max(Double(typed) / 100, TextBoxWidth.range.lowerBound), TextBoxWidth.range.upperBound)
+        let range = TextStyle.maxWidthRange
+        let w = min(max(Double(typed) / 100, range.lowerBound), range.upperBound)
         if Self.percent(w) != Self.percent(value) { value = w }
         typed = Self.percent(w)
     }
