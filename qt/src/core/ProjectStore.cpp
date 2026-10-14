@@ -405,7 +405,12 @@ public:
                 return std::nullopt;
             const QString p = path + u'.' + QLatin1StringView(key);
             const QJsonObject a = object(o, path, key);
-            return SegmentAnimation{enumeration<AnimationKind>(a, p, "kind"), integer(a, p, "duration")};
+            // Tipos que esta versão não conhece (o app do Mac tem animações por letra, palavra
+            // e linha) viram "esmaecer" em vez de impedir a abertura. A chave `animationLoop`
+            // também é ignorada. Ao regravar, o tipo original e o loop se perdem.
+            const QString kindPath = p + u".kind";
+            const auto kind = enumFromKey<AnimationKind>(string(required(a, p, "kind"), kindPath));
+            return SegmentAnimation{kind.value_or(AnimationKind::Fade), integer(a, p, "duration")};
         };
         s.animationIn = animation("animationIn");
         s.animationOut = animation("animationOut");

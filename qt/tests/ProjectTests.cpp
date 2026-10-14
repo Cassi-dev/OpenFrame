@@ -233,6 +233,51 @@ private slots:
         QVERIFY(!ProjectStore::decode("[]", &error));
     }
 
+    // Animações novas do app do Mac: tipo desconhecido vira esmaecer e o loop é ignorado
+    void unknownAnimationsAreTolerated()
+    {
+        Project p;
+        TE::addText(text(QStringLiteral("A")), p, 0);
+        QJsonObject o = ProjectStore::toJson(p);
+        QJsonArray tracks = o["tracks"].toArray();
+        QJsonObject track = tracks[1].toObject();
+        QJsonArray segments = track["segments"].toArray();
+        QJsonObject seg = segments[0].toObject();
+        seg["animationIn"] = QJsonObject{{"kind", "cascade"}, {"duration", 700000}};
+        seg["animationOut"] = QJsonObject{{"kind", "zoomIn"}, {"duration", 400000}};
+        seg["animationLoop"] = QJsonObject{{"kind", "shine"}, {"period", 2000000}, {"intensity", 0.5}};
+        segments[0] = seg;
+        track["segments"] = segments;
+        tracks[1] = track;
+        o["tracks"] = tracks;
+
+        QString error;
+        const auto back = ProjectStore::fromJson(o, &error);
+        QVERIFY2(back, qPrintable(error));
+        const Segment &s = back->tracks[1].segments[0];
+        QVERIFY(s.animationIn && s.animationIn->kind == AnimationKind::Fade);
+        QCOMPARE(s.animationIn->duration, 700000);
+        QVERIFY(s.animationOut && s.animationOut->kind == AnimationKind::ZoomIn);
+        // Ao regravar, o tipo novo vira "fade" e o loop some.
+        const QJsonObject again = ProjectStore::toJson(*back)["tracks"][1]["segments"][0].toObject();
+        QCOMPARE(again["animationIn"]["kind"].toString(), QStringLiteral("fade"));
+        QVERIFY(!again.contains(QStringLiteral("animationLoop")));
+
+        // O tipo ainda precisa ser texto, e a duração continua obrigatória.
+        QJsonObject bad = o;
+        QJsonArray badTracks = bad["tracks"].toArray();
+        QJsonObject badTrack = badTracks[1].toObject();
+        QJsonArray badSegments = badTrack["segments"].toArray();
+        QJsonObject badSeg = badSegments[0].toObject();
+        badSeg["animationIn"] = QJsonObject{{"kind", 3}, {"duration", 700000}};
+        badSegments[0] = badSeg;
+        badTrack["segments"] = badSegments;
+        badTracks[1] = badTrack;
+        bad["tracks"] = badTracks;
+        QVERIFY(!ProjectStore::fromJson(bad, &error));
+        QVERIFY2(error.contains(QStringLiteral("animationIn.kind")), qPrintable(error));
+    }
+
     // Estilo de texto sem campos (versões anteriores) fica com o padrão
     void textStyleDefaults()
     {
