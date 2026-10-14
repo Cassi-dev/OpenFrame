@@ -303,6 +303,17 @@ enum TextMotion {
         return pose
     }
 
+    /// Índices dos glifos sorteáveis para uma célula: os que cabem com até 30% de folga; se forem
+    /// menos de 4, os 4 de largura mais próxima. A ordem segue a do conjunto (determinístico).
+    static func scrambleCandidates(_ glyphs: [ScrambleGlyph], cellWidth: CGFloat) -> [Int] {
+        let fitting = glyphs.indices.filter { glyphs[$0].advance <= cellWidth * 1.3 }
+        if fitting.count >= 4 { return fitting }
+        let nearest = glyphs.indices.sorted {
+            (abs(glyphs[$0].advance - cellWidth), $0) < (abs(glyphs[$1].advance - cellWidth), $1)
+        }
+        return Array(nearest.prefix(4)).sorted()
+    }
+
     /// Caractere aleatório determinístico da unidade `index` no passo de tempo `step` (~20 trocas/s).
     static func scrambleIndex(index: Int, step: Int, count: Int) -> Int {
         var z = UInt64(bitPattern: Int64(index)) &* 0x9E37_79B9_7F4A_7C15 &+ UInt64(bitPattern: Int64(step)) &* 0xBF58_476D_1CE4_E5B9
@@ -338,12 +349,11 @@ enum TextMotion {
             var fill = unit.fill
             var stroke = unit.stroke
             if pose.scramble, !scramble.isEmpty {
-                let g = scramble[scrambleIndex(index: i, step: step, count: scramble.count)]
-                // Centralizado na célula da letra; mais estreito quando o sorteado é mais largo.
-                let fit = min(1, max(unit.cellWidth, 1) / max(g.advance, 1))
-                let move = CGAffineTransform(translationX: -g.advance / 2, y: 0)
-                    .concatenating(CGAffineTransform(scaleX: fit, y: fit))
-                    .concatenating(CGAffineTransform(translationX: unit.cellCenterX, y: unit.baseline))
+                // Mesmo tamanho de fonte e mesma linha de base da letra, centralizado na célula.
+                // O sorteio só usa glifos de largura parecida, para não encavalar nas vizinhas.
+                let pool = scrambleCandidates(scramble, cellWidth: unit.cellWidth)
+                let g = scramble[pool[scrambleIndex(index: i, step: step, count: pool.count)]]
+                let move = CGAffineTransform(translationX: unit.cellCenterX - g.advance / 2, y: unit.baseline)
                 fill = g.fill.transformed(by: move)
                 stroke = g.stroke?.transformed(by: move)
             }
@@ -362,13 +372,14 @@ enum TextMotion {
             fills = posed(fill).composited(over: fills)
             if let stroke { strokes = posed(stroke).composited(over: strokes) }
         }
-        var glyphs = fills.composited(over: strokes)
+        let glyphs = fills.composited(over: strokes)
         let rect = CGRect(origin: .zero, size: set.size)
 
-        // Loops que dependem das letras separadas da sombra.
+        // Loops que dependem das letras separadas da sombra (a sombra sai só das letras).
         let k = canvas.height
-        if let shine = state.shine { glyphs = applyShine(glyphs, in: rect, position: shine.position, strength: shine.strength) }
-        var out = state.glow > 0 ? applyGlow(glyphs, amount: state.glow, sigma: 0.012 * k) : glyphs
+        var out = glyphs
+        if let shine = state.shine { out = applyShine(out, in: rect, position: shine.position, strength: shine.strength) }
+        if state.glow > 0 { out = applyGlow(out, amount: state.glow, sigma: 0.012 * k) }
         let style = set.style
         if style.shadow, style.shadowColor.a > 0 {
             let c = style.shadowColor
@@ -404,31 +415,44 @@ enum TextMotion {
         return img.composited(over: halo)
     }
 
-    /// Faixa de luz diagonal (~20°) que atravessa `rect` da esquerda para a direita conforme
-    /// `position` vai de 0 a 1; só aparece onde a camada tem alfa (source-atop).
+    /// Reflexo de luz: faixa diagonal (~20°) que atravessa `rect` da esquerda para a direita
+    /// conforme `position` vai de 0 a 1. Dentro da camada, a luz levemente quente entra em
+    /// source-atop (aparece até em texto branco, pelo tom); fora dela, um brilho vaza ao longo
+    /// da faixa (a faixa recortada pela camada desfocada), por baixo da camada.
     static func applyShine(_ img: CIImage, in rect: CGRect, position: Double, strength: Double) -> CIImage {
-        guard strength > 0.001, rect.width > 0, rect.height > 0 else { return img }
+        guard strength > 0.001, rect.width > 0, rect.height > 0, !img.extent.isEmpty else { return img }
         let angle = 20 * Double.pi / 180
         let dir = CGPoint(x: cos(angle), y: sin(angle))
         let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
                        CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)]
         let projections = corners.map { $0.x * dir.x + $0.y * dir.y }
-        let band = 0.35 * min(rect.width, rect.height) + 0.05 * max(rect.width, rect.height)
-        let from = projections.min()! - band / 2
-        let to = projections.max()! + band / 2
+        let short = min(rect.width, rect.height)
+        let band = 0.55 * short + 0.08 * max(rect.width, rect.height)
+        // Começa e termina com a faixa ainda tocando a caixa: a passagem aparece em mais quadros.
+        let from = projections.min()! - band * 0.3
+        let to = projections.max()! + band * 0.3
         let c = from + (to - from) * position
         func point(_ t: CGFloat) -> CIVector { CIVector(x: t * dir.x, y: t * dir.y) }
-        let clear = CIColor(red: 1, green: 1, blue: 1, alpha: 0)
-        let white = CIColor(red: 1, green: 1, blue: 1, alpha: 1)
-        let rise = CIFilter(name: "CILinearGradient", parameters: [
-            "inputPoint0": point(c - band / 2), "inputPoint1": point(c), "inputColor0": clear, "inputColor1": white,
+        // Tom levemente quente: em texto branco, a faixa aparece pela cor.
+        let warm = CIColor(red: 1, green: 0.93, blue: 0.8, alpha: 1)
+        let clear = CIColor(red: 1, green: 0.93, blue: 0.8, alpha: 0)
+        // Rampas suaves (smoothstep) dos dois lados do centro: o mínimo das duas é a faixa.
+        let rise = CIFilter(name: "CISmoothLinearGradient", parameters: [
+            "inputPoint0": point(c - band / 2), "inputPoint1": point(c), "inputColor0": clear, "inputColor1": warm,
         ])!.outputImage!
-        let fall = CIFilter(name: "CILinearGradient", parameters: [
-            "inputPoint0": point(c), "inputPoint1": point(c + band / 2), "inputColor0": white, "inputColor1": clear,
+        let fall = CIFilter(name: "CISmoothLinearGradient", parameters: [
+            "inputPoint0": point(c), "inputPoint1": point(c + band / 2), "inputColor0": warm, "inputColor1": clear,
         ])!.outputImage!
         let light = rise.applyingFilter("CIMinimumCompositing", parameters: [kCIInputBackgroundImageKey: fall])
-            .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.8 * strength)])
-            .cropped(to: img.extent)
-        return light.applyingFilter("CISourceAtopCompositing", parameters: [kCIInputBackgroundImageKey: img])
+        func scaled(_ image: CIImage, _ a: Double) -> CIImage {
+            image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: a)])
+        }
+        let inside = scaled(light, 0.85 * strength).cropped(to: img.extent)
+            .applyingFilter("CISourceAtopCompositing", parameters: [kCIInputBackgroundImageKey: img])
+        // Brilho que vaza: só onde a camada desfocada tem alfa, e mais forte que ela perto das letras.
+        let spread = img.applyingGaussianBlur(sigma: Double(0.06 * short + 2))
+        let halo = scaled(light, min(1, 1.1 * strength))
+            .applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: spread])
+        return inside.composited(over: halo)
     }
 }

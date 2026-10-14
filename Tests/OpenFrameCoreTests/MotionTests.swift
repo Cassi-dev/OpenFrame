@@ -136,6 +136,44 @@ struct MotionTests {
         #expect(picks.count > 15)
     }
 
+    @Test("Decodificar sorteia no tamanho da fonte, na linha de base e com largura parecida")
+    func decodeGlyphSize() throws {
+        var style = TextStyle()
+        style.fontSize = 0.15
+        let canvas = CGSize(width: 960, height: 540)
+        let glyphs = TextRenderer.shared.scrambleGlyphs(style: style, canvas: canvas)
+        #expect(glyphs.count == TextRenderer.scrambleCharacters.count)
+        // Um "E" sorteado tem a mesma altura de um "E" do texto: o glifo não é reduzido.
+        let content = TextContent(text: "E", style: style)
+        let set = try #require(TextRenderer.shared.units(for: content, canvas: canvas, granularity: .letter))
+        let unit = set.units[0]
+        let e = glyphs[TextRenderer.scrambleCharacters.firstIndex(of: "E")!]
+        #expect(abs(e.fill.extent.height - unit.fill.extent.height) <= 1)
+        #expect(abs(e.fill.extent.minY + unit.baseline - unit.fill.extent.minY) <= 1)
+
+        // Célula estreita (um "i"): só glifos estreitos; célula larga: quase todos.
+        let narrow = TextMotion.scrambleCandidates(glyphs, cellWidth: glyphs.map(\.advance).min()!)
+        #expect(narrow.count >= 4 && narrow.count < glyphs.count / 2)
+        let wide = TextMotion.scrambleCandidates(glyphs, cellWidth: glyphs.map(\.advance).max()!)
+        #expect(wide.count == glyphs.count)
+
+        // No quadro, a altura do que aparece não muda entre o sorteio e a letra final.
+        var state = AnimationState()
+        state.unit = UnitAnimation(kind: .decode, progress: 0.3, exiting: false)
+        let word = TextContent(text: "EEEE", style: style)
+        let scrambled = try #require(TextMotion.image(word, canvas: canvas, state: state, granularity: .letter))
+        let final = try #require(TextMotion.image(word, canvas: canvas, state: AnimationState(), granularity: .letter))
+        func inkRows(_ r: (image: CIImage, size: CGSize)) -> ClosedRange<Int>? {
+            let bmp = Bitmap(r.image.cropped(to: CGRect(origin: .zero, size: r.size)), size: r.size)
+            let rows = (0..<bmp.height).filter { y in (0..<bmp.width).contains { bmp.data[(y * bmp.width + $0) * 4 + 3] > 200 } }
+            return rows.first.map { $0...rows.last! }
+        }
+        let a = try #require(inkRows(scrambled)), b = try #require(inkRows(final))
+        // Caixa alta e números ficam entre a linha de base e a altura das maiúsculas (o "@" e o "$" passam um pouco).
+        #expect(abs(a.upperBound - b.upperBound) <= Int(0.25 * 0.15 * 540))
+        #expect(a.count >= b.count - 2)
+    }
+
     @Test("Revelar por máscara não desenha fora da faixa da linha")
     func maskRevealStaysInBand() throws {
         var style = TextStyle()
@@ -207,6 +245,26 @@ struct MotionTests {
         }
         // Um quarto de ciclo depois do início: seno no máximo e faixa de luz no meio do texto.
         #expect(difference(render(p, at: 0), render(p, at: 500_000)) > size.area / 20)
+    }
+
+    @Test("Reflexo aparece em texto branco, dentro e em volta das letras")
+    func shineOnWhiteText() {
+        let (rest, _) = textProject()
+        let (p, _) = textProject { $0.animationLoop = LoopAnimation(kind: .shine, period: 2_000_000, intensity: 1) }
+        // Fora da passagem (60% em diante do ciclo), igual ao repouso.
+        #expect(maxDifference(render(p, at: 1_600_000), render(rest, at: 1_600_000)) <= 8)
+        // No meio da varredura, muda o texto branco e o entorno.
+        let lit = render(p, at: 580_000)
+        let plain = render(rest, at: 580_000)
+        #expect(difference(lit, plain) > size.area / 4)
+        var aroundLetters = 0, onLetters = 0
+        for i in stride(from: 0, to: lit.data.count, by: 4) where lit.data[i] != plain.data[i] || lit.data[i + 2] != plain.data[i + 2] {
+            if plain.data[i] > 240 { onLetters += 1 } else { aroundLetters += 1 }
+        }
+        #expect(onLetters > 100 && aroundLetters > 100)
+        // A varredura passa em vários quadros do ciclo (8 por ciclo).
+        let swept = (0..<8).filter { difference(render(p, at: Micros($0) * 250_000), render(rest, at: Micros($0) * 250_000)) > size.area / 8 }
+        #expect(swept.count >= 4)
     }
 
     @Test("Loop numa foto também")
