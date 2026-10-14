@@ -330,6 +330,10 @@ public struct TextStyle: Codable, Hashable, Sendable {
 public struct TextContent: Codable, Hashable, Sendable {
     public var text: String
     public var style: TextStyle
+    /// Tempos das palavras (legendas automáticas): a palavra i casa com a i-ésima palavra do texto.
+    /// Opcionais: sem eles a chave não é gravada e projetos antigos abrem iguais.
+    public var words: [CaptionWord]?
+    public var highlight: WordHighlight?
 
     public init(text: String, style: TextStyle = TextStyle()) {
         self.text = text
