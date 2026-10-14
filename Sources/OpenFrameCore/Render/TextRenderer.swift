@@ -47,7 +47,14 @@ final class TextRenderer: @unchecked Sendable {
     /// Espessura extra do negrito sintético, em em.
     private static let syntheticBold: CGFloat = 0.03
 
-    private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
+    private struct Layout {
+        let face: FontFace
+        let fontPx: CGFloat
+        let textSize: CGSize
+        let frame: CTFrame
+    }
+
+    private func layout(_ text: String, style: TextStyle, canvas: CGSize) -> Layout {
         let fontPx = max(4, CGFloat(style.fontSize) * canvas.height)
         let face = makeFont(style, size: fontPx)
 
@@ -68,6 +75,33 @@ final class TextRenderer: @unchecked Sendable {
         let textSize = CGSize(width: ceil(suggested.width) + 1, height: ceil(suggested.height) + 1)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0),
                                              CGPath(rect: CGRect(origin: .zero, size: textSize), transform: nil), nil)
+        return Layout(face: face, fontPx: fontPx, textSize: textSize, frame: frame)
+    }
+
+    private let sizes = NSCache<NSString, NSValue>()
+
+    /// Tamanho em pixels da caixa do texto mais o fundo (se ligado), sem as
+    /// margens de sombra. A imagem de `image(for:)` tem o mesmo centro.
+    func boxSize(for content: TextContent, canvas: CGSize) -> CGSize? {
+        let text = Self.cased(content.text, content.style.textCase)
+        guard !text.isEmpty, canvas.height > 0 else { return nil }
+        let key = "\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))" as NSString
+        if let cached = sizes.object(forKey: key) { return cached.sizeValue }
+        let style = content.style
+        let l = layout(text, style: style, canvas: canvas)
+        let bgX = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingX)) * l.fontPx : 0
+        let bgY = style.backgroundEnabled ? max(0, CGFloat(style.backgroundPaddingY)) * l.fontPx : 0
+        let size = CGSize(width: l.textSize.width + bgX * 2, height: l.textSize.height + bgY * 2)
+        sizes.setObject(NSValue(size: size), forKey: key)
+        return size
+    }
+
+    private func render(_ text: String, style: TextStyle, canvas: CGSize, visibleCharacters: Int) -> CIImage? {
+        let l = layout(text, style: style, canvas: canvas)
+        let fontPx = l.fontPx
+        let face = l.face
+        let textSize = l.textSize
+        let frame = l.frame
         let cut = text.index(text.startIndex, offsetBy: min(visibleCharacters, text.count)).utf16Offset(in: text)
         let shapes = collectShapes(frame, text: text as NSString, visibleUTF16: cut, style: style, face: face, fontPx: fontPx)
 

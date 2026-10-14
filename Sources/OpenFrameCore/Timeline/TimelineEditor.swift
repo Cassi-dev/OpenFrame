@@ -310,6 +310,24 @@ public enum TimelineEditor {
         relayoutMain(&p)
     }
 
+    /// Grava posição/escala/rotação no lugar certo: `text.style` no texto, `transform` no visual.
+    public static func setPlacement(_ p: inout Project, segment id: UUID, center: CGPoint, scale: Double, rotation: Double) {
+        let scale = max(scale, 0.01)
+        update(&p, segment: id) { s in
+            if s.text != nil {
+                s.text!.style.x = center.x
+                s.text!.style.y = center.y
+                s.text!.style.scale = scale
+                s.text!.style.rotation = rotation
+            } else {
+                s.transform.x = center.x
+                s.transform.y = center.y
+                s.transform.scale = scale
+                s.transform.rotation = rotation
+            }
+        }
+    }
+
     /// Vídeo e áudio têm duração limitada pelo arquivo; foto e texto não.
     private static func isTimed(_ s: Segment, in p: Project) -> Bool {
         guard let m = p.material(s.materialId) else { return false }

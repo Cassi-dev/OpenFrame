@@ -11,6 +11,8 @@ public struct RenderPlan: @unchecked Sendable {
     public var trackIDs: [UUID: CMPersistentTrackID]
     /// Segmento de vídeo → orientação de exibição (vídeos gravados em pé).
     public var orientations: [UUID: CGImagePropertyOrientation]
+    /// Material de foto → imagem já carregada (prévias que não vêm de arquivo).
+    var stills: [UUID: CIImage] = [:]
 
     public init(project: Project, renderSize: CGSize,
                 trackIDs: [UUID: CMPersistentTrackID] = [:],
@@ -131,7 +133,7 @@ public final class FrameRenderer: @unchecked Sendable {
             img = frame
             if let o = plan.orientations[seg.id], o != .up { img = img.oriented(o) }
         case .photo:
-            guard let photo = photo(m) else { return nil }
+            guard let photo = plan.stills[m.id] ?? photo(m) else { return nil }
             img = photo
         case .audio:
             return nil
