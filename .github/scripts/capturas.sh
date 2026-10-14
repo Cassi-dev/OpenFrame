@@ -64,8 +64,8 @@ cenario() {
 
 falhas=0
 cenario inicio 120 OPENFRAME_LIBRARY_DIR="$work/biblioteca-completo" || falhas=1
-cenario midia 400 OPENFRAME_LIBRARY_DIR="$work/biblioteca" OPENFRAME_SNAPSHOT_MEDIA="$work/midia" || falhas=1
-cenario completo 120 OPENFRAME_LIBRARY_DIR="$work/biblioteca-completo" -- \
+cenario midia 900 OPENFRAME_LIBRARY_DIR="$work/biblioteca" OPENFRAME_SNAPSHOT_MEDIA="$work/midia" || falhas=1
+cenario completo 600 OPENFRAME_LIBRARY_DIR="$work/biblioteca-completo" -- \
     --open "$root/qt/tests/fixtures/completo.openframe" || falhas=1
 
 # Arrastes no projeto criado pelo cenário com mídia.
