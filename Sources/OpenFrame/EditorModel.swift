@@ -78,9 +78,10 @@ final class EditorModel {
     var inspectorTab = InspectorTab.basic
     /// Pedido para pôr o foco no campo do texto (duplo clique num texto no preview).
     var focusTextEditor = false
-    /// Manipulação no preview: guias de encaixe e graus durante o giro.
+    /// Manipulação no preview: guias de encaixe, graus durante o giro e largura pedida pelas alças laterais.
     var canvasGuides: [SnapGuide] = []
     var canvasRotationLabel: Double?
+    var canvasWidthDrag: WidthDragState?
     @ObservationIgnored var placementDrag: PlacementDrag?
     /// Quadros das miniaturas animadas do inspetor.
     @ObservationIgnored let animationStrips = FrameStripStore()
@@ -788,7 +789,7 @@ final class EditorModel {
             return
         }
         if isPlaying { togglePlay() }
-        let whisper = g.model, layout = g.layout, language = g.language
+        let whisper = g.model, layout = g.look.layout, language = g.language
         let replacing = g.replacePrevious, color = g.highlightColor
         let store = g.store
         g.cancelDownload(whisper)

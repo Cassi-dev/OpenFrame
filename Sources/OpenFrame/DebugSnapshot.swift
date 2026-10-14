@@ -39,6 +39,11 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "legendas-estilos" {
+                await captionStylesScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -583,7 +588,8 @@ enum DebugSnapshot {
         let renderer = ImageRenderer(content: SelectionOverlayDrawing(
             frame: model.selectionFrame(mapping: mapping),
             guides: model.canvasGuides.map { OverlayGuide($0, mapping: mapping) },
-            rotationLabel: model.canvasRotationLabel)
+            rotationLabel: model.canvasRotationLabel,
+            widthLabel: model.canvasWidthDrag?.label)
             .frame(width: mapping.size.width, height: mapping.size.height))
         let scale = rep.size.width > 0 ? CGFloat(rep.pixelsWide) / rep.size.width : 2
         renderer.scale = scale
@@ -695,12 +701,12 @@ enum DebugSnapshot {
         model.presentAutoCaptions()
         await wait(1.5)
         capture("legendas-1-opcoes-sem-modelo", to: dir)
-        generation.layout = .highlight
+        generation.look = .highlight
         generation.downloads[.turbo] = 0.37
         await wait(1.5)
         capture("legendas-2-destaque-baixando-modelo", to: dir)
         generation.downloads = [:]
-        generation.layout = .punch
+        generation.look = .punch
         await wait(1.5)
         capture("legendas-3-impacto", to: dir)
         generation.includesDownload = true
@@ -724,7 +730,7 @@ enum DebugSnapshot {
             generation.refreshInstalled()
         }
         generation.model = .base
-        generation.layout = .phrases
+        generation.look = .phrases
         await wait(0.6)
         capture("legendas-6-opcoes-modelo-instalado", to: dir)
 
@@ -732,7 +738,7 @@ enum DebugSnapshot {
         var shotProgress = false
         for (index, layout) in CaptionLayout.allCases.enumerated() {
             if !model.showAutoCaptions { model.presentAutoCaptions() }
-            generation.layout = layout
+            generation.look = CaptionLookDraft(rawValue: layout.rawValue) ?? .phrases
             generation.replacePrevious = true
             await wait(0.5)
             model.generateCaptions()
@@ -797,6 +803,119 @@ enum DebugSnapshot {
         model.undo()
         let after = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments.count ?? 0
         log("desfazer a última geração: \(before) → \(after) legendas automáticas")
+    }
+
+    /// Rodada 3 das legendas (estilos e largura da caixa): a janela com as predefinições agrupadas,
+    /// cada predefinição nova no preview no meio da fala, as alças laterais e a mesma legenda antes
+    /// e depois de alargar pela alça (o gesto passa pelas mesmas funções do mouse).
+    /// Mesmo ambiente do cenário `legendas` (fala, transcrição falsa, pasta de modelos temporária).
+    private static func captionStylesScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let env = ProcessInfo.processInfo.environment
+        let generation = model.captionGeneration
+        model.libraryPanel = .captions
+        model.libraryVisible = true
+        if let speech = env["OPENFRAME_SNAPSHOT_SPEECH"] {
+            let url = URL(fileURLWithPath: speech)
+            model.importMedia([url])
+            for _ in 0..<50 where !model.project.materials.contains(where: { $0.path == url.path }) { await wait(0.1) }
+            if let m = model.project.materials.first(where: { $0.path == url.path }) { model.addToTimeline(m) }
+        }
+        if env["OPENFRAME_MODELS_DIR"] != nil, env["OPENFRAME_FAKE_TRANSCRIPTION"] == "1" {
+            let url = generation.store.url(for: .base)
+            try? FileManager.default.createDirectory(at: generation.store.directory, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let h = try? FileHandle(forWritingTo: url) {
+                try? h.truncate(atOffset: UInt64(WhisperModel.base.byteSize))
+                try? h.close()
+            }
+            generation.refreshInstalled()
+        }
+        generation.model = .base
+        await wait(1)
+
+        // A janela: as prévias de todos os cartões precisam de alguns segundos.
+        model.presentAutoCaptions()
+        generation.look = .phrases
+        await wait(6)
+        capture("estilos-1-janela", to: dir)
+        generation.look = .rise
+        await wait(1.5)
+        capture("estilos-2-janela-surgir-cor", to: dir)
+
+        /// Gera com a predefinição e devolve a faixa automática.
+        func generate(_ look: CaptionLookDraft) async -> Track? {
+            if !model.showAutoCaptions { model.presentAutoCaptions() }
+            generation.look = look
+            generation.replacePrevious = true
+            await wait(0.3)
+            model.generateCaptions()
+            for _ in 0..<300 where generation.phase.isRunning { await wait(0.02) }
+            log("\(look.rawValue): \(generation.phase)")
+            model.showAutoCaptions = false
+            generation.setPhase(.configuring)
+            await wait(0.8)
+            return model.project.tracks.first(where: { $0.isAutoCaptions })
+        }
+        /// Playhead no meio da palavra do meio da legenda.
+        func seekMid(_ seg: Segment) {
+            guard let words = seg.text?.words, !words.isEmpty else { return model.seek(to: seg.targetStart) }
+            let w = words[words.count / 2]
+            model.seek(to: seg.targetStart + (w.start + w.end) / 2)
+        }
+
+        for look in CaptionLookDraft.allCases where look.group != .classic {
+            guard let track = await generate(look) else { continue }
+            seekMid(track.segments[min(2, track.segments.count - 1)])
+            model.selection = nil
+            await wait(1.2)
+            await captureComposite("estilos-preview-\(look.rawValue)", model: model, to: dir)
+        }
+
+        // Largura da caixa: Frases, a legenda mais longa (2 linhas) selecionada.
+        guard let track = await generate(.phrases), let player = playerView(),
+              let seg = track.segments.max(by: { ($0.text?.text.count ?? 0) < ($1.text?.text.count ?? 0) }) else { return }
+        seekMid(seg)
+        model.selection = seg.id
+        await wait(1.2)
+        let mapping = CanvasMapping(size: player.bounds.size)
+        func describe() -> String {
+            let p = model.project
+            let widths = Set(p.tracks.first(where: { $0.isAutoCaptions })?.segments.compactMap { $0.text?.style.maxWidth } ?? [])
+            let box = model.canvasBoxes().first { $0.id == seg.id }
+            return "maxWidth na faixa \(widths.sorted().map { String(format: "%.3f", $0) }), caixa "
+                + (box.map { String(format: "%.3f × %.3f", $0.size.width, $0.size.height) } ?? "?")
+                + "; outros textos: \(p.tracks.filter { !$0.isAutoCaptions }.flatMap(\.segments).compactMap { $0.text?.style.maxWidth })"
+        }
+        guard let frame = model.selectionFrame(mapping: mapping) else { return log("largura: sem moldura") }
+        let start = frame.edgeHandle(.right)
+        log("largura: alça sob o ponto da direita = \(String(describing: frame.handle(at: start))), "
+            + "da esquerda = \(String(describing: frame.handle(at: frame.edgeHandle(.left))))")
+        log("largura antes: \(describe())")
+        await captureComposite("estilos-3-alcas", model: model, to: dir)
+
+        model.canvasPointerDown(at: start, mapping: mapping)
+        let steps = 12
+        let travel = mapping.size.width * 0.22
+        for step in 1...steps {
+            model.canvasPointerMoved(to: start + frame.right * (travel * CGFloat(step) / CGFloat(steps)), mapping: mapping)
+            await wait(0.05)
+        }
+        await wait(1)
+        log("largura arrastando: etiqueta \(model.canvasWidthDrag?.label ?? "-"), \(describe())")
+        await captureComposite("estilos-4-arrastando", model: model, to: dir)
+        model.canvasPointerUp()
+        await wait(1.2)
+        log("largura depois: \(describe())")
+        await captureComposite("estilos-5-depois-de-alargar", model: model, to: dir)
+        model.undo()
+        log("largura, um desfazer: \(describe())")
+        model.redo()
+        await wait(0.5)
+
+        model.inspectorTab = .text
+        await wait(1)
+        await captureInspectorScrolled("estilos-6-inspetor-largura", fractions: [1], to: dir)
     }
 
     private static func logZoom(_ step: String, _ model: EditorModel) {

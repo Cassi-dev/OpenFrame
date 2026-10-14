@@ -665,8 +665,59 @@ private struct TextTab: View {
         ParamSlider(title: "Escala", value: value(\.scale), range: 0.2...3, defaultValue: 1, format: percent)
         ParamSlider(title: "Rotação", value: value(\.rotation), range: -180...180,
                     format: { String(format: "%.0f°", $0) })
-        ParamSlider(title: "Largura máxima", value: value(\.maxWidth), range: 0.2...1,
-                    defaultValue: 0.9, format: percent)
+        BoxWidthControl(value: boxWidth, wholeTrack: model.isInAutoCaptions(id))
+    }
+
+    /// Largura da caixa pela mesma função das alças do preview: numa legenda automática, vale para a faixa.
+    private var boxWidth: Binding<Double> {
+        Binding(get: { style.wrappedValue.maxWidth },
+                set: { w in model.mutate(coalesce: "\(id)boxWidth") { TextBoxWidth.set(&$0, segment: id, maxWidth: w) } })
+    }
+}
+
+/// "Largura da caixa": slider e campo em % da largura do quadro. Passa de 100% para caber numa linha só.
+private struct BoxWidthControl: View {
+    @Binding var value: Double
+    let wholeTrack: Bool
+    @State private var typed = 0
+    @FocusState private var focused: Bool
+
+    private static let defaultValue = TextStyle().maxWidth
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Text(wholeTrack ? "Largura da caixa · todas as legendas" : "Largura da caixa")
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { value = Self.defaultValue }
+                    .help(wholeTrack ? "Vale para todas as legendas automáticas da faixa. Clique duas vezes para redefinir."
+                                     : "Clique duas vezes para redefinir")
+                Spacer(minLength: 6)
+                TextField("", value: $typed, format: .number.grouping(.never))
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(width: 34)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onChange(of: focused) { if !focused { commit() } }
+                Text("%").foregroundStyle(Theme.textTertiary)
+            }
+            .font(Theme.font(12))
+            ThinSlider(value: $value, range: TextBoxWidth.range)
+        }
+        .onAppear { typed = Self.percent(value) }
+        .onChange(of: value) { if !focused { typed = Self.percent(value) } }
+    }
+
+    private static func percent(_ w: Double) -> Int { Int((w * 100).rounded()) }
+
+    private func commit() {
+        let w = min(max(Double(typed) / 100, TextBoxWidth.range.lowerBound), TextBoxWidth.range.upperBound)
+        if Self.percent(w) != Self.percent(value) { value = w }
+        typed = Self.percent(w)
     }
 }
 
