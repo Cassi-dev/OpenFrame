@@ -79,8 +79,9 @@ public enum Transcriber {
         ("uk", "Ucraniano"), ("sv", "Sueco"), ("he", "Hebraico"), ("id", "Indonésio"), ("vi", "Vietnamita"),
     ]
 
-    /// Trecho da timeline a transcrever: o projeto inteiro ou o segmento.
-    static func sourceRange(project: Project, source: TranscriptionSource) throws -> TimeRange {
+    /// Trecho da timeline a transcrever: o projeto inteiro ou o segmento (é o `range` do
+    /// `CaptionBuilder.apply` ao substituir).
+    public static func sourceRange(project: Project, source: TranscriptionSource) throws -> TimeRange {
         switch source {
         case .timeline:
             guard project.duration > 0 else { throw TranscriptionError.noAudio }

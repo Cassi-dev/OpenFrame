@@ -257,9 +257,12 @@ public enum CaptionBuilder {
     /// Cria (ou substitui, se `replacing`) uma faixa de texto só das legendas automáticas e devolve o id dela.
     /// Cada legenda vira um segmento de texto com o estilo do layout, `words` (relativo ao segmento) e
     /// `highlight` (no layout destaque). O impacto ganha uma entrada curta (Elástico).
+    ///
+    /// Substituir troca só as legendas automáticas que tocam `range` (o trecho transcrito; sem ele, o
+    /// trecho das legendas novas): gerar de um clipe não apaga as dos outros clipes.
     @discardableResult
     public static func apply(_ cues: [CaptionCue], layout: CaptionLayout, style: TextStyle?, to project: inout Project,
-                             replacing: Bool) -> UUID {
+                             replacing: Bool, range: TimeRange? = nil) -> UUID {
         let style = style ?? defaultStyle(layout)
         let segments = cues.map { cue -> Segment in
             var content = TextContent(text: cue.text, style: style)
@@ -275,10 +278,16 @@ public enum CaptionBuilder {
             return seg
         }
         if replacing, let t = project.tracks.firstIndex(where: { $0.isAutoCaptions }) {
-            project.tracks[t].segments = segments
-            // Outras faixas automáticas antigas somem: fica uma só.
             let keep = project.tracks[t].id
-            project.tracks.removeAll { $0.isAutoCaptions && $0.id != keep }
+            if let span = range ?? cues.first.map({ TimeRange(start: $0.start, duration: cues.last!.end - $0.start) }) {
+                for k in project.tracks.indices where project.tracks[k].isAutoCaptions {
+                    project.tracks[k].segments.removeAll { $0.targetStart < span.end && span.start < $0.targetEnd }
+                }
+            }
+            project.tracks[t].segments += segments
+            project.tracks[t].segments.sort { $0.targetStart < $1.targetStart }
+            // Faixas automáticas que ficaram vazias somem.
+            project.tracks.removeAll { $0.isAutoCaptions && $0.id != keep && $0.segments.isEmpty }
             return keep
         }
         var track = Track(kind: .text)

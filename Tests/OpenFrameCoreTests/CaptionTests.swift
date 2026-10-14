@@ -232,7 +232,9 @@ struct CaptionBuilderTests {
         let again = CaptionBuilder.cues(from: spokenWords("outra fala"), layout: .highlight)
         var style = CaptionBuilder.defaultStyle(.highlight)
         style.color = RGBA(0, 1, 0)
-        let second = CaptionBuilder.apply(again, layout: .highlight, style: style, to: &p, replacing: true)
+        // A timeline inteira foi transcrita de novo.
+        let second = CaptionBuilder.apply(again, layout: .highlight, style: style, to: &p, replacing: true,
+                                          range: TimeRange(start: 0, duration: p.duration))
         #expect(second == first)
         #expect(p.tracks.filter(\.isAutoCaptions).count == 1)
         let replaced = p.tracks.first { $0.id == second }!
@@ -240,6 +242,17 @@ struct CaptionBuilderTests {
         #expect(replaced.segments[0].text!.highlight == WordHighlight())
         #expect(replaced.segments[0].text!.style.color == RGBA(0, 1, 0))
         #expect(p.segment(user) != nil)
+
+        // Substituir só o trecho transcrito: as legendas de fora ficam.
+        let late = CaptionBuilder.cues(from: spokenWords("mais tarde", start: 60_000_000), layout: .highlight)
+        CaptionBuilder.apply(late, layout: .highlight, style: nil, to: &p, replacing: true,
+                             range: TimeRange(start: 59_000_000, duration: 5_000_000))
+        let both = p.tracks.first { $0.id == second }!.segments.map { $0.text!.text }
+        #expect(both == again.map(\.text) + late.map(\.text))
+        let lateAgain = CaptionBuilder.cues(from: spokenWords("de novo", start: 60_000_000), layout: .highlight)
+        CaptionBuilder.apply(lateAgain, layout: .highlight, style: nil, to: &p, replacing: true,
+                             range: TimeRange(start: 59_000_000, duration: 5_000_000))
+        #expect(p.tracks.first { $0.id == second }!.segments.map { $0.text!.text } == again.map(\.text) + lateAgain.map(\.text))
 
         // Sem substituir: faixa nova.
         let third = CaptionBuilder.apply(again, layout: .phrases, style: nil, to: &p, replacing: false)
