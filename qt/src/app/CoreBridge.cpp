@@ -22,12 +22,8 @@
 #define OF_HAS_WAVEFORM 1
 #endif
 #if __has_include("Renderer.h")
-#include "Renderer.h"
+#include "Renderer.h" // também declara EffectPreview
 #define OF_HAS_RENDERER 1
-#endif
-#if __has_include("EffectPreview.h")
-#include "EffectPreview.h"
-#define OF_HAS_EFFECT_PREVIEW 1
 #endif
 #if __has_include("Player.h")
 #include "Player.h"
@@ -95,7 +91,7 @@ QVector<float> peaks(const Material &m)
 QImage renderFrame(const Project &p, Micros t, QSize size)
 {
 #ifdef OF_HAS_RENDERER
-    return Renderer::render(p, t, size);
+    return Renderer::shared().render(p, t, size);
 #else
     Q_UNUSED(p)
     Q_UNUSED(t)
@@ -106,11 +102,12 @@ QImage renderFrame(const Project &p, Micros t, QSize size)
 
 QImage filterPreview(const QImage &base, FilterPreset preset)
 {
-#ifdef OF_HAS_EFFECT_PREVIEW
+#ifdef OF_HAS_RENDERER
     return EffectPreview::filtered(base, preset);
 #else
+    Q_UNUSED(base)
     Q_UNUSED(preset)
-    return base.isNull() ? QImage() : QImage();
+    return {};
 #endif
 }
 
