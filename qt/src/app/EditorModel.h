@@ -99,6 +99,9 @@ class EditorModel : public QObject
     // Legendas automáticas (EditorCaptions.cpp)
     Q_PROPERTY(CaptionGeneration *captions READ captions CONSTANT)
     Q_PROPERTY(bool showAutoCaptions READ showAutoCaptions WRITE setShowAutoCaptions NOTIFY uiChanged)
+    /// Muda quando chegam miniaturas ao MediaCache: as ligações que dependem delas
+    /// (como `filterPreview`) leem esta propriedade para se refazer.
+    Q_PROPERTY(int thumbnailRevision READ thumbnailRevision NOTIFY thumbnailsChanged)
     /// Por que a fonte escolhida não pode ser transcrita (vazio = pode).
     Q_PROPERTY(QString captionSourceProblem READ captionSourceProblem NOTIFY captionStateChanged)
     /// O selecionado é um clipe com áudio (fonte "Clipe selecionado").
@@ -292,6 +295,10 @@ public:
     Q_INVOKABLE QStringList suggestedFontFamilies() const;
     Q_INVOKABLE QStringList fontFaces(const QString &family) const;
     Q_INVOKABLE QVariantList filterOptions() const;
+    /// `image://filters/<material>/<filtro>`, ou vazio se o material ainda não tem
+    /// miniatura (mídia ausente ou em leitura): assim a aba não pede imagem que não existe.
+    Q_INVOKABLE QString filterPreview(const QString &materialId, const QString &filter) const;
+    int thumbnailRevision() const { return m_thumbnailRevision; }
     Q_INVOKABLE QVariantList effectOptions() const;
     Q_INVOKABLE QVariantList transitionOptions() const;
     Q_INVOKABLE QVariantList animationOptions(bool text) const;
@@ -413,6 +420,7 @@ signals:
     void projectChanged();
     void selectionChanged();
     void uiChanged();
+    void thumbnailsChanged();
     void playheadChanged();
     void playingChanged();
     void zoomChanged();
@@ -480,6 +488,7 @@ private:
     bool m_showExport = false;
     QString m_errorMessage;
     int m_modalCount = 0;
+    int m_thumbnailRevision = 0;
 
     Micros m_playhead = 0;
     bool m_playing = false;
