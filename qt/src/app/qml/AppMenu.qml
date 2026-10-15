@@ -24,6 +24,7 @@ OfMenu {
     OfMenuItem { text: "Duplicar"; shortcutText: "Ctrl+D"; enabled: Editor.selection !== ""; onTriggered: Editor.duplicateSelection() }
     OfMenuItem { text: "Apagar"; shortcutText: "Delete"; enabled: Editor.selection !== ""; onTriggered: Editor.deleteSelection() }
     OfMenuItem { text: "Adicionar texto"; shortcutText: "Ctrl+T"; onTriggered: Editor.addText() }
+    OfMenuItem { text: "Legendas automáticas…"; enabled: Editor.duration > 0; onTriggered: Editor.presentAutoCaptions() }
     OfMenuSeparator {}
     OfMenuItem { text: Editor.isPlaying ? "Pausar" : "Reproduzir"; shortcutText: "Espaço"; onTriggered: Editor.togglePlay() }
     OfMenuItem { text: "Aproximar timeline"; shortcutText: "Ctrl+="; onTriggered: Editor.zoomIn() }

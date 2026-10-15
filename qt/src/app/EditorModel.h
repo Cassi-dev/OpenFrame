@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CanvasGeometry.h"
+#include "CaptionGeneration.h"
 #include "ExportSettings.h"
 #include "KeyedListModel.h"
 #include "Project.h"
@@ -94,6 +95,17 @@ class EditorModel : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage WRITE setErrorMessage NOTIFY uiChanged)
     /// Diálogos e menus abertos no QML: as teclas do editor ficam desligadas.
     Q_PROPERTY(int modalCount READ modalCount WRITE setModalCount NOTIFY uiChanged)
+
+    // Legendas automáticas (EditorCaptions.cpp)
+    Q_PROPERTY(CaptionGeneration *captions READ captions CONSTANT)
+    Q_PROPERTY(bool showAutoCaptions READ showAutoCaptions WRITE setShowAutoCaptions NOTIFY uiChanged)
+    /// Por que a fonte escolhida não pode ser transcrita (vazio = pode).
+    Q_PROPERTY(QString captionSourceProblem READ captionSourceProblem NOTIFY captionStateChanged)
+    /// O selecionado é um clipe com áudio (fonte "Clipe selecionado").
+    Q_PROPERTY(bool clipWithAudio READ clipWithAudio NOTIFY captionStateChanged)
+    Q_PROPERTY(bool hasAutoCaptions READ hasAutoCaptions NOTIFY captionStateChanged)
+    /// O selecionado é uma legenda automática ("Aplicar este estilo a todas").
+    Q_PROPERTY(bool selectionIsAutoCaption READ selectionIsAutoCaption NOTIFY captionStateChanged)
 
     // Reprodução
     Q_PROPERTY(qreal playhead READ playhead NOTIFY playheadChanged)
@@ -336,6 +348,32 @@ public:
     /// Teclas do editor (espaço, Delete, Esc, setas, Home/End, Shift+Z).
     bool handleKey(int key, Qt::KeyboardModifiers modifiers);
 
+    // Legendas automáticas (EditorCaptions.cpp)
+    CaptionGeneration *captions() const { return m_captions; }
+    bool showAutoCaptions() const { return m_showAutoCaptions; }
+    void setShowAutoCaptions(bool show);
+    QString captionSourceProblem() const;
+    bool clipWithAudio() const;
+    bool hasAutoCaptions() const;
+    bool selectionIsAutoCaption() const;
+    /// Abre a janela: volta às opções (se não estiver gerando), idioma do sistema na primeira vez.
+    Q_INVOKABLE void presentAutoCaptions();
+    /// Baixa o modelo se faltar, transcreve, monta as legendas e as põe na timeline num
+    /// único passo de desfazer.
+    Q_INVOKABLE void generateCaptions();
+    Q_INVOKABLE void cancelCaptionGeneration();
+    /// Fecha a janela e volta às opções.
+    Q_INVOKABLE void closeAutoCaptions();
+    /// Copia o estilo do texto selecionado para todas as legendas automáticas.
+    Q_INVOKABLE void applyStyleToAutoCaptions();
+    /// Edição em linha no painel: só apara as pontas e não grava se não mudou.
+    Q_INVOKABLE void setCaptionText(const QString &id, const QString &text);
+    Q_INVOKABLE void deleteCaption(const QString &id);
+    /// Fundo dos cartões de estilo: o primeiro quadro do vídeo da faixa principal (vazio sem vídeo).
+    Q_INVOKABLE QString captionBackdrop() const;
+    /// Proporção (largura/altura) mais próxima entre as do app, para as prévias dos cartões.
+    Q_INVOKABLE qreal captionPreviewAspect() const;
+
     // Manipulação no preview (EditorCanvas.cpp)
     /// Elementos visíveis no playhead (em repouso).
     QList<ElementBox> canvasBoxes() const;
@@ -379,6 +417,7 @@ signals:
     void dialogRequested(const QString &kind);
     /// Gesto, guias e etiquetas do overlay do preview.
     void canvasOverlayChanged();
+    void captionStateChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -471,6 +510,23 @@ private:
     KeyedListModel *m_clips;
     KeyedListModel *m_junctions;
     KeyedListModel *m_cues;
+
+    CaptionGeneration *m_captions = nullptr;
+    bool m_showAutoCaptions = false;
+    /// Trecho e opções da geração em andamento.
+    struct CaptionJob {
+        TimeRange range;
+        QString preset;
+        QColor accent;
+        bool replacing = true;
+        QString model;
+        QString language;
+        std::optional<QUuid> segment;
+        Project snapshot;
+    };
+    std::optional<CaptionJob> m_captionJob;
+    void startTranscription();
+    void setupCaptions();
 
     /// Trecho tocado ao escolher um efeito: onde parar e para onde voltar.
     std::optional<std::pair<Micros, Micros>> m_excerpt;

@@ -165,6 +165,8 @@ EditorModel::EditorModel(QObject *parent)
     connect(this, &EditorModel::exportSettingsChanged, this, &EditorModel::exportSummaryChanged);
     connect(this, &EditorModel::projectChanged, this, &EditorModel::exportSummaryChanged);
 
+    setupCaptions();
+
     // Resolução do preview: ~300 ms depois que o tamanho do player parar.
     m_previewResolutionTimer.setSingleShot(true);
     m_previewResolutionTimer.setInterval(300);

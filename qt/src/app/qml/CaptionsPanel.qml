@@ -15,6 +15,14 @@ Item {
             title: "Legendas"
             detail: Editor.cues.count > 0 ? Editor.cues.count : ""
         }
+        PillButton {
+            width: parent.width
+            fill: true
+            kind: "primary"
+            text: "Legendas automáticas"
+            iconName: "audio-waveform"
+            onClicked: Editor.presentAutoCaptions()
+        }
         Row {
             width: parent.width
             spacing: 8

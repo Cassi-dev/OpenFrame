@@ -40,10 +40,13 @@ qt_add_qml_module(OpenFrame
     SOURCES
         AnimationThumbs.h AnimationThumbs.cpp
         CanvasCore.h CanvasCore.cpp
+        CaptionGeneration.h CaptionGeneration.cpp
+        CaptionsCore.h CaptionsCore.cpp
         CanvasGeometry.h CanvasGeometry.cpp
         CanvasOverlay.h CanvasOverlay.cpp
         CoreBridge.h CoreBridge.cpp
         EditorCanvas.cpp
+        EditorCaptions.cpp
         EditorModel.h EditorModel.cpp
         EditorMotion.cpp
         FilterPreviews.h FilterPreviews.cpp
