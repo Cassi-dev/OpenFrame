@@ -28,13 +28,31 @@ add_library(openframe_core STATIC
     FilterModels.h FilterModels.cpp
     ImageEffects.h ImageEffects.cpp
     Motion.h Motion.cpp
+    TextShapes.h
     TextRenderer.h TextRenderer.cpp
+    TextMotion.h TextMotion.cpp
+    AnimationPreview.h AnimationPreview.cpp
     Renderer.h Renderer.cpp
     AudioMix.h AudioMix.cpp
     Player.h Player.cpp
     Exporter.h Exporter.cpp
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Fontes livres (OFL) que substituem as do Mac fora dele (FontCatalog::resolve). Licenças em fonts/OFL-*.txt.
+qt_add_resources(openframe_core "openframe_fonts"
+    PREFIX "/openframe"
+    FILES
+        fonts/Inter-Regular.ttf
+        fonts/Inter-Light.ttf
+        fonts/Inter-Medium.ttf
+        fonts/Inter-Bold.ttf
+        fonts/JetBrainsMono-Regular.ttf
+        fonts/JetBrainsMono-Bold.ttf
+        fonts/PlayfairDisplay-Italic.ttf
+        fonts/BarlowCondensed-Bold.ttf
+        fonts/BarlowCondensed-Black.ttf
+)
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)
 
 # Saída de som do Player (QAudioSink).
