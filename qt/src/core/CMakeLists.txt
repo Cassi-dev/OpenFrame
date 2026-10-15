@@ -13,6 +13,9 @@ add_library(openframe_core STATIC
     CaptionBuilder.h CaptionBuilder.cpp
     WhisperModels.h WhisperModels.cpp
     Transcriber.h Transcriber.cpp
+    WordAligner.h WordAligner.cpp
+    AudioMixdown.h AudioMixdown.cpp
+    WhisperEngine.h WhisperEngine.cpp
     Subtitles.h Subtitles.cpp
     ExportSettings.h ExportSettings.cpp
     ProjectLibrary.h ProjectLibrary.cpp
@@ -61,3 +64,10 @@ target_link_libraries(openframe_core PRIVATE Qt6::Multimedia)
 
 include(FFmpeg)
 target_link_libraries(openframe_core PRIVATE FFmpeg::FFmpeg)
+
+# Transcrição (whisper.cpp na CPU) e download dos modelos (o único acesso à rede, só quando o usuário pede).
+include(Whisper)
+if(TARGET openframe::whisper)
+    target_link_libraries(openframe_core PRIVATE openframe::whisper)
+endif()
+target_link_libraries(openframe_core PRIVATE Qt6::Network)
