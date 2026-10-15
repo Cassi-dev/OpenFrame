@@ -974,8 +974,14 @@ void Snapshot::captionsScenario()
         const auto f = o ? m_model->selectionFrame(o->mapping()) : std::nullopt;
         if (!f)
             return log("legendas: sem contorno na legenda");
+        // Até 30%: o texto passa de 2 para 3 linhas e a quebra muda de verdade. A largura
+        // anda 2 × deslocamento da alça ÷ (largura do quadro × escala), a partir da da faixa.
+        const auto seg = m_model->project().segment(*m_model->selectionId());
+        if (!seg || !seg->text)
+            return;
+        const TextStyle &style = seg->text->style;
         const QPointF edge = f->edgeHandle(EdgeSide::Right);
-        canvasDrag(edge, edge - f->right() * 40, true, false);
+        canvasDrag(edge, edge + f->right() * ((0.3 - style.maxWidth) / 2 * o->width() * style.scale), true, false);
         log(QStringLiteral("legendas: largura arrastando, etiqueta \"%1\"")
                 .arg(m_model->canvasWidthDrag() ? m_model->canvasWidthDrag()->label() : "-"));
     });
