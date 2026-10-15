@@ -126,4 +126,100 @@ for (name, bg) in [("fundo-preto", CanvasBackground.black), ("fundo-desfoque", .
     q.canvas.background = bg
     try ProjectStore.save(q, to: out.deletingLastPathComponent().appendingPathComponent("\(name).openframe"))
 }
+// Texto e motion: todas as animações de entrada e saída e os quatro loops, em texto e em vídeo.
+do {
+    var q = Project()
+    q.name = "Motion"
+    q.tracks[0].id = uuid(1)
+    q.materials = [video]
+    var clip = Segment(materialId: video.id, source: TimeRange(start: 0, duration: 6_000_000), targetStart: 0)
+    clip.id = uuid(100)
+    clip.animationIn = SegmentAnimation(kind: .focus, duration: 300_000)
+    clip.animationLoop = LoopAnimation(kind: .shine, period: 1_500_000, intensity: 0.8)
+    q.tracks[0].segments = [clip]
+    var texts = Track(kind: .text)
+    texts.id = uuid(101)
+    let kinds = AnimationKind.allCases
+    let loops = LoopKind.allCases
+    for (k, kind) in kinds.enumerated() {
+        var seg = Segment.text(TextContent(text: "Animação \(kind.rawValue)"),
+                               at: Micros(k) * 1_000_000, duration: 900_000)
+        seg.id = uuid(200 + k)
+        seg.animationIn = SegmentAnimation(kind: kind, duration: 400_000)
+        seg.animationOut = SegmentAnimation(kind: kinds[(k + 5) % kinds.count], duration: 250_000)
+        if k < loops.count {
+            seg.animationLoop = LoopAnimation(kind: loops[k], period: Micros(1_000_000 + 250_000 * k),
+                                              intensity: 0.25 * Double(k + 1))
+        }
+        texts.segments.append(seg)
+    }
+    q.tracks.append(texts)
+    try ProjectStore.save(q, to: out.deletingLastPathComponent().appendingPathComponent("motion.openframe"))
+}
+
+// Legendas: a faixa automática gerada pelo CaptionBuilder (palavras, destaque com as revelações, palavra-chave,
+// Empilhado com fitLines) e textos feitos à mão com os campos raros (U+00A0, maxWidth > 1, ênfase sem cor).
+do {
+    var q = Project()
+    q.name = "Legendas"
+    q.canvas.aspect = .r16x9
+    q.tracks[0].id = uuid(1)
+    let speech = "Olá, pessoal! Hoje eu vou mostrar como gerar legendas automáticas no editor, sem internet. " +
+        "Primeiro escolha o idioma; depois escolha o estilo que combina com o seu vídeo."
+    var spoken: [TranscribedWord] = []
+    var t: Micros = 200_000
+    for word in speech.split(separator: " ") {
+        let end = t + 180_000 + 40_000 * Micros(min(word.count, 10))
+        spoken.append(TranscribedWord(text: String(word), start: t, end: end))
+        t = end + (word.hasSuffix(".") || word.hasSuffix("!") ? 500_000 : 80_000)
+    }
+    var n = 300
+    for (preset, accent) in [(CaptionPreset.highlight, RGBA(0, 0.8, 1)), (.rise, nil), (.guided, RGBA(1, 0.5, 0)),
+                             (.fill, nil), (.typing, RGBA(0.2, 1, 0.4)), (.editorial, nil), (.stacked, RGBA(1, 0.2, 0.3))] {
+        let cues = CaptionBuilder.cues(from: spoken, preset: preset, aspect: q.aspectValue)
+        // Cada visual no seu trecho da timeline (substituir só troca o que toca o trecho).
+        let offset = Micros(n - 300) / 40 * 20_000_000
+        let shifted = cues.map { cue -> CaptionCue in
+            var c = cue
+            c.start += offset
+            c.end += offset
+            c.words = c.words.map { TranscribedWord(text: $0.text, start: $0.start + offset, end: $0.end + offset) }
+            return c
+        }
+        CaptionBuilder.apply(shifted, preset: preset, accent: accent, to: &q, replacing: true)
+        n += 40
+    }
+    // Ids fixos: o arquivo não muda a cada geração.
+    var id = 300
+    for t in q.tracks.indices where t > 0 {
+        q.tracks[t].id = uuid(id)
+        id += 1
+        for k in q.tracks[t].segments.indices {
+            q.tracks[t].segments[k].id = uuid(id)
+            id += 1
+        }
+    }
+    var manual = Track(kind: .text)
+    manual.id = uuid(900)
+    var style = TextStyle()
+    style.maxWidth = 2.5
+    style.balanceLines = true
+    var content = TextContent(text: "de\u{00A0}manhã cedo\ncom\u{00A0}o sol", style: style)
+    content.words = [CaptionWord(text: "de", start: 0, end: 200_000), CaptionWord(text: "manhã", start: 250_000, end: 600_000),
+                     CaptionWord(text: "cedo", start: 650_000, end: 900_000), CaptionWord(text: "com", start: 1_000_000, end: 1_200_000),
+                     CaptionWord(text: "o", start: 1_250_000, end: 1_300_000), CaptionWord(text: "sol", start: 1_350_000, end: 1_700_000)]
+    var h = WordHighlight()
+    h.backgroundEnabled = true
+    h.mode = .progressive
+    h.reveal = .dim
+    h.dimOpacity = 0.5
+    content.highlight = h
+    content.emphasis = WordEmphasis(words: [1, 5])
+    var seg = Segment.text(content, at: 0, duration: 2_000_000)
+    seg.id = uuid(901)
+    manual.segments = [seg]
+    q.tracks.append(manual)
+    try ProjectStore.save(q, to: out.deletingLastPathComponent().appendingPathComponent("legendas.openframe"))
+}
+
 print("ok: \(out.path)")

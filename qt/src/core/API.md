@@ -11,7 +11,7 @@ Tudo no namespace `of`; tempo em `Micros` (microssegundos, `qint64`).
 | `Enums.h` | `enumKey(e)` / `enumFromKey<E>(s)` (o `rawValue` do JSON), `allCases<E>()` para menus |
 | `Effects.h` | `RGBA`, `Transform`, `Adjust`, `FilterPreset`/`FilterSetting`, `VideoEffect`, `SegmentAnimation`, `Transition`, `TextStyle`, `TextContent`, `displayName(...)` |
 | `Project.h` | `Material`, `Segment` (`targetDuration/targetEnd/targetRange`, `Segment::makeText`), `Track`, `AspectRatio` (`label`, `ratio`), `CanvasBackground` (`black()/color()/blur()`), `Canvas`, `Project` (`duration`, `material`, `mainTrackIndex`, `locate`, `segment`, `aspectValue`, `canvasSize`) |
-| `ProjectStore.h` | `encode/decode/save/load`, `toJson/fromJson`, `uuidString`, `fileExtension`; JSON igual ao do Swift (animação de tipo desconhecido abre como `fade`; `animationLoop` é ignorado e some ao regravar) |
+| `ProjectStore.h` | `encode/decode/save/load`, `toJson/fromJson`, `uuidString`, `fileExtension`; JSON igual ao do Swift, com os campos de motion e legendas (ver abaixo); tipo de animação desconhecido (versão futura) abre como `fade` e loop desconhecido é descartado |
 | `TimelineEditor.h` | as operações do Swift sobre `Project&` (`addMedia`, `addOverlay`, `insertMedia`, `addText`, `split`, `remove`, `duplicate`, `move`, `reorderMain`, `resolveOverlap`, `canMove`, `moveToTrack`, `trimStart`, `trimEnd`, `setSpeed`, `update`, `snapPoints`, `snap`, `snapMove`) |
 | `Subtitles.h` | `SubtitleCue`, `SRT::parse/serialize/importCues/cues` |
 | `ExportSettings.h` | `ResolutionPreset`, `FrameRate` (`frameDuration` racional, `fpsValue`), `VideoCodec`, `ContainerFormat`, `BitrateMode` (todos com `label`), `ExportSettings` (`outputSize`, `videoBitrate`, `estimatedBytes`, `validationError`, `keyframeDistance`), `formattedFileSize` |
@@ -103,3 +103,36 @@ Convenções:
 - O `throws` do Swift virou `std::optional`/`bool` com `QString *error` opcional.
 - `TimelineEditor.delete` do Swift chama-se `remove` (palavra reservada em C++).
 - Projeto novo (`Project{}`) já vem com a faixa principal, como no Swift.
+
+## Motion e legendas, etapa 1: modelo, JSON, geometria, edição e montagem das legendas
+
+Porte do que entrou no Mac depois da v0.5.0, com os mesmos nomes e números do núcleo Swift. O render novo
+(animações por unidade, loops, revelações, ênfase desenhada por palavra) vem na etapa 2; a transcrição real, na 3.
+
+| Cabeçalho | O que tem |
+|---|---|
+| `Color.h` | `RGBA` (saiu do `Effects.h`, que continua incluindo) |
+| `Captions.h` | `CaptionWord{text,start,end}` (relativo ao segmento), `HighlightMode` (current/progressive), `WordReveal` (none/rise/dim/fill/type, com `displayName`), `WordHighlight{color,scale,backgroundEnabled,backgroundColor,mode,reveal,dimOpacity}`, `WordEmphasis{words,fontName,fontFace,scale,color?}`, `TranscribedWord{text,start,end,probability}` (tempos da timeline) |
+| `Effects.h` | `AnimationKind` com os 17 tipos (`isTextOnly`), `LoopKind`/`LoopAnimation{kind,period,intensity}`, `TextStyle::balanceLines/fitLines` e `maxWidthMin/maxWidthMax` (0,1…3), `TextContent::words/highlight/emphasis` (opcionais), `TextContent::wordsOf(text)` (separa por espaço, inclusive U+00A0 e `\n`) e `activeHighlight()` (vazio se a contagem não bate). `TextContent(text, style = {})` tem construtor |
+| `Project.h` | `Segment::animationLoop`, `Track::isAutoCaptions` |
+| `ProjectStore.h` | grava e lê tudo isso como o Swift: `animationLoop`, `words`, `highlight`, `emphasis` e `isAutoCaptions` só quando existem (`isAutoCaptions` só quando verdadeiro), `balanceLines`/`fitLines` sempre. No destaque e na ênfase, campo ausente fica com o padrão e `mode`/`reveal` desconhecido vira o padrão |
+| `CanvasLayout.h` | `ElementBox{id,isText,center:QPointF,size:QSizeF,scale,rotation}`; `CanvasLayout::boxes(project, t)` (vídeo/foto das faixas visíveis, depois os textos), `fitSize`, `hitTest(point, boxes, aspect) -> optional<QUuid>`, `corners(box, aspect) -> QList<QPointF>` (sup. esq., sup. dir., inf. dir., inf. esq.), `bounds(box, aspect) -> QRectF` (y para cima: `top()` é o menor y); `SnapGuide{axis,position,kind}`; `Snapping::snapMove(box, proposed, others, aspect, threshold:QSizeF) -> MoveResult{center, guides}`, `Snapping::snapRotation(degrees, threshold = 4) -> RotationResult{degrees, snapped}`, `Snapping::safeMargin` (0,9). Coordenadas normalizadas (-1…1, y para cima) |
+| `TimelineEditor.h` | `setPlacement(p, id, center:QPointF, scale, rotation)` (estilo no texto, `transform` no visual; escala mínima 0,01), `setTextWidth(p, id, maxWidth)` (limitada a 0,1…3, ignora NaN/infinito; numa faixa automática vale para todos os textos dela). `freeTrack` pula a faixa automática; `split` e `trimStart` mantêm as palavras no mesmo instante da timeline |
+| `TextRenderer.h` | `boxSize(content, canvas) -> optional<QSizeF>` (caixa do texto + fundo, com palavra-chave, `fitLines` e `balanceLines`; bate com o Swift a até 2 px), `lineWidth(text, style, fontPx)`, `lineTexts(content, canvas)`. A imagem estática já usa o mesmo layout (palavra-chave na fonte e na cor dela, linhas ajustadas e equilibradas) |
+| `CaptionPresets.h` | `CaptionLayout` (phrases/highlight/punch/stacked), `CaptionPresetGroup`, `CaptionPreset` (os 10 visuais) com `displayName`, `detail`, `group`, `layout`, `usesAccent`; `presetFor(layout)` |
+| `CaptionBuilder.h` | `CaptionCue{text,start,end,words}`; `CaptionBuilder::cues(words, preset, aspect = 16/9)` e `cues(words, layout, aspect)`; `apply(cues, preset, accent?, project, replacing, range?) -> QUuid` e `apply(cues, layout, style?, ...)`; `defaultStyle(preset)` e `defaultStyle(preset, aspect)`; `keywords(cue)`, `highlight`, `emphasis`, `animate`, `normalized`, `limits`, `Measure`; constantes `glue` (U+00A0), `minDuration`, `closeGap`, `pause`, `forcedBreak`. Mede com o `TextRenderer`: precisa de `QGuiApplication` |
+| `WhisperModels.h` | `WhisperModel` (base/small/turbo) com `displayName` ("Rápido", "Equilibrado", "Máxima precisão"), `fileName`, `byteSize`, `downloadUrl`, `sha256`; `recommendedModel()` = small (só CPU nesta versão). `ModelStore` (QObject): `shared()`, `defaultDirectory()` (`AppLocalDataLocation/Models` ou `OPENFRAME_MODELS_DIR`), `path`, `isInstalled`, `remove`, `download`/`cancel`/`isDownloading` com os sinais `downloadProgress(model, fraction)` e `downloadFinished(model, ok, error)` |
+| `Transcriber.h` | `TranscriptionProgress{phase,fraction,overall}` (`make`; a mistura pesa 10%), `TranscriptionSource` (`timeline()`, `of(id)`), `TranscriptionError` e `message(...)`; `Transcriber` (QObject, como o `Exporter`): `start(project, source, model, language = "")`, `cancel()`, `isRunning()`, sinais `progress(TranscriptionProgress)` e `finished(ok, words, error)` (cancelado = ok falso e erro vazio); estáticos `sourceRange`, `mixProject`, `languages()`, `fakeWords(range)` |
+
+Provisório nesta etapa:
+- `Animations::state`: o foco esmaece crescendo de 1,08 a 1; as 7 animações por letra/palavra/linha esmaecem o
+  texto inteiro; os loops ainda não aparecem no render.
+- `ModelStore::download` termina com o erro "O download dos modelos ainda não está disponível nesta versão.".
+- `Transcriber`: com `OPENFRAME_FAKE_TRANSCRIPTION=1`, palavras falsas pelo trecho (~0,8 s de progresso falso);
+  sem ela, "modelo não instalado" ou "motor indisponível".
+- Diferença do Swift que fica: sem o etiquetador gramatical do macOS, a palavra-chave é escolhida pelo tamanho, pelo
+  fim de frase, pelas listas de palavras funcionais e fracas, e os advérbios em "-mente" perdem peso; no empate, a
+  mais adiante. Em textos comuns, escolhe o mesmo substantivo longo que o Mac; pode divergir quando um verbo e um
+  substantivo têm o mesmo tamanho.
+- Fontes: as do Mac (Helvetica Neue, Menlo, Didot, Condensed Black) caem para a Inter fora do Mac; o mapeamento
+  para fontes distribuíveis entra na etapa 2.
