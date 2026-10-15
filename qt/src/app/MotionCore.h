@@ -9,19 +9,8 @@
 #include <optional>
 
 // Única ligação da aba Animação com o núcleo: tipos de entrada/saída, loops
-// (`LoopKind`/`Segment::animationLoop`, etapa 1 do 04) e quadros das miniaturas
-// (`AnimationPreview::frames`, etapa 2).
-//
-// PROVISÓRIO: sem `CanvasLayout.h` (marca da etapa 1), o loop escolhido fica só
-// na memória do app, fora do projeto e do desfazer. Sem `AnimationPreview.h`,
-// não há quadros e os cartões mostram o ícone.
-
-#if __has_include("CanvasLayout.h")
-#define OF_HAS_MOTION_MODEL 1
-#endif
-#if __has_include("AnimationPreview.h")
-#define OF_HAS_ANIMATION_PREVIEW 1
-#endif
+// (`LoopKind`/`Segment::animationLoop`) e quadros das miniaturas
+// (`AnimationPreview::frames`, etapa 2 do 04; até lá, os cartões mostram o ícone).
 
 namespace of::MotionCore {
 

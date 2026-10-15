@@ -6,17 +6,13 @@
 #include <QList>
 #include <QObject>
 #include <QString>
-#include <QTimer>
 #include <memory>
 #include <optional>
 
-// Única ligação das legendas automáticas com o núcleo (etapa 1 do 04:
-// `WhisperModel`, `ModelStore`, `Transcriber`, `CaptionBuilder`, `CaptionPreset`,
-// `Track::isAutoCaptions`; transcrição real na etapa 3).
-//
-// PROVISÓRIO: sem `Captions.h`/`CaptionBuilder.h` no núcleo, os catálogos são
-// cópias dos nomes do Mac, o download e a transcrição são de mentira (com
-// temporizadores) e o resultado vira textos comuns numa faixa de texto.
+// Única ligação das legendas automáticas com o núcleo: `WhisperModel`,
+// `ModelStore`, `Transcriber`, `CaptionBuilder`, `CaptionPreset` e
+// `Track::isAutoCaptions`. A transcrição real chega na etapa 3 do 04; até lá, use
+// `OPENFRAME_FAKE_TRANSCRIPTION=1`.
 
 namespace of::CaptionsCore {
 

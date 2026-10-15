@@ -101,18 +101,6 @@ QJsonObject setPath(QJsonObject o, const QStringList &keys, int i, const QJsonVa
     return o;
 }
 
-QVariantList options(const QStringList &values, const QStringList &titles, const QStringList &icons = {})
-{
-    QVariantList list;
-    for (int i = 0; i < values.size(); ++i) {
-        QVariantMap m{{"value", values[i]}, {"title", titles.value(i)}};
-        if (!icons.isEmpty())
-            m.insert("icon", icons.value(i));
-        list.append(m);
-    }
-    return list;
-}
-
 const QStringList tabKeys{"basic", "adjust", "filters", "effects", "animation", "transition", "text", "audio"};
 const QStringList tabTitles{"Básico", "Ajustar", "Filtros", "Efeitos", "Animação", "Transição", "Texto", "Áudio"};
 const QStringList tabIcons{"move", "sliders-horizontal", "blend", "sparkles", "wand-sparkles", "arrow-left-right", "type",

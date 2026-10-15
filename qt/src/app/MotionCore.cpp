@@ -46,15 +46,6 @@ QVariantMap option(const QString &value, const QString &title)
             {"icon", icons().value(value, "sparkles")}};
 }
 
-#ifndef OF_HAS_MOTION_MODEL
-/// PROVISÓRIO: loops escolhidos antes da etapa 1, só na memória.
-QHash<QUuid, Loop> &provisionalLoops()
-{
-    static QHash<QUuid, Loop> loops;
-    return loops;
-}
-#endif
-
 } // namespace
 
 QVariantList animationKinds(bool text)
@@ -69,35 +60,21 @@ QVariantList animationKinds(bool text)
 QVariantList loopKinds()
 {
     QVariantList list;
-#ifdef OF_HAS_MOTION_MODEL
     for (auto k : allCases<LoopKind>())
         list.append(option(enumKey(k), displayName(k)));
-#else
-    const QList<std::pair<QString, QString>> kinds{
-        {"float", "Flutuar"}, {"pulse", "Pulsar"}, {"glow", "Respirar brilho"}, {"shine", "Reflexo de luz"}};
-    for (const auto &[value, title] : kinds)
-        list.append(option(value, title));
-#endif
     return list;
 }
 
 std::optional<Loop> loop(const Project &p, const QUuid &id)
 {
-#ifdef OF_HAS_MOTION_MODEL
     const auto seg = p.segment(id);
     if (!seg || !seg->animationLoop)
         return std::nullopt;
     return Loop{enumKey(seg->animationLoop->kind), seg->animationLoop->period, seg->animationLoop->intensity};
-#else
-    if (!p.segment(id) || !provisionalLoops().contains(id))
-        return std::nullopt;
-    return provisionalLoops().value(id);
-#endif
 }
 
 void setLoop(Project &p, const QUuid &id, const std::optional<Loop> &value)
 {
-#ifdef OF_HAS_MOTION_MODEL
     TimelineEditor::update(p, id, [&](Segment &s) {
         const auto kind = value ? enumFromKey<LoopKind>(value->kind) : std::nullopt;
         if (!kind)
@@ -105,13 +82,6 @@ void setLoop(Project &p, const QUuid &id, const std::optional<Loop> &value)
         else
             s.animationLoop = LoopAnimation{*kind, value->period, value->intensity};
     });
-#else
-    Q_UNUSED(p)
-    if (value && !value->kind.isEmpty())
-        provisionalLoops().insert(id, *value);
-    else
-        provisionalLoops().remove(id);
-#endif
 }
 
 QList<QImage> frames(const Segment &seg, const QImage &mediaImage, const QString &part, QSize size, int count)

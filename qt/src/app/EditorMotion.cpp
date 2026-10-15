@@ -23,7 +23,6 @@ void EditorModel::setLoop(const QString &kind)
     if (!kind.isEmpty())
         loop = MotionCore::Loop{kind, old ? old->period : 2'000'000, old ? old->intensity : 0.5};
     mutate([&](Project &p) { MotionCore::setLoop(p, id, loop); });
-    refreshSelection(); // o loop provisório fica fora do projeto
     // Dois ciclos a partir do playhead, ou do início do clipe se ele estiver fora.
     const auto seg = m_project.segment(id);
     if (!seg || !loop)
@@ -45,7 +44,6 @@ void EditorModel::setLoopValue(const QString &key, qreal value)
     else if (key == "intensity")
         loop->intensity = std::clamp<qreal>(value, 0, 1);
     mutate([&](Project &p) { MotionCore::setLoop(p, id, loop); }, ProjectStore::uuidString(id) + "loop" + key);
-    refreshSelection();
 }
 
 void EditorModel::playExcerpt(Micros start, Micros end)

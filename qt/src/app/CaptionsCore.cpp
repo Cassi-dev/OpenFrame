@@ -1,217 +1,193 @@
 #include "CaptionsCore.h"
 
-#include "TimelineEditor.h"
-
-#include <QHash>
-#include <QSet>
+#include "CaptionBuilder.h"
+#include "CaptionPresets.h"
+#include "Transcriber.h"
+#include "WhisperModels.h"
 
 namespace of::CaptionsCore {
 
-// O núcleo ainda não tem as legendas: catálogos com os nomes do Mac e geração de mentira.
-// Com a etapa 1, este arquivo passa a chamar WhisperModel/ModelStore/Transcriber/CaptionBuilder.
+namespace {
+
+std::optional<WhisperModel> whisper(const QString &id)
+{
+    return enumFromKey<WhisperModel>(id);
+}
+
+QString detailFor(WhisperModel m)
+{
+    switch (m) {
+    case WhisperModel::Base: return QStringLiteral("O mais leve. Bom para fala clara e pouco ruído.");
+    case WhisperModel::Small: return QStringLiteral("Bom equilíbrio entre velocidade e precisão.");
+    case WhisperModel::Turbo: return QStringLiteral("Mais lento e mais preciso. Melhor para áudio difícil.");
+    }
+    return {};
+}
+
+} // namespace
 
 QList<ModelInfo> models()
 {
-    return {
-        {"base", "Rápido", "O mais leve. Bom para fala clara e pouco ruído.", 147'951'465},
-        {"small", "Equilibrado", "Bom equilíbrio entre velocidade e precisão.", 487'601'967},
-        {"turbo", "Máxima precisão", "Mais lento e mais preciso. Melhor para áudio difícil.", 574'041'195},
-    };
+    QList<ModelInfo> list;
+    for (auto m : allCases<WhisperModel>())
+        list.append({enumKey(m), displayName(m), detailFor(m), byteSize(m)});
+    return list;
 }
 
 QString recommendedModel()
 {
-    return QStringLiteral("small");
+    return enumKey(of::recommendedModel());
 }
 
 QList<Language> languages()
 {
-    return {{"pt", "Português"}, {"en", "Inglês"},     {"es", "Espanhol"},  {"fr", "Francês"},   {"de", "Alemão"},
-            {"it", "Italiano"},  {"ja", "Japonês"},    {"ko", "Coreano"},   {"zh", "Chinês"},    {"ru", "Russo"},
-            {"ar", "Árabe"},     {"hi", "Hindi"},      {"nl", "Holandês"},  {"pl", "Polonês"},   {"tr", "Turco"},
-            {"uk", "Ucraniano"}, {"sv", "Sueco"},      {"he", "Hebraico"},  {"id", "Indonésio"}, {"vi", "Vietnamita"}};
+    QList<Language> list;
+    for (const auto &l : Transcriber::languages())
+        list.append({l.code, l.name});
+    return list;
 }
 
 QList<PresetInfo> presets()
 {
-    const QString classic = QStringLiteral("Clássicos"), reveal = QStringLiteral("Revelação"),
-                  editorial = QStringLiteral("Editorial");
-    return {
-        {"phrases", "Frases", "Até duas linhas embaixo, como no cinema.", "classic", classic, "phrases", false},
-        {"highlight", "Destaque", "Uma linha; a palavra falada acende.", "classic", classic, "highlight", true},
-        {"punch", "Impacto", "Poucas palavras grandes no centro.", "classic", classic, "punch", false},
-        {"rise", "Surgir", "Cada palavra surge quando é dita.", "reveal", reveal, "highlight", true},
-        {"guided", "Leitura guiada", "A frase inteira, acendendo palavra por palavra.", "reveal", reveal, "phrases",
-         true},
-        {"fill", "Preenchimento", "A cor enche cada palavra no ritmo da fala.", "reveal", reveal, "highlight", true},
-        {"typing", "Digitação", "As letras são digitadas no tempo da fala.", "reveal", reveal, "highlight", true},
-        {"editorial", "Editorial", "Texto leve, com a palavra-chave em serifa itálica.", "editorial", editorial,
-         "phrases", true},
-        {"cinema", "Cinema", "Discreta: fina, espaçada e pequena, embaixo.", "editorial", editorial, "highlight",
-         false},
-        {"stacked", "Empilhado", "Blocos em caixa alta, justificados, linha a linha.", "editorial", editorial,
-         "stacked", true},
-    };
+    QList<PresetInfo> list;
+    for (auto p : allCases<CaptionPreset>())
+        list.append({enumKey(p), displayName(p), detail(p), enumKey(group(p)), displayName(group(p)),
+                     enumKey(layout(p)), usesAccent(p)});
+    return list;
 }
 
 QColor defaultHighlight()
 {
-    return RGBA::yellow().color();
+    return WordHighlight().color.color();
 }
 
-bool hasAutoCaptions(const Project &)
+bool hasAutoCaptions(const Project &p)
 {
-    return false;
+    return std::any_of(p.tracks.cbegin(), p.tracks.cend(), [](const Track &t) { return t.isAutoCaptions; });
 }
 
-bool isAutoCaption(const Project &, const QUuid &)
+bool isAutoCaption(const Project &p, const QUuid &id)
 {
-    return false;
+    const auto loc = p.locate(id);
+    return loc && p.tracks[loc->track].isAutoCaptions;
 }
 
-void applyStyleToAll(Project &, const Segment &)
+void applyStyleToAll(Project &p, const Segment &source)
 {
+    if (!source.text)
+        return;
+    for (Track &track : p.tracks) {
+        if (!track.isAutoCaptions)
+            continue;
+        for (Segment &seg : track.segments) {
+            if (!seg.text)
+                continue;
+            TextContent &text = *seg.text;
+            text.style = source.text->style;
+            if (source.text->highlight && text.words)
+                text.highlight = source.text->highlight;
+            if (source.text->emphasis) {
+                WordEmphasis emphasis = *source.text->emphasis;
+                emphasis.words = text.emphasis ? text.emphasis->words : QList<int>();
+                text.emphasis = emphasis;
+            }
+        }
+    }
 }
 
-// MARK: - Engine (de mentira)
-
-namespace {
-const QString sampleSpeech = QStringLiteral(
-    "Olá, pessoal! Hoje eu vou mostrar como gerar legendas automáticas no OpenFrame. É tudo feito no seu "
-    "computador, sem enviar nada para a internet. Você escolhe o estilo, e as legendas aparecem na timeline.");
-}
+// MARK: - Engine
 
 struct Engine::Impl {
-    QSet<QString> installed;
-    QHash<QString, QTimer *> downloads;
-    QHash<QString, double> fractions;
-    QTimer *job = nullptr;
-    double overall = 0;
-    struct Cue {
-        QString text;
-        Micros start = 0;
-        Micros end = 0;
-    };
-    QList<Cue> cues;
+    Transcriber transcriber;
+    QList<CaptionCue> cues;
+    CaptionPreset preset = CaptionPreset::Phrases;
+    double aspect = 16.0 / 9;
 };
 
-Engine::Engine(QObject *parent) : QObject(parent), d(std::make_unique<Impl>()) {}
+Engine::Engine(QObject *parent) : QObject(parent), d(std::make_unique<Impl>())
+{
+    ModelStore &store = ModelStore::shared();
+    connect(&store, &ModelStore::downloadProgress, this,
+            [this](WhisperModel m, double fraction) { emit downloadProgress(enumKey(m), fraction); });
+    connect(&store, &ModelStore::downloadFinished, this, [this](WhisperModel m, bool ok, const QString &error) {
+        // Cancelado: ok falso e erro vazio.
+        if (ok || !error.isEmpty())
+            emit downloadFinished(enumKey(m), ok ? QString() : error);
+    });
+    connect(&d->transcriber, &Transcriber::progress, this, [this](const TranscriptionProgress &p) {
+        emit progress(p.phase == TranscriptionProgress::Phase::Mixing ? QStringLiteral("mixing")
+                                                                       : QStringLiteral("transcribing"),
+                      p.overall);
+    });
+    connect(&d->transcriber, &Transcriber::finished, this,
+            [this](bool ok, const QList<TranscribedWord> &words, const QString &error) {
+                if (!ok && error.isEmpty())
+                    return; // cancelado
+                if (!ok) {
+                    emit finished(0, error);
+                    return;
+                }
+                d->cues = CaptionBuilder::cues(words, d->preset, d->aspect);
+                emit finished(int(d->cues.size()), {});
+            });
+}
 
 Engine::~Engine() = default;
 
 bool Engine::isInstalled(const QString &model) const
 {
-    return d->installed.contains(model);
+    const auto m = whisper(model);
+    return m && ModelStore::shared().isInstalled(*m);
 }
 
 void Engine::download(const QString &model)
 {
-    if (d->downloads.contains(model) || d->installed.contains(model))
-        return;
-    auto *timer = new QTimer(this);
-    timer->setInterval(80);
-    d->downloads.insert(model, timer);
-    connect(timer, &QTimer::timeout, this, [this, model, timer] {
-        double &f = d->fractions[model];
-        f = std::min(1.0, f + 0.04);
-        emit downloadProgress(model, f);
-        if (f < 1)
-            return;
-        timer->deleteLater();
-        d->downloads.remove(model);
-        d->fractions.remove(model);
-        d->installed.insert(model);
-        emit downloadFinished(model, {});
-    });
-    timer->start();
+    if (const auto m = whisper(model))
+        ModelStore::shared().download(*m);
 }
 
 void Engine::cancelDownload(const QString &model)
 {
-    if (QTimer *timer = d->downloads.take(model))
-        timer->deleteLater();
+    if (const auto m = whisper(model); m && ModelStore::shared().isDownloading(*m))
+        ModelStore::shared().cancel(*m);
 }
 
-bool Engine::remove(const QString &model, QString *)
+bool Engine::remove(const QString &model, QString *error)
 {
-    cancelDownload(model);
-    d->fractions.remove(model);
-    d->installed.remove(model);
-    return true;
+    const auto m = whisper(model);
+    return m && ModelStore::shared().remove(*m, error);
 }
 
 std::optional<TimeRange> Engine::sourceRange(const Project &p, const std::optional<QUuid> &segment,
                                              QString *error) const
 {
-    if (segment) {
-        const auto seg = p.segment(*segment);
-        const Material *m = seg ? p.material(seg->materialId) : nullptr;
-        if (!m || !(m->kind == MaterialKind::Audio || m->hasAudio)) {
-            if (error)
-                *error = QStringLiteral("O clipe não tem áudio.");
-            return std::nullopt;
-        }
-        return seg->targetRange();
-    }
-    if (p.duration() <= 0) {
-        if (error)
-            *error = QStringLiteral("A timeline não tem áudio para transcrever.");
-        return std::nullopt;
-    }
-    return TimeRange{0, p.duration()};
+    const auto range = Transcriber::sourceRange(p, segment ? TranscriptionSource::of(*segment)
+                                                           : TranscriptionSource::timeline());
+    if (!range && error)
+        *error = message(TranscriptionError::NoAudio);
+    return range;
 }
 
-void Engine::transcribe(const Project &p, const std::optional<QUuid> &segment, const QString &, const QString &,
-                        const QString &)
+void Engine::transcribe(const Project &p, const std::optional<QUuid> &segment, const QString &model,
+                        const QString &language, const QString &preset)
 {
-    cancel();
-    QString error;
-    const auto range = sourceRange(p, segment, &error);
-    if (!range) {
-        QTimer::singleShot(0, this, [this, error] { emit finished(0, error); });
-        return;
-    }
-    // Frases da fala falsa espalhadas pelo trecho, ~2,5 s cada.
+    d->preset = enumFromKey<CaptionPreset>(preset).value_or(CaptionPreset::Phrases);
+    d->aspect = p.aspectValue();
     d->cues.clear();
-    const QStringList words = sampleSpeech.split(' ');
-    const int perCue = 5;
-    const int count = int(std::min<qint64>((words.size() + perCue - 1) / perCue, std::max<qint64>(1, range->duration / 2'000'000)));
-    const Micros step = range->duration / std::max(1, count);
-    for (int i = 0; i < count; ++i)
-        d->cues.append({words.mid(i * perCue, perCue).join(' '), range->start + i * step,
-                        range->start + (i + 1) * step - 100'000});
-    d->overall = 0;
-    d->job = new QTimer(this);
-    d->job->setInterval(60);
-    connect(d->job, &QTimer::timeout, this, [this] {
-        d->overall = std::min(1.0, d->overall + 0.025);
-        emit progress(d->overall < 0.2 ? QStringLiteral("mixing") : QStringLiteral("transcribing"), d->overall);
-        if (d->overall < 1)
-            return;
-        d->job->deleteLater();
-        d->job = nullptr;
-        emit finished(int(d->cues.size()), {});
-    });
-    d->job->start();
+    d->transcriber.start(p, segment ? TranscriptionSource::of(*segment) : TranscriptionSource::timeline(),
+                         whisper(model).value_or(of::recommendedModel()), language);
 }
 
 void Engine::cancel()
 {
-    if (d->job) {
-        d->job->deleteLater();
-        d->job = nullptr;
-    }
+    d->transcriber.cancel();
 }
 
-void Engine::apply(Project &p, const QString &, const QColor &, bool, TimeRange) const
+void Engine::apply(Project &p, const QString &preset, const QColor &accent, bool replacing, TimeRange range) const
 {
-    TextContent content;
-    content.style.fontSize = 0.06;
-    content.style.y = -0.75;
-    for (const auto &cue : d->cues) {
-        content.text = cue.text;
-        TimelineEditor::addText(content, p, cue.start, cue.end - cue.start);
-    }
+    const RGBA color{accent.redF(), accent.greenF(), accent.blueF(), accent.alphaF()};
+    CaptionBuilder::apply(d->cues, enumFromKey<CaptionPreset>(preset).value_or(CaptionPreset::Phrases), color, p,
+                          replacing, range);
 }
 
 } // namespace of::CaptionsCore
