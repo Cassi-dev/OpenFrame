@@ -40,7 +40,7 @@ para **Windows e Linux** (C++, Qt e FFmpeg) tem a mesma interface e abre os
 mesmos projetos `.openframe`.
 
 - **Nativo e leve.** No Mac, usa AVFoundation e Core Image, os mesmos motores do macOS.
-  O instalador tem cerca de 3 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
+  O instalador do Mac tem cerca de 7 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
 - **Seu material fica com você.** Não há conta, nuvem nem telemetria. A edição, a
   exportação e até a transcrição das legendas automáticas rodam no seu computador,
   inclusive sem internet. A única conexão é opcional: baixar o modelo de
