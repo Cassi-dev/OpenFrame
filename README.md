@@ -41,8 +41,10 @@ mesmos projetos `.openframe`.
 
 - **Nativo e leve.** No Mac, usa AVFoundation e Core Image, os mesmos motores do macOS.
   O instalador tem cerca de 3 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
-- **Seu material fica com você.** Não há conta, nuvem nem telemetria: o app não
-  faz nenhuma chamada de rede. Tudo roda localmente, inclusive sem internet.
+- **Seu material fica com você.** Não há conta, nuvem nem telemetria. A edição, a
+  exportação e até a transcrição das legendas automáticas rodam no seu computador,
+  inclusive sem internet. A única conexão é opcional: baixar o modelo de
+  transcrição, quando você pede (o arquivo é conferido por sha256).
 - **Sem marca d'água e sem assinatura.** O que você exporta é só seu.
 - **Exportação sob controle.** Resolução, fps, codificador, bitrate ou tamanho
   de arquivo alvo, com estimativa ao vivo antes de exportar.
@@ -121,6 +123,10 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - 14 filtros com intensidade e miniaturas
 - 10 efeitos: desfoque, pixelizar, glitch RGB, espelho, tremor, flash, pulso de zoom, caleidoscópio, quadrinhos e contornos neon
 - Animações de entrada e saída: esmaecer, zooms, deslizar (4 direções), girar e máquina de escrever
+- Mover, escalar e girar qualquer elemento direto no preview, com guias de alinhamento e ímã (no Mac)
+- Animações de motion design para texto (no Mac): por letra (cascata, elástico, onda), por palavra e
+  linha (palavra a palavra, revelar por máscara), cinematográficas (foco, espaçamento, decodificar) e
+  loops contínuos (flutuar, pulsar, respirar brilho, reflexo de luz), com prévia animada
 - 9 transições: dissolver, escurecer, clarear, cortinas, empurrar e zoom com desfoque
 
 **Texto e legendas**
@@ -129,6 +135,18 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - Contorno por fora da letra, sombra (cor, distância, ângulo e desfoque) e fundo com cantos arredondados
 - Estilos prontos: clássico, contorno, destaque, neon, legenda, etiqueta, sombra dura e espaçado
 - Importar e exportar legendas SRT
+- Largura da caixa de texto ajustável no preview, com quebra de linha equilibrada (no Mac)
+
+**Legendas automáticas (no Mac)**
+- Transcrição da fala com o [whisper.cpp](https://github.com/ggml-org/whisper.cpp), feita no próprio Mac (na GPU, nos Macs com Apple Silicon)
+- Três modelos para baixar quando quiser: Rápido (148 MB), Equilibrado (488 MB) e Máxima precisão (574 MB)
+- Tempo de cada palavra, quebra das frases por pausas e pontuação, e um desfazer para tudo
+- 10 estilos: Frases, Destaque, Impacto, Surgir, Leitura guiada, Preenchimento, Digitação, Editorial
+  (palavra-chave em serifa itálica), Cinema e Empilhado
+- Edição das legendas no painel, cor do destaque, palavra-chave e "aplicar este estilo a todas"
+
+As novidades marcadas "no Mac" chegam à versão Windows e Linux numa próxima versão. Até lá, ela abre
+os projetos com esses recursos, mas os desenha sem eles.
 
 **Áudio**
 - Faixas de música, volume, fade de entrada e de saída, silenciar faixa
@@ -255,3 +273,6 @@ O OpenFrame é software livre, sob a [GNU General Public License versão 3 ou
 posterior](LICENSE) (GPL-3.0-or-later). A versão Windows e Linux distribui o
 FFmpeg (com x264 e x265, GPL) e o Qt (LGPL-3.0); as licenças de terceiros estão
 em [qt/packaging/TERCEIROS.txt](qt/packaging/TERCEIROS.txt) e acompanham os pacotes.
+O app do Mac inclui o whisper.cpp e o ggml (MIT,
+[Sources/CWhisper/LICENSE](Sources/CWhisper/LICENSE)); os modelos Whisper baixados
+são da OpenAI, também sob MIT.
