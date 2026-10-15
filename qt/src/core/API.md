@@ -124,9 +124,7 @@ Porte do que entrou no Mac depois da v0.5.0, com os mesmos nomes e números do n
 | `WhisperModels.h` | `WhisperModel` (base/small/turbo) com `displayName` ("Rápido", "Equilibrado", "Máxima precisão"), `fileName`, `byteSize`, `downloadUrl`, `sha256`; `recommendedModel()` = small (só CPU nesta versão). `ModelStore` (QObject): `shared()`, `defaultDirectory()` (`AppLocalDataLocation/Models` ou `OPENFRAME_MODELS_DIR`), `path`, `isInstalled`, `remove`, `download`/`cancel`/`isDownloading` com os sinais `downloadProgress(model, fraction)` e `downloadFinished(model, ok, error)` |
 | `Transcriber.h` | `TranscriptionProgress{phase,fraction,overall}` (`make`; a mistura pesa 10%), `TranscriptionSource` (`timeline()`, `of(id)`), `TranscriptionError` e `message(...)`; `Transcriber` (QObject, como o `Exporter`): `start(project, source, model, language = "")`, `cancel()`, `isRunning()`, sinais `progress(TranscriptionProgress)` e `finished(ok, words, error)` (cancelado = ok falso e erro vazio); estáticos `sourceRange`, `mixProject`, `languages()`, `fakeWords(range)` |
 
-Provisório nesta etapa:
-- `Animations::state`: o foco esmaece crescendo de 1,08 a 1; as 7 animações por letra/palavra/linha esmaecem o
-  texto inteiro; os loops ainda não aparecem no render.
+Provisório nesta etapa (o render ficou pronto na etapa 2, abaixo):
 - `ModelStore::download` termina com o erro "O download dos modelos ainda não está disponível nesta versão.".
 - `Transcriber`: com `OPENFRAME_FAKE_TRANSCRIPTION=1`, palavras falsas pelo trecho (~0,8 s de progresso falso);
   sem ela, "modelo não instalado" ou "motor indisponível".
@@ -134,5 +132,51 @@ Provisório nesta etapa:
   fim de frase, pelas listas de palavras funcionais e fracas, e os advérbios em "-mente" perdem peso; no empate, a
   mais adiante. Em textos comuns, escolhe o mesmo substantivo longo que o Mac; pode divergir quando um verbo e um
   substantivo têm o mesmo tamanho.
-- Fontes: as do Mac (Helvetica Neue, Menlo, Didot, Condensed Black) caem para a Inter fora do Mac; o mapeamento
-  para fontes distribuíveis entra na etapa 2.
+- Fontes: o mapeamento para fontes distribuíveis entrou na etapa 2 (abaixo).
+
+## Motion e legendas, etapa 2: render do motion e das legendas
+
+As 17 animações, os 4 loops (em texto, foto e vídeo), o texto por unidade, o destaque da palavra, as revelações, a
+ênfase e o `fitLines` agora aparecem no `Renderer` (preview, exportação e miniaturas), com as regras e os números
+do Swift. Nada muda na chamada do app: `Renderer::shared().render(project, t, size)` desenha tudo.
+
+| Cabeçalho | O que tem |
+|---|---|
+| `AnimationPreview.h` | `AnimationPreview::frames(subject, part, size, count) -> QList<QImage>`: miniaturas animadas da aba Animação e dos cartões da janela das legendas, pelo mesmo `Renderer` (prévia = resultado). `Subject` = `TextContent` ou `QImage` (foto ou quadro do vídeo); `Part::entry(kind)`, `Part::exit(kind)`, `Part::loopOf(loopKind)`. Entrada: 600 ms de animação e 600 ms parado; saída: parado e depois a saída; loop: dois períodos na intensidade máxima. Texto centralizado e com a fonte ajustada para caber (nítido); imagem encaixada. Fundo transparente (`Format_ARGB32_Premultiplied`). Vazio com texto vazio, imagem nula ou `count` ≤ 0. Precisa de `QGuiApplication`; pode rodar fora da thread da interface |
+| `Renderer.h` | `RenderOptions{stills, transparent}` e `render(project, t, size, options)`: fotos em memória por material e fundo transparente (é o que o `AnimationPreview` usa; o app não precisa) |
+| `FontCatalog.h` | `registerBundled()` (chamada sozinha pelo `TextRenderer` e por `families()`) e `resolve(family, face) -> ResolvedFont{family, face}`: a família pedida, se existir; senão a equivalente distribuída (abaixo). `families()` passa a listar também as fontes do núcleo |
+| `TextRenderer.h` | `imageSize(content, canvas)`, `rasterScale(content, canvas, peak)`: o texto é rasterizado na escala efetiva (estilo × pico da animação, passos de 1/8, mínimo 1, lado de até 8192 px) e só reduzido depois |
+
+Fontes embutidas no núcleo (recurso `:/openframe/fonts`, 2,6 MB; todas SIL Open Font License 1.1, com o texto da
+licença em `qt/src/core/fonts/OFL-*.txt`). **Para o `TERCEIROS.txt` (05):**
+- Inter 4.001 (Regular, Light, Medium, Bold), © 2016 The Inter Project Authors, https://github.com/rsms/inter;
+- JetBrains Mono 2.304 (Regular, Bold), © 2020 The JetBrains Mono Project Authors,
+  https://github.com/JetBrains/JetBrainsMono;
+- Playfair Display Italic (variável), © 2017 The Playfair Display Project Authors, nome reservado "Playfair Display",
+  https://github.com/clauseggers/Playfair-Display;
+- Barlow Condensed (Bold, Black), © 2017 The Barlow Project Authors, https://github.com/jpt/barlow.
+
+Mapeamento (só quando a família pedida não existe, ou seja, num projeto vindo do Mac aberto no Windows/Linux):
+Helvetica Neue, Avenir Next, Futura, Gill Sans e SF Pro → Inter, com o estilo "Condensed Black/Bold" → Barlow
+Condensed Black/Bold; Menlo, Monaco, SF Mono, Courier, Courier New e American Typewriter → JetBrains Mono; Didot,
+Bodoni 72 e Baskerville → Playfair Display; qualquer outra ausente → Inter. No Mac, as fontes do sistema existem e
+são usadas.
+
+Comparação com o Swift (`qt/tests/tools/gerar-motion.sh` → `qt/tests/fixtures/motion.json`, teste
+`MotionReferenceTests`): 66 casos, 301 quadros (cada animação na entrada e na saída, os loops em texto e foto, as
+revelações, o destaque, a ênfase, o `fitLines` e as 10 predefinições, com as fontes OFL dos dois lados). Medido no
+Mac, num quadro de 480×270: caixa da tinta ≤2 px, centroide ≤1,3 px, brilho médio ≤0,42 de 255, cor média por
+região (grade 8×4) ≤7,6 níveis. O Core Text engrossa um pouco o traço ao suavizar: o Qt tem ~6% menos pixels acima
+do limiar nas letras grandes (até 20% nas pequenas ou quase sumindo), sem diferença visível.
+
+Desempenho (mediana por quadro, build Release, Apple M5 de 10 núcleos, só o texto sobre o fundo preto):
+
+| Caso | 1080p | 720p |
+|---|---|---|
+| 40 letras por unidade + reflexo (cascata, elástico, decodificar, máscara) | 11–13 ms | 5–8 ms |
+| Legendas (Surgir, Empilhado, Preenchimento, Digitação, Editorial) | 4–9 ms | 2–6 ms |
+| Arraste da escala de 1× a 3× (estático / cascata) | 6 / 13 ms | — |
+
+A primeira montagem dos sprites de um texto custa 10–110 ms (fica em cache). Sem otimização (build Debug), tudo
+fica ~6× mais lento.
+

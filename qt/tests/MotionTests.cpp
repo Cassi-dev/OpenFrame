@@ -6,6 +6,7 @@
 #include "Renderer.h"
 #include "TestMedia.h"
 #include "TextMotion.h"
+#include "TestSupport.h"
 #include "TimelineEditor.h"
 
 #include <QElapsedTimer>
@@ -491,7 +492,7 @@ private slots:
                               .arg(perFrame, 0, 'f', 1)
                               .arg(*std::max_element(times.begin(), times.end()), 0, 'f', 1);
                 // Folga para a máquina ocupada com os outros testes em paralelo (a CI é mais lenta).
-                QVERIFY2(perFrame < 250, qPrintable(report.last()));
+                QVERIFY2(perFrame < frameBudgetMs(), qPrintable(report.last()));
             }
         }
         qInfo().noquote() << "DESEMPENHO, " << text.size() << " letras:\n  " << report.join(QStringLiteral("\n  "));

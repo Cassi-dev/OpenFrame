@@ -732,6 +732,31 @@ void TextMotion::applyShine(LinearImage &image, double position, double strength
     });
 }
 
+namespace {
+
+/// Um sprite posado, ainda não desenhado: a primeira passada só mede até onde as unidades vão.
+struct SpriteDraw {
+    const LinearImage *image = nullptr;
+    /// Cópia alterada (tingida ou preenchida), quando há; `image` aponta para ela.
+    std::shared_ptr<const LinearImage> owned;
+    QPoint origin;
+    QTransform place;
+    double blur = 0;
+    QRect clip;
+    double alpha = 1;
+
+    /// Retângulo que o sprite ocupa na imagem do texto (com o desfoque e o recorte).
+    QRectF extent() const
+    {
+        QRectF r = (translation(origin.x(), origin.y()) * place).mapRect(QRectF(0, 0, image->width(), image->height()));
+        if (blur > 0.3)
+            r.adjust(-3 * blur - 1, -3 * blur - 1, 3 * blur + 1, 3 * blur + 1);
+        return clip.isEmpty() ? r : r.intersected(QRectF(clip));
+    }
+};
+
+} // namespace
+
 std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, QSize canvas, const AnimationState &state,
                                                    TextGranularity granularity)
 {
@@ -768,8 +793,7 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
     const QList<Micros> letterTimes =
         reveal == WordReveal::Type ? typingTimes(highlight->words, set.units) : QList<Micros>();
 
-    LinearImage strokes(set.size.width(), set.size.height());
-    LinearImage fills(set.size.width(), set.size.height());
+    QList<SpriteDraw> fillDraws, strokeDraws;
     const int n = int(set.units.size());
     // Com o destaque, a "revelar por máscara" vem em sprites de palavra: o passo continua sendo a linha.
     const bool byLine = state.unit && Animations::granularity(state.unit->kind) == TextGranularity::Line &&
@@ -816,7 +840,8 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
         if (p.alpha <= 0.001)
             continue;
 
-        LinearImage fill = unit.fill.image;
+        const LinearImage *fill = &unit.fill.image;
+        std::shared_ptr<const LinearImage> owned;
         const LinearImage *stroke = unit.stroke.isNull() ? nullptr : &unit.stroke.image;
         QPointF fillOrigin = unit.fill.origin, strokeOrigin = unit.stroke.origin;
         if (p.scramble && scramble && !scramble->isEmpty()) {
@@ -825,7 +850,7 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
             const QList<int> pool = scrambleCandidates(*scramble, unit.cellWidth);
             const ScrambleGlyph &g = (*scramble)[pool[scrambleIndex(i, step, int(pool.size()))]];
             const QPointF move(unit.cellCenterX - g.advance / 2, unit.baseline);
-            fill = g.fill.image;
+            fill = &g.fill.image;
             fillOrigin = QPointF(g.fill.origin) + move;
             stroke = g.stroke.isNull() ? nullptr : &g.stroke.image;
             strokeOrigin = QPointF(g.stroke.origin) + move;
@@ -835,13 +860,17 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
             switch (reveal) {
             case WordReveal::Fill:
                 // A cor enche a palavra da esquerda para a direita ao longo da duração dela.
-                fill = filled({fill, fillOrigin.toPoint()}, highlight->style.color,
-                              fillProgress(highlight->words[unit.word], state.local), wordRects.value(unit.word), em);
+                owned = std::make_shared<const LinearImage>(
+                    filled({*fill, fillOrigin.toPoint()}, highlight->style.color,
+                           fillProgress(highlight->words[unit.word], state.local), wordRects.value(unit.word), em));
+                fill = owned.get();
                 break;
             case WordReveal::Type: break; // a cor vai para o cursor
             default:
-                if (amounts->color[unit.word] > 0.001)
-                    fill = tinted(fill, highlight->style.color, amounts->color[unit.word]);
+                if (amounts->color[unit.word] > 0.001) {
+                    owned = std::make_shared<const LinearImage>(tinted(*fill, highlight->style.color, amounts->color[unit.word]));
+                    fill = owned.get();
+                }
             }
             grow = 1 + (highlight->style.scale - 1) * amounts->emphasis[unit.word];
         }
@@ -860,50 +889,23 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
         }
         const QRect clip = p.clip ? p.clip->toAlignedRect() : QRect();
         const auto origin = [](QPointF o) { return QTransform::fromTranslate(o.x() - std::floor(o.x()), o.y() - std::floor(o.y())); };
-        drawSprite(fills, fill, QPoint(int(std::floor(fillOrigin.x())), int(std::floor(fillOrigin.y()))),
-                   origin(fillOrigin) * place, p.blur, clip, p.alpha);
-        if (stroke)
-            drawSprite(strokes, *stroke, QPoint(int(std::floor(strokeOrigin.x())), int(std::floor(strokeOrigin.y()))),
-                       origin(strokeOrigin) * place, p.blur, clip, p.alpha);
+        const SpriteDraw f{fill, owned, QPoint(int(std::floor(fillOrigin.x())), int(std::floor(fillOrigin.y()))),
+                           origin(fillOrigin) * place, p.blur, clip, p.alpha};
+        if (!fill->isNull())
+            fillDraws.append(f);
+        if (stroke && !stroke->isNull())
+            strokeDraws.append({stroke, nullptr, QPoint(int(std::floor(strokeOrigin.x())), int(std::floor(strokeOrigin.y()))),
+                                origin(strokeOrigin) * place, p.blur, clip, p.alpha});
     }
+    std::optional<QRectF> cursor;
     if (reveal == WordReveal::Type)
-        if (const auto cursor = typingCursor(letterTimes, set, shifts, state.local, em)) {
-            QPainterPath path;
-            path.addRect(*cursor);
-            paintPath(fills, path, highlight->style.color, 1);
-        }
-    // Todos os contornos por baixo de todos os preenchimentos, como no estático.
-    LinearImage glyphs = std::move(strokes);
-    glyphs.drawAt(fills, 0, 0);
-
-    // Loops que dependem das letras separadas da sombra (a sombra sai só das letras).
-    LinearImage out = glyphs;
-    if (const auto shine = state.shine())
-        applyShine(out, shine->position, shine->strength, false);
-    if (state.glow() > 0)
-        applyGlow(out, state.glow(), 0.012 * canvas.height());
-
-    LinearImage result(set.size.width(), set.size.height());
-    // Fundo (na digitação, o que cresce com o texto), sombra, pílulas e letras.
+        cursor = typingCursor(letterTimes, set, shifts, state.local, em);
     const TextStyle &style = set.style;
-    if (!set.background.isNull()) {
-        std::optional<QPainterPath> typed;
-        if (reveal == WordReveal::Type)
-            typed = typingBackground(letterTimes, set, shifts, state.local, em);
-        if (typed)
-            paintPath(result, *typed, style.backgroundColor, state.backgroundAlpha);
-        else
-            result.drawAt(set.background.image, set.background.origin.x(), set.background.origin.y(),
-                          float(state.backgroundAlpha));
-    }
-    if (style.shadow && style.shadowColor.a > 0) {
-        LinearImage shadow = solid(glyphs, style.shadowColor);
-        // O `blur` da sombra do Core Graphics equivale a um desvio-padrão de ~metade dele.
-        if (set.shadowBlur > 0.5)
-            shadow.blur(set.shadowBlur / 2);
-        result.draw(shadow, translation(set.shadowOffset.x(), set.shadowOffset.y()));
-    }
-    // Pílulas do destaque: por cima da sombra, por baixo das letras.
+    std::optional<QPainterPath> typed;
+    if (!set.background.isNull() && reveal == WordReveal::Type)
+        typed = typingBackground(letterTimes, set, shifts, state.local, em);
+    // Pílulas do destaque (forma já posada e opacidade).
+    QList<std::pair<QPainterPath, double>> pills;
     if (highlight && highlight->style.backgroundEnabled)
         for (auto it = wordPoses.cbegin(); it != wordPoses.cend(); ++it) {
             const int word = it.key();
@@ -923,9 +925,86 @@ std::optional<TextMotion::Image> TextMotion::image(const TextContent &content, Q
             const QRectF box = wordRects[word];
             const QRectF rect = pillRect(box, set.lineBands[wordLines[word]], em);
             const QTransform t = translation(dx, -dy) * scaling(g, QPointF(box.center().x() + dx, box.center().y() - dy));
-            paintPath(result, t.map(roundedRect(rect, std::min(0.3 * em, rect.height() / 2))),
-                      highlight->style.backgroundColor, a * e);
+            pills.append({t.map(roundedRect(rect, std::min(0.3 * em, rect.height() / 2))), a * e});
         }
+
+    // Margem simétrica (o centro não muda) para o que as unidades posadas, a sombra e os loops levam para fora
+    // da imagem estática: no Swift, a imagem do Core Image não tem borda.
+    const QRectF nominal(QPointF(0, 0), QSizeF(set.size));
+    QRectF glyphExtent;
+    for (const auto *draws : {&fillDraws, &strokeDraws})
+        for (const SpriteDraw &d : *draws)
+            glyphExtent = glyphExtent.united(d.extent());
+    if (cursor)
+        glyphExtent = glyphExtent.united(*cursor);
+    QRectF extent = nominal.united(glyphExtent);
+    if (!glyphExtent.isEmpty()) {
+        if (style.shadow && style.shadowColor.a > 0) {
+            const double spread = 1.5 * set.shadowBlur + 1;
+            extent = extent.united(glyphExtent.translated(set.shadowOffset).adjusted(-spread, -spread, spread, spread));
+        }
+        if (state.glow() > 0) {
+            const double spread = 3 * 0.012 * canvas.height() + 1;
+            extent = extent.united(glyphExtent.adjusted(-spread, -spread, spread, spread));
+        }
+        if (state.shine()) {
+            const double spread = 3 * (0.06 * std::min(nominal.width(), nominal.height()) + 2) + 1;
+            extent = extent.united(glyphExtent.adjusted(-spread, -spread, spread, spread));
+        }
+    }
+    for (const auto &[path, alpha] : pills)
+        extent = extent.united(path.boundingRect());
+    const int mx = int(std::ceil(std::max({0.0, -extent.left(), extent.right() - nominal.width()})));
+    const int my = int(std::ceil(std::max({0.0, -extent.top(), extent.bottom() - nominal.height()})));
+    const QSize full(set.size.width() + 2 * mx, set.size.height() + 2 * my);
+    const QTransform offset = translation(mx, my);
+
+    LinearImage strokes(full.width(), full.height());
+    LinearImage fills(full.width(), full.height());
+    const auto paint = [&](LinearImage &dst, const QList<SpriteDraw> &draws) {
+        for (const SpriteDraw &d : draws)
+            drawSprite(dst, *d.image, d.origin, d.place * offset, d.blur, d.clip.isEmpty() ? QRect() : d.clip.translated(mx, my),
+                       d.alpha);
+    };
+    paint(fills, fillDraws);
+    paint(strokes, strokeDraws);
+    if (cursor) {
+        QPainterPath path;
+        path.addRect(cursor->translated(mx, my));
+        paintPath(fills, path, highlight->style.color, 1);
+    }
+    // Todos os contornos por baixo de todos os preenchimentos, como no estático.
+    LinearImage glyphs = std::move(strokes);
+    glyphs.drawAt(fills, 0, 0);
+
+    // Loops que dependem das letras separadas da sombra (a sombra sai só das letras). A faixa do reflexo
+    // atravessa a caixa estática, não a margem.
+    LinearImage out = glyphs;
+    if (const auto shine = state.shine())
+        applyShine(out, shine->position, shine->strength, false,
+                   mx || my ? nominal.translated(mx, my) : QRectF());
+    if (state.glow() > 0)
+        applyGlow(out, state.glow(), 0.012 * canvas.height());
+
+    LinearImage result(full.width(), full.height());
+    // Fundo (na digitação, o que cresce com o texto), sombra, pílulas e letras.
+    if (!set.background.isNull()) {
+        if (typed)
+            paintPath(result, offset.map(*typed), style.backgroundColor, state.backgroundAlpha);
+        else
+            result.drawAt(set.background.image, set.background.origin.x() + mx, set.background.origin.y() + my,
+                          float(state.backgroundAlpha));
+    }
+    if (style.shadow && style.shadowColor.a > 0) {
+        LinearImage shadow = solid(glyphs, style.shadowColor);
+        // O `blur` da sombra do Core Graphics equivale a um desvio-padrão de ~metade dele.
+        if (set.shadowBlur > 0.5)
+            shadow.blur(set.shadowBlur / 2);
+        result.draw(shadow, translation(set.shadowOffset.x(), set.shadowOffset.y()));
+    }
+    // Pílulas do destaque: por cima da sombra, por baixo das letras.
+    for (const auto &[path, alpha] : pills)
+        paintPath(result, offset.map(path), highlight->style.backgroundColor, alpha);
     result.drawAt(out, 0, 0);
     result.encodedToLinear();
     scaleAlpha(result, std::clamp(style.opacity, 0.0, 1.0));

@@ -320,9 +320,13 @@ Layout buildLayout(const QString &text, const TextStyle &style, QSize canvas, co
             ++paragraph;
         const double natural = line.height() * s;
         const double height = paragraphHeight[paragraph].value_or(natural);
-        // A linha de base fica a (descida + entrelinha) do fim da linha, como no Core Text.
+        // Altura natural: a linha de base fica a (descida + entrelinha) do fim da linha. Altura fixa: o Core Text
+        // tira (ou põe) a diferença meio a meio em cima e embaixo, com a metade de cima arredondada.
         const double lineDescent = line.descent() * s + line.leading() * s;
-        l.lines.append({start, line.textLength(), line.naturalTextWidth() * s, y, height, y + height - lineDescent});
+        const double baseline = paragraphHeight[paragraph]
+                                    ? y + line.ascent() * s - std::round((natural - height) / 2)
+                                    : y + height - lineDescent;
+        l.lines.append({start, line.textLength(), line.naturalTextWidth() * s, y, height, baseline});
         widest = std::max(widest, line.naturalTextWidth() * s);
         y += height;
     }

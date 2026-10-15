@@ -179,20 +179,17 @@ struct Renderer::Impl {
         const double r = TextRenderer::shared().rasterScale(content, canvas, Animations::peakScale(seg));
         const QSize raster(std::max(1, int(std::lround(canvas.width() * r))), std::max(1, int(std::lround(canvas.height() * r))));
         LinearImage image;
-        QSizeF nominal;
         if (Animations::usesUnits(seg)) {
-            // Por unidade no clipe inteiro; a caixa nominal é a da imagem estática.
+            // Por unidade no clipe inteiro.
             auto out = TextMotion::image(content, raster, anim, Animations::granularityFor(seg, anim));
             if (!out)
                 return std::nullopt;
             image = std::move(out->image);
-            nominal = out->size;
         } else {
             const QImage still = TextRenderer::shared().image(content, raster, anim.reveal);
             if (still.isNull())
                 return std::nullopt;
             image = LinearImage::fromImage(still);
-            nominal = still.size();
         }
         const TextStyle &style = content.style;
         const double W = canvas.width(), H = canvas.height();
@@ -209,7 +206,8 @@ struct Renderer::Impl {
         out.transform.translate(W / 2 + (style.x + anim.dx) * W / 2, H / 2 - (style.y + anim.dy) * H / 2);
         out.transform.rotate(style.rotation + anim.rotation);
         out.transform.scale(scale, scale);
-        out.transform.translate(-nominal.width() / 2.0 - pad, -nominal.height() / 2.0 - pad);
+        // A imagem tem o mesmo centro da nominal (margens iguais dos dois lados).
+        out.transform.translate(-image.width() / 2.0, -image.height() / 2.0);
         out.opacity = float(std::clamp(seg.opacity * anim.alpha, 0.0, 1.0));
         out.image = std::move(image);
         return out;

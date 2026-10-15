@@ -75,9 +75,10 @@ std::shared_ptr<const TextUnits> units(const TextContent &content, QSize canvas,
 std::shared_ptr<const QList<ScrambleGlyph>> scrambleGlyphs(const TextStyle &style, QSize canvas);
 
 struct Image {
-    /// Luz linear pré-multiplicada, com a opacidade do estilo.
+    /// Luz linear pré-multiplicada, com a opacidade do estilo. Pode ser maior que `size` (o que as unidades
+    /// posadas, a sombra e os loops levam para fora), com a mesma margem dos dois lados: o centro é o mesmo.
     LinearImage image;
-    /// Tamanho nominal (o da imagem estática, com o mesmo centro).
+    /// Tamanho nominal (o da imagem estática).
     QSize size;
 };
 /// Imagem do texto no instante.
