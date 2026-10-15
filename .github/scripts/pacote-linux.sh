@@ -47,7 +47,8 @@ fi
 
 # Qt e dependências (o FFmpeg vem do LD_LIBRARY_PATH). Primeiro só o AppDir,
 # para tirar os plugins de mídia do Qt: o som usa só o QAudioSink, e o plugin
-# FFmpeg do Qt traria uma segunda cópia do FFmpeg.
+# FFmpeg do Qt traria uma segunda cópia do FFmpeg, que pede a libva-drm e cai
+# num Linux sem ela. O som-appimage.sh prova que o pacote toca sem o plugin.
 export QMAKE="$QT_ROOT_DIR/bin/qmake"
 export QML_SOURCES_PATHS="$root/qt/src/app/qml"
 export LD_LIBRARY_PATH="$FFMPEG_ROOT/lib:$QT_ROOT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

@@ -30,6 +30,8 @@ class EditorModel;
 /// - `OPENFRAME_SNAPSHOT_SCENARIO=legendas` (com `OPENFRAME_SNAPSHOT_MEDIA` e
 ///   `OPENFRAME_FAKE_TRANSCRIPTION=1`): janela das legendas automáticas, cada estilo
 ///   no preview no meio da fala, painel e inspetor.
+/// - `OPENFRAME_SNAPSHOT_SCENARIO=som` (com `OPENFRAME_SNAPSHOT_MEDIA`): toca 3 s
+///   do começo, para a CI gravar a saída de som do pacote.
 class Snapshot : public QObject
 {
     Q_OBJECT
@@ -54,6 +56,7 @@ private:
     void dragScenario();
     void motionScenario();
     void captionsScenario();
+    void soundScenario();
     /// Arrasta no overlay do preview de `from` a `to` (pontos do item), em passos,
     /// pelas mesmas funções do mouse; com `release` falso, o gesto fica aberto.
     void canvasDrag(QPointF from, QPointF to, bool snapping = true, bool release = true);

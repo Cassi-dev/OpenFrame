@@ -226,7 +226,7 @@ QString EditorModel::captionBackdrop() const
         return {};
     for (const Segment &seg : m_project.tracks[*main].segments)
         if (const Material *m = m_project.material(seg.materialId); m && m->isVisual())
-            return QStringLiteral("image://filters/%1/none").arg(ProjectStore::uuidString(m->id));
+            return filterPreview(ProjectStore::uuidString(m->id), QStringLiteral("none"));
     return {};
 }
 

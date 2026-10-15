@@ -1,8 +1,6 @@
 # Versão Windows/Linux (qt/): compila, roda os testes do núcleo e as capturas
 # offscreen do app em Windows (MSVC) e Ubuntu, e gera os pacotes (instalador e
 # zip portátil no Windows, AppImage no Linux). Capturas e pacotes ficam nos artefatos.
-# Por enquanto, o modelo do Whisper e as capturas de motion e legendas só rodam
-# no Linux (no Windows, depois de combinar).
 name: Qt (Windows e Linux)
 
 on:
@@ -62,7 +60,7 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Dependências do sistema (Linux)
         if: runner.os == 'Linux'
@@ -93,7 +91,7 @@ jobs:
 
       - name: Cache do FFmpeg
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/ffmpeg
           key: ffmpeg-${{ env.FFMPEG_BUILD }}-${{ matrix.ffmpeg-asset }}
@@ -124,15 +122,14 @@ jobs:
           "$root/bin/ffmpeg" -hide_banner -version | head -n 1
 
       - name: Cache do modelo Whisper (base)
-        if: runner.os == 'Linux'
         id: whisper-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/whisper-models
-          key: whisper-ggml-base-${{ env.WHISPER_BASE_SHA256 }}
+          key: whisper-ggml-base-${{ runner.os }}-${{ env.WHISPER_BASE_SHA256 }}
 
       - name: Baixar o modelo Whisper (base)
-        if: runner.os == 'Linux' && steps.whisper-cache.outputs.cache-hit != 'true'
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/whisper-models"
           cd "$RUNNER_TEMP/whisper-models"
@@ -143,9 +140,10 @@ jobs:
       # Com OPENFRAME_REQUIRE_WHISPER_MODEL, o teste de transcrição falha em vez
       # de pular quando o modelo falta: na CI o pulo não pode acontecer.
       - name: Modelo Whisper no ambiente
-        if: runner.os == 'Linux'
         run: |
-          echo "OPENFRAME_MODELS_DIR=$RUNNER_TEMP/whisper-models" >> "$GITHUB_ENV"
+          models="$RUNNER_TEMP/whisper-models"
+          if [[ "$RUNNER_OS" == Windows ]]; then models=$(cygpath -m "$models"); fi
+          echo "OPENFRAME_MODELS_DIR=$models" >> "$GITHUB_ENV"
           echo "OPENFRAME_REQUIRE_WHISPER_MODEL=1" >> "$GITHUB_ENV"
           ls -l "$RUNNER_TEMP/whisper-models"
 
@@ -182,12 +180,12 @@ jobs:
         env:
           OPENFRAME_QPA: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           OPENFRAME_SOFTWARE: ${{ runner.os == 'Windows' && '1' || '' }}
-          OPENFRAME_CAPTURAS_MOTION: ${{ runner.os == 'Linux' && '1' || '' }}
+          OPENFRAME_CAPTURAS_MOTION: "1"
         run: .github/scripts/capturas.sh "${{ matrix.app }}" capturas
 
       - name: Publicar as capturas
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: capturas-${{ runner.os }}
           path: capturas
@@ -202,8 +200,23 @@ jobs:
             .github/scripts/pacote-linux.sh build pacotes
           fi
 
+      # Tira a libva do sistema e toca o AppImage gravando a saída de som: prova que
+      # o pacote, sem o plugin de mídia do Qt, não cai e o som sai.
+      - name: AppImage sem libva, com som
+        if: runner.os == 'Linux'
+        run: .github/scripts/som-appimage.sh pacotes/*.AppImage som
+
+      - name: Publicar o teste de som
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v6
+        with:
+          name: som-Linux
+          path: som
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Publicar os pacotes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: OpenFrame-${{ runner.os }}
           path: |

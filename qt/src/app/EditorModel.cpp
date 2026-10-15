@@ -145,6 +145,11 @@ EditorModel::EditorModel(QObject *parent)
     m_lastCoalesce.start();
     m_lastThumbnail = QDateTime::currentDateTime().addSecs(-60);
 
+    connect(MediaCache::instance(), &MediaCache::changed, this, [this] {
+        ++m_thumbnailRevision;
+        emit thumbnailsChanged();
+    });
+
     m_autosave.setSingleShot(true);
     m_autosave.setInterval(800);
     connect(&m_autosave, &QTimer::timeout, this, &EditorModel::saveNow);
@@ -1545,6 +1550,13 @@ QVariantList EditorModel::filterOptions() const
     for (auto f : allCases<FilterPreset>())
         list.append(QVariantMap{{"value", enumKey(f)}, {"title", displayName(f)}});
     return list;
+}
+
+QString EditorModel::filterPreview(const QString &materialId, const QString &filter) const
+{
+    if (materialId.isEmpty() || MediaCache::instance()->thumbnails(materialId).isEmpty())
+        return {};
+    return QStringLiteral("image://filters/%1/%2").arg(materialId, filter);
 }
 
 QVariantList EditorModel::effectOptions() const

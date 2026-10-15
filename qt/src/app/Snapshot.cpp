@@ -245,6 +245,8 @@ void Snapshot::mediaScenario(const QString &mediaDir)
         motionScenario();
     else if (scenario == "legendas")
         captionsScenario();
+    else if (scenario == "som")
+        soundScenario();
     else
         editorScenario();
 }
@@ -735,6 +737,27 @@ void Snapshot::motionScenario()
     then(700, [this, probe] {
         log(QStringLiteral("motion: reproduzindo, contorno %1").arg(probe->frame() ? "visível" : "escondido"));
         capture("motion-7-reproduzindo");
+        m_model->togglePlay();
+    });
+}
+
+// MARK: - Som (reprodução com o QAudioSink, para a CI gravar a saída)
+
+void Snapshot::soundScenario()
+{
+    auto start = std::make_shared<Micros>(0);
+    then(0, [this, start] {
+        m_model->setSelection({});
+        m_model->seekMicros(0);
+        *start = m_model->playheadMicros();
+        m_model->togglePlay();
+        log(QStringLiteral("som: tocando = %1").arg(m_model->isPlaying() ? "sim" : "não"));
+    });
+    then(3000, [this, start] {
+        log(QStringLiteral("som: depois de 3 s, playhead %1 (andou %2 ms)")
+                .arg(m_model->playheadText())
+                .arg((m_model->playheadMicros() - *start) / 1000));
+        capture("som-1-tocando");
         m_model->togglePlay();
     });
 }

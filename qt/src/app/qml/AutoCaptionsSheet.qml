@@ -514,7 +514,7 @@ T.Popup {
                     }
                     Image {
                         anchors.fill: parent
-                        source: Editor.captionBackdrop()
+                        source: Editor.thumbnailRevision >= 0 ? Editor.captionBackdrop() : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: false
