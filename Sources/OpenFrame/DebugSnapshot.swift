@@ -885,7 +885,7 @@ enum DebugSnapshot {
             model.selection = seg.id
             model.inspectorTab = .text
             await wait(1)
-            await captureInspectorScrolled("estilos-7-inspetor-\(preset.rawValue)", fractions: [0.3, 0.45, 0.6], to: dir)
+            await captureInspectorScrolled("estilos-7-inspetor-\(preset.rawValue)", fractions: [0.3, 0.45, 0.6], model: model, to: dir)
             if preset == .editorial {
                 // Ficha: liga a primeira palavra; aplicar a todas copia fonte/escala/cor, não as palavras.
                 model.mutate { TimelineEditor.update(&$0, segment: seg.id) {
@@ -965,7 +965,7 @@ enum DebugSnapshot {
 
         model.inspectorTab = .text
         await wait(1)
-        await captureInspectorScrolled("estilos-6-inspetor-largura", fractions: [1], to: dir)
+        await captureInspectorScrolled("estilos-6-inspetor-largura", fractions: [1], model: model, to: dir)
     }
 
     private static func logZoom(_ step: String, _ model: EditorModel) {
@@ -981,9 +981,11 @@ enum DebugSnapshot {
     }
 
     /// Rola o inspetor (a rolagem mais à direita da janela) até cada fração e captura.
-    /// Com `region`, salva só o inspetor com o título e as abas acima da rolagem.
+    /// Com `region`, salva só o inspetor com o título e as abas acima da rolagem. Com `model`,
+    /// a janela inteira leva o quadro do player (`captureComposite`), que o cacheDisplay deixa preto.
     private static func captureInspectorScrolled(_ name: String, fractions: [Double] = [0.5, 1],
-                                                 region: Bool = false, to dir: URL) async {
+                                                 region: Bool = false, model: EditorModel? = nil,
+                                                 to dir: URL) async {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.height > 150 }),
               let root = window.contentView else { return }
         func scrollViews(_ view: NSView) -> [NSScrollView] {
@@ -1012,6 +1014,8 @@ enum DebugSnapshot {
                 guard let rep = root.bitmapImageRepForCachingDisplay(in: area) else { continue }
                 root.cacheDisplay(in: area, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("\(file).png"))
+            } else if let model {
+                await captureComposite(file, model: model, to: dir)
             } else {
                 capture(file, to: dir)
             }
