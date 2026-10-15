@@ -178,12 +178,13 @@ struct PreviewEngine::Impl {
     bool playing = false;
     QTimer stillTimer;
     int generation = 0;
+    int shortSide = 720;
 };
 
 PreviewEngine::PreviewEngine(QObject *parent) : QObject(parent), d(new Impl)
 {
 #ifdef OF_HAS_PLAYER
-    d->player.setPreviewShortSide(720);
+    d->player.setPreviewShortSide(d->shortSide);
     connect(&d->player, &Player::frameReady, this, [](const QImage &frame) {
         MediaCache::instance()->setPreviewFrame(frame);
     });
@@ -257,6 +258,24 @@ void PreviewEngine::seek(Micros t)
 #endif
 }
 
+void PreviewEngine::setPreviewShortSide(int side)
+{
+    side = std::max(2, side);
+    if (side == d->shortSide)
+        return;
+    d->shortSide = side;
+#ifdef OF_HAS_PLAYER
+    d->player.setPreviewShortSide(side);
+#else
+    d->stillTimer.start();
+#endif
+}
+
+int PreviewEngine::previewShortSide() const
+{
+    return d->shortSide;
+}
+
 bool PreviewEngine::isPlaying() const
 {
     return d->playing;
@@ -276,7 +295,7 @@ void PreviewEngine::renderStill()
     const int generation = ++d->generation;
     const Project project = d->project;
     const Micros t = std::min(d->time, std::max<Micros>(0, project.duration() - 1));
-    const QSize size = project.canvasSize(720);
+    const QSize size = project.canvasSize(d->shortSide);
     QPointer<PreviewEngine> self(this);
     auto future = QtConcurrent::run([project, t, size] { return Bridge::renderFrame(project, t, size); });
     future.then(this, [self, generation](const QImage &image) {

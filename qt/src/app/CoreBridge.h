@@ -55,6 +55,9 @@ public:
     void seek(Micros t);
     bool isPlaying() const;
     Micros time() const;
+    /// Lado menor do quadro do preview em pixels (degraus do `PreviewResolution`).
+    void setPreviewShortSide(int side);
+    int previewShortSide() const;
 
 signals:
     void timeChanged(Micros t);

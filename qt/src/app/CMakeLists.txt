@@ -38,7 +38,11 @@ qt_add_qml_module(OpenFrame
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml/OpenFrame"
     QML_FILES ${OPENFRAME_QML}
     SOURCES
+        CanvasCore.h CanvasCore.cpp
+        CanvasGeometry.h CanvasGeometry.cpp
+        CanvasOverlay.h CanvasOverlay.cpp
         CoreBridge.h CoreBridge.cpp
+        EditorCanvas.cpp
         EditorModel.h EditorModel.cpp
         FilterPreviews.h FilterPreviews.cpp
         KeyedListModel.h KeyedListModel.cpp

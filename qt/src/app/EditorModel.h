@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CanvasGeometry.h"
 #include "ExportSettings.h"
 #include "KeyedListModel.h"
 #include "Project.h"
@@ -327,6 +328,32 @@ public:
     /// Teclas do editor (espaço, Delete, Esc, setas, Home/End, Shift+Z).
     bool handleKey(int key, Qt::KeyboardModifiers modifiers);
 
+    // Manipulação no preview (EditorCanvas.cpp)
+    /// Elementos visíveis no playhead (em repouso).
+    QList<ElementBox> canvasBoxes() const;
+    /// Contorno do selecionado, se ele aparece no playhead. Some durante a reprodução;
+    /// no arraste lateral, mostra a largura pedida.
+    std::optional<SelectionFrame> selectionFrame(const CanvasMapping &mapping) const;
+    /// Clique no preview: alça ou corpo do selecionado, senão o elemento mais acima sob o
+    /// ponteiro, senão tira a seleção. Duplo clique num texto abre a aba Texto.
+    void canvasPointerDown(QPointF p, const CanvasMapping &mapping, int clickCount = 1);
+    /// `snapping` falso com Ctrl segurado.
+    void canvasPointerMoved(QPointF p, const CanvasMapping &mapping, bool snapping = true);
+    void canvasPointerUp();
+    const std::optional<PlacementDrag> &placementDrag() const { return m_placementDrag; }
+    const QList<SnapGuide> &canvasGuides() const { return m_canvasGuides; }
+    std::optional<double> canvasRotationLabel() const { return m_canvasRotationLabel; }
+    std::optional<WidthDragState> canvasWidthDrag() const { return m_canvasWidthDrag; }
+    /// Seleciona o texto e abre a aba Texto.
+    void editText(const QUuid &id);
+
+    /// Tamanho do player em pontos e a escala da tela. O primeiro vale na hora; os
+    /// seguintes, ~300 ms depois que o tamanho parar.
+    Q_INVOKABLE void previewViewportChanged(qreal width, qreal height, qreal devicePixelRatio);
+    int previewShortSide() const;
+    void setPreviewShortSide(int side);
+    void updatePreviewResolution();
+
 signals:
     void screenChanged();
     void projectChanged();
@@ -342,6 +369,8 @@ signals:
     void exportSummaryChanged();
     void exportStateChanged();
     void dialogRequested(const QString &kind);
+    /// Gesto, guias e etiquetas do overlay do preview.
+    void canvasOverlayChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -434,6 +463,14 @@ private:
     KeyedListModel *m_clips;
     KeyedListModel *m_junctions;
     KeyedListModel *m_cues;
+
+    std::optional<PlacementDrag> m_placementDrag;
+    QList<SnapGuide> m_canvasGuides;
+    std::optional<double> m_canvasRotationLabel;
+    std::optional<WidthDragState> m_canvasWidthDrag;
+    QSizeF m_previewPoints;
+    qreal m_previewScale = 1;
+    QTimer m_previewResolutionTimer;
 
     PreviewEngine *m_preview = nullptr;
     ExportJob *m_exportJob = nullptr;

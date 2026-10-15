@@ -25,6 +25,8 @@ class EditorModel;
 /// - `OPENFRAME_SNAPSHOT_MEDIA=pasta`: cria um projeto na biblioteca, importa as
 ///   mídias da pasta e roda o cenário do editor sobre ele.
 /// - `OPENFRAME_SNAPSHOT_SCENARIO=arraste`: arrastes espelhados na timeline.
+/// - `OPENFRAME_SNAPSHOT_SCENARIO=motion` (com `OPENFRAME_SNAPSHOT_MEDIA`): seleção,
+///   alças, giro, escala, largura e guias no preview, e a aba Animação.
 class Snapshot : public QObject
 {
     Q_OBJECT
@@ -47,6 +49,10 @@ private:
     void mediaScenario(const QString &mediaDir);
     void editorScenario();
     void dragScenario();
+    void motionScenario();
+    /// Arrasta no overlay do preview de `from` a `to` (pontos do item), em passos,
+    /// pelas mesmas funções do mouse; com `release` falso, o gesto fica aberto.
+    void canvasDrag(QPointF from, QPointF to, bool snapping = true, bool release = true);
     void inspectorTabs(const QString &segment, const QString &prefix);
 
     void capture(const QString &name);

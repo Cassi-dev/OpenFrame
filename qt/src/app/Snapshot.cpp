@@ -1,5 +1,6 @@
 #include "Snapshot.h"
 
+#include "CanvasOverlay.h"
 #include "EditorModel.h"
 #include "ProjectStore.h"
 
@@ -226,7 +227,10 @@ void Snapshot::mediaScenario(const QString &mediaDir)
         log(QStringLiteral("projeto: %1 materiais, %2 clipes").arg(p.materials.size()).arg(m_model->clipCount()));
     });
     then(2000, [] {});
-    editorScenario();
+    if (qEnvironmentVariable("OPENFRAME_SNAPSHOT_SCENARIO") == "motion")
+        motionScenario();
+    else
+        editorScenario();
 }
 
 void Snapshot::editorScenario()
@@ -492,6 +496,190 @@ void Snapshot::dragScenario()
                 m_model->undo();
         });
     }
+}
+
+// MARK: - Motion (manipulação no preview e aba Animação)
+
+void Snapshot::canvasDrag(QPointF from, QPointF to, bool snapping, bool release)
+{
+    auto *overlay = qobject_cast<CanvasOverlay *>(findItem(QStringLiteral("canvasOverlay")));
+    if (!overlay) {
+        log("motion: overlay não encontrado");
+        return;
+    }
+    const CanvasMapping mapping = overlay->mapping();
+    m_model->canvasPointerDown(from, mapping);
+    const int steps = 12;
+    for (int i = 1; i <= steps; ++i)
+        m_model->canvasPointerMoved(from + (to - from) * (double(i) / steps), mapping, snapping);
+    if (release)
+        m_model->canvasPointerUp();
+}
+
+void Snapshot::motionScenario()
+{
+    struct Probe {
+        Snapshot *self;
+        CanvasOverlay *overlay() const
+        {
+            return qobject_cast<CanvasOverlay *>(self->findItem(QStringLiteral("canvasOverlay")));
+        }
+        std::optional<SelectionFrame> frame() const
+        {
+            auto *o = overlay();
+            return o ? self->m_model->selectionFrame(o->mapping()) : std::nullopt;
+        }
+        QString describe() const
+        {
+            const auto id = self->m_model->selectionId();
+            const auto seg = id ? self->m_model->project().segment(*id) : std::nullopt;
+            if (!seg)
+                return QStringLiteral("sem seleção");
+            if (seg->text) {
+                const TextStyle &st = seg->text->style;
+                return QStringLiteral("texto x %1 y %2 escala %3 rotação %4 maxWidth %5")
+                    .arg(st.x, 0, 'f', 3).arg(st.y, 0, 'f', 3).arg(st.scale, 0, 'f', 3)
+                    .arg(st.rotation, 0, 'f', 1).arg(st.maxWidth, 0, 'f', 3);
+            }
+            const Transform &t = seg->transform;
+            return QStringLiteral("clipe x %1 y %2 escala %3 rotação %4")
+                .arg(t.x, 0, 'f', 3).arg(t.y, 0, 'f', 3).arg(t.scale, 0, 'f', 3).arg(t.rotation, 0, 'f', 1);
+        }
+    };
+    auto probe = std::make_shared<Probe>(Probe{this});
+    // Passos de desfazer disponíveis (desfaz tudo e refaz de volta).
+    auto countUndo = [this] {
+        const QString selection = m_model->selection();
+        const Micros playhead = m_model->playheadMicros();
+        int n = 0;
+        while (m_model->canUndo() && n < 400) {
+            m_model->undo();
+            ++n;
+        }
+        for (int i = 0; i < n; ++i)
+            m_model->redo();
+        m_model->seekMicros(playhead);
+        m_model->setSelection(selection);
+        return n;
+    };
+
+    then(0, [this] {
+        m_model->seek(1.0);
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        m_model->setInspectorTab("text");
+    });
+    then(1200, [this, probe] {
+        if (auto *o = probe->overlay())
+            log(QStringLiteral("motion: overlay %1×%2 pt, preview com lado menor %3 px")
+                    .arg(o->width()).arg(o->height()).arg(m_model->previewShortSide()));
+        log("motion: " + probe->describe());
+        capture("motion-1-selecao-texto");
+    });
+    then(0, [this] { m_model->setSelection(firstMainSegment(m_model->project())); });
+    then(800, [this, probe] {
+        log("motion: " + probe->describe() + (probe->frame() && probe->frame()->resizesWidth
+                                                  ? ", com alças laterais" : ", sem alças laterais"));
+        capture("motion-2-selecao-video");
+    });
+
+    // Giro pela alça, com a etiqueta de graus (gesto aberto na captura).
+    then(0, [this, probe, countUndo] {
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        const int before = countUndo();
+        const auto f = probe->frame();
+        if (!f)
+            return log("motion: texto fora do playhead");
+        const QPointF knob = f->rotationHandle();
+        const QPointF to = f->center + SelectionFrame::rotate(knob - f->center, 32);
+        canvasDrag(knob, to, true, false);
+        log(QStringLiteral("motion: girando, etiqueta %1°, desfazer antes: %2")
+                .arg(m_model->canvasRotationLabel().value_or(-999), 0, 'f', 0).arg(before));
+    });
+    then(500, [this] { capture("motion-3-girando"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois do giro, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+    });
+
+    // Escala pelo canto inferior direito, para fora.
+    then(300, [this, probe] {
+        const auto f = probe->frame();
+        if (!f)
+            return;
+        const QPointF corner = f->corners[2];
+        canvasDrag(corner, corner + (corner - f->center) * 0.35, true, false);
+    });
+    then(500, [this] { capture("motion-4-escala"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois da escala, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+    });
+
+    // Mover o corpo perto do centro (com ímã: guias quando o núcleo tiver o Snapping) e com Ctrl.
+    then(300, [this, probe] {
+        const auto f = probe->frame();
+        auto *o = probe->overlay();
+        if (!f || !o)
+            return;
+        const QPointF target(o->width() / 2 + 3, o->height() / 2 + 2);
+        canvasDrag(f->center, target, true, false);
+        log(QStringLiteral("motion: movendo com ímã, %1 guias; ").arg(m_model->canvasGuides().size()) + probe->describe());
+    });
+    then(500, [this] { capture("motion-5-movendo"); });
+    then(0, [this, probe] {
+        auto *o = probe->overlay();
+        if (!o || !m_model->placementDrag())
+            return;
+        m_model->canvasPointerMoved(QPointF(o->width() / 2 + 3, o->height() / 2 + 2), o->mapping(), false);
+        log(QStringLiteral("motion: mesmo ponto com Ctrl (sem ímã), %1 guias; ").arg(m_model->canvasGuides().size())
+            + probe->describe());
+        m_model->canvasPointerUp();
+    });
+
+    // Largura pela alça lateral direita: etiqueta "N%".
+    then(300, [this, probe, countUndo] {
+        const int before = countUndo();
+        const auto f = probe->frame();
+        if (!f)
+            return;
+        const QPointF edge = f->edgeHandle(EdgeSide::Right);
+        log(QStringLiteral("motion: alça sob o ponto da direita = %1")
+                .arg(f->handle(edge) && f->handle(edge)->kind == OverlayHandle::Kind::Edge ? "lateral" : "outra"));
+        canvasDrag(edge, edge + f->right() * 70, true, false);
+        log(QStringLiteral("motion: largura arrastando, etiqueta %1, desfazer antes %2")
+                .arg(m_model->canvasWidthDrag() ? m_model->canvasWidthDrag()->label() : "-").arg(before));
+    });
+    then(500, [this] { capture("motion-6-largura"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois da largura, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+        m_model->undo();
+        log("motion: um desfazer, " + probe->describe());
+        m_model->redo();
+    });
+
+    // Duplo clique no texto abre a aba Texto; clique fora tira a seleção.
+    then(300, [this, probe] {
+        auto *o = probe->overlay();
+        const auto f = probe->frame();
+        if (!o || !f)
+            return;
+        const QPointF center = f->center;
+        m_model->setInspectorTab("basic");
+        m_model->setSelection({});
+        m_model->canvasPointerDown(center, o->mapping(), 2);
+        m_model->canvasPointerUp();
+        log(QStringLiteral("motion: duplo clique no texto → aba %1, seleção %2")
+                .arg(m_model->inspectorTab(), m_model->selection().isEmpty() ? "vazia" : "o texto"));
+    });
+
+    // Na reprodução, o contorno some e o clique não responde.
+    then(300, [this] { m_model->togglePlay(); });
+    then(700, [this, probe] {
+        log(QStringLiteral("motion: reproduzindo, contorno %1").arg(probe->frame() ? "visível" : "escondido"));
+        capture("motion-7-reproduzindo");
+        m_model->togglePlay();
+    });
 }
 
 } // namespace of
