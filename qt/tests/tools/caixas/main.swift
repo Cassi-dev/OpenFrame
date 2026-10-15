@@ -3,15 +3,17 @@ import CoreText
 import Foundation
 
 // Referência da caixa do texto para a versão Qt: cada caso tem o conteúdo (texto, estilo e palavra-chave),
-// o canvas e o `boxSize` medido aqui, mais as linhas (`lineTexts`). Todos usam a Inter do app Qt (registrada
-// a partir de `qt/src/app/fonts`), para a comparação valer em qualquer sistema.
+// o canvas e o `boxSize` medido aqui, mais as linhas (`lineTexts`). Todos usam a Inter que o Qt distribui
+// (registrada a partir de `qt/src/core/fonts` e `qt/src/app/fonts`), para a comparação valer em qualquer sistema.
 // Uso: qt/tests/tools/gerar-caixas.sh
 
+// Argumentos: as pastas de fontes e, por último, o arquivo de saída.
 let args = CommandLine.arguments
-let fonts = URL(fileURLWithPath: args[1])
-for file in try FileManager.default.contentsOfDirectory(at: fonts, includingPropertiesForKeys: nil)
-where file.pathExtension == "ttf" {
-    CTFontManagerRegisterFontsForURL(file as CFURL, .process, nil)
+for dir in args.dropFirst().dropLast() {
+    for file in try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)
+    where file.pathExtension == "ttf" && !file.lastPathComponent.hasPrefix("lucide") {
+        CTFontManagerRegisterFontsForURL(file as CFURL, .process, nil)
+    }
 }
 
 func inter(_ change: (inout TextStyle) -> Void = { _ in }) -> TextStyle {
@@ -92,5 +94,5 @@ for (name, content, canvas) in cases {
                 "lines": TextRenderer.shared.lineTexts(for: content, canvas: canvas)])
 }
 let data = try JSONSerialization.data(withJSONObject: ["cases": out], options: [.prettyPrinted, .sortedKeys])
-try data.write(to: URL(fileURLWithPath: args[2]))
+try data.write(to: URL(fileURLWithPath: args.last!))
 print("ok: \(out.count) casos")
