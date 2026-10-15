@@ -1,10 +1,13 @@
 #include "Transcriber.h"
 
+#include "AudioMixdown.h"
 #include "CaptionBuilder.h"
 
 #include <QPointer>
 #include <QThread>
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 
 namespace of {
 
@@ -86,6 +89,57 @@ QList<TranscribedWord> Transcriber::fakeWords(TimeRange range)
     return words;
 }
 
+std::optional<QList<TranscribedWord>> Transcriber::run(const Project &project, const TranscriptionSource &source,
+                                                       const QString &modelPath, std::optional<WhisperModel> model,
+                                                       const WhisperEngine::Options &options,
+                                                       const std::atomic<bool> &cancelled,
+                                                       const std::function<void(const TranscriptionProgress &)> &progress,
+                                                       QString *error)
+{
+    using P = TranscriptionProgress::Phase;
+    const auto report = [&](P phase, double fraction) {
+        if (progress)
+            progress(TranscriptionProgress::make(phase, fraction));
+    };
+    const auto fail = [&](const QString &message) -> std::optional<QList<TranscribedWord>> {
+        if (error)
+            *error = message;
+        return std::nullopt;
+    };
+    const auto range = sourceRange(project, source);
+    if (!range)
+        return fail(message(TranscriptionError::NoAudio));
+    if (!WhisperEngine::isAvailable())
+        return fail(message(TranscriptionError::EngineUnavailable));
+    report(P::Mixing, 0);
+    const auto samples = AudioMixdown::samples(mixProject(project, source), *range, [&](double f) {
+        report(P::Mixing, f);
+        return !cancelled;
+    });
+    if (cancelled)
+        return fail({});
+    if (!samples || std::none_of(samples->begin(), samples->end(), [](float x) { return std::abs(x) > 1e-4f; }))
+        return fail(message(TranscriptionError::NoAudio));
+
+    report(P::Transcribing, 0);
+    QString engineError;
+    const auto words = WhisperEngine::transcribe(*samples, modelPath, model, options, cancelled,
+                                                 [&](double f) { report(P::Transcribing, f); }, &engineError);
+    if (cancelled)
+        return fail({});
+    if (!words)
+        return fail(message(TranscriptionError::Failed, model.value_or(WhisperModel::Small), engineError));
+    QList<TranscribedWord> out;
+    for (const EngineWord &w : *words) {
+        const Micros start = range->start + Time::seconds(w.start);
+        const Micros end = std::min(range->end(), range->start + Time::seconds(w.end));
+        if (start >= range->end())
+            continue;
+        out.append({w.text, start, std::max(end, start), w.probability});
+    }
+    return out;
+}
+
 struct Transcriber::Impl {
     std::atomic<bool> cancelled{false};
     QThread *thread = nullptr;
@@ -106,7 +160,6 @@ Transcriber::~Transcriber()
 void Transcriber::start(const Project &project, const TranscriptionSource &source, WhisperModel model,
                         const QString &language)
 {
-    Q_UNUSED(language)
     if (d->running)
         return;
     if (d->thread) {
@@ -119,7 +172,7 @@ void Transcriber::start(const Project &project, const TranscriptionSource &sourc
     const bool fake = qEnvironmentVariable("OPENFRAME_FAKE_TRANSCRIPTION") == QStringLiteral("1");
     const bool installed = ModelStore::shared().isInstalled(model);
     QPointer<Transcriber> self(this);
-    d->thread = QThread::create([this, self, project, source, model, fake, installed] {
+    d->thread = QThread::create([this, self, project, source, model, language, fake, installed] {
         const auto report = [&](TranscriptionProgress::Phase phase, double fraction) {
             const auto p = TranscriptionProgress::make(phase, fraction);
             QMetaObject::invokeMethod(this, [self, p] {
@@ -149,7 +202,14 @@ void Transcriber::start(const Project &project, const TranscriptionSource &sourc
         } else if (!installed) {
             error = message(TranscriptionError::ModelNotInstalled, model);
         } else {
-            error = message(TranscriptionError::EngineUnavailable);
+            WhisperEngine::Options options;
+            options.language = language;
+            const auto result = run(project, source, ModelStore::shared().path(model), model, options, d->cancelled,
+                                    [&](const TranscriptionProgress &p) { report(p.phase, p.fraction); }, &error);
+            if (result) {
+                words = *result;
+                ok = true;
+            }
         }
         QMetaObject::invokeMethod(this, [self, ok, words, error] {
             if (!self)

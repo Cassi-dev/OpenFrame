@@ -124,8 +124,8 @@ Porte do que entrou no Mac depois da v0.5.0, com os mesmos nomes e números do n
 | `WhisperModels.h` | `WhisperModel` (base/small/turbo) com `displayName` ("Rápido", "Equilibrado", "Máxima precisão"), `fileName`, `byteSize`, `downloadUrl`, `sha256`; `recommendedModel()` = small (só CPU nesta versão). `ModelStore` (QObject): `shared()`, `defaultDirectory()` (`AppLocalDataLocation/Models` ou `OPENFRAME_MODELS_DIR`), `path`, `isInstalled`, `remove`, `download`/`cancel`/`isDownloading` com os sinais `downloadProgress(model, fraction)` e `downloadFinished(model, ok, error)` |
 | `Transcriber.h` | `TranscriptionProgress{phase,fraction,overall}` (`make`; a mistura pesa 10%), `TranscriptionSource` (`timeline()`, `of(id)`), `TranscriptionError` e `message(...)`; `Transcriber` (QObject, como o `Exporter`): `start(project, source, model, language = "")`, `cancel()`, `isRunning()`, sinais `progress(TranscriptionProgress)` e `finished(ok, words, error)` (cancelado = ok falso e erro vazio); estáticos `sourceRange`, `mixProject`, `languages()`, `fakeWords(range)` |
 
-Provisório nesta etapa (o render ficou pronto na etapa 2, abaixo):
-- `ModelStore::download` termina com o erro "O download dos modelos ainda não está disponível nesta versão.".
+Provisório nesta etapa (o render ficou pronto na etapa 2 e a transcrição na 3, abaixo):
+- `ModelStore::download` terminava com o erro "O download dos modelos ainda não está disponível nesta versão.".
 - `Transcriber`: com `OPENFRAME_FAKE_TRANSCRIPTION=1`, palavras falsas pelo trecho (~0,8 s de progresso falso);
   sem ela, "modelo não instalado" ou "motor indisponível".
 - Diferença do Swift que fica: sem o etiquetador gramatical do macOS, a palavra-chave é escolhida pelo tamanho, pelo
@@ -179,4 +179,82 @@ Desempenho (mediana por quadro, build Release, Apple M5 de 10 núcleos, só o te
 
 A primeira montagem dos sprites de um texto custa 10–110 ms (fica em cache). Sem otimização (build Debug), tudo
 fica ~6× mais lento.
+
+## Motion e legendas, etapa 3: transcrição com o whisper.cpp na CPU
+
+O `Transcriber` e o `ModelStore` deixaram de ser provisórios. A API do app não mudou (é a da etapa 1):
+`ModelStore::shared().download/cancel/remove/isInstalled` e `Transcriber::start/cancel` com os mesmos sinais.
+
+| Cabeçalho | O que mudou |
+|---|---|
+| `Transcriber.h` | `start` mistura o áudio como a exportação ouve (`AudioMixdown`: o `AudioMixer` em 48 kHz, somado para mono e levado a 16 kHz), transcreve com o whisper e devolve as palavras com os tempos da timeline. Erros: "modelo não instalado", "sem áudio" (silêncio ou nenhum som no trecho), "motor indisponível" (nenhuma variante de CPU encontrada), "A transcrição falhou: …". `cancel()` interrompe o whisper de verdade (~0,3 s medido). Novo: `Transcriber::run(...)`, a mesma coisa síncrona (testes e medições). `OPENFRAME_FAKE_TRANSCRIPTION=1` continua valendo |
+| `WhisperModels.h` | `ModelStore::download` baixa por `QNetworkAccessManager` para `<arquivo>.partial`, retoma com `Range` (se o servidor responder 200, recomeça), confere o tamanho e o sha256 (fora da thread da interface) e só então move para o lugar. Cancelar guarda o parcial (o próximo download continua); `remove` também cancela e solta o modelo da memória. `downloadProgress` a cada ~100 ms. Mensagens: "O servidor do modelo respondeu com o erro N.", "O download veio incompleto (X de Y bytes). Tente de novo.", "O arquivo baixado está corrompido (o sha256 não confere). Tente de novo.", "Não foi possível baixar o modelo: …". Novos: `partialPath(model)`, `sha256Of(file)` e `download(model, url, size, sha256)` (testes) |
+
+Internos (não usar no app): `WhisperEngine.h` (contexto do modelo em cache, liberado depois de 3 min parado;
+`isAvailable`, `loadBackends`, `backendDescription`), `WordAligner.h` (ajuste das fronteiras pela energia do
+áudio), `AudioMixdown.h`.
+
+Variáveis de ambiente:
+- `OPENFRAME_MODELS_DIR`: pasta dos modelos (padrão: `AppLocalDataLocation/Models`);
+- `OPENFRAME_GGML_DIR`: única pasta onde procurar as variantes do backend CPU (padrão: veja abaixo);
+- `OPENFRAME_WHISPER_LOG=1`: mostra os logs do whisper/ggml no stderr;
+- nos testes: `OPENFRAME_TEST_MODELS_DIR` (única pasta do modelo), `OPENFRAME_REQUIRE_WHISPER_MODEL=1` (sem o
+  modelo, falha em vez de pular; a CI usa) e `OPENFRAME_BENCH=1` (mede 1 min de fala com cada modelo; com
+  `OPENFRAME_TEST_MODEL=base` só um).
+
+### Build
+
+- `qt/cmake/Whisper.cmake`: whisper.cpp v1.9.5 (`d1be6fde11ac6e0407606b4e42fe72d34add8037`, o mesmo do Mac)
+  por FetchContent, do tarball do commit com sha256 fixo (o configure baixa ~10 MB; sem rede, aponte
+  `FETCHCONTENT_SOURCE_DIR_WHISPER` para uma cópia do mesmo commit). Só o backend CPU: Metal, CUDA, Vulkan, BLAS
+  e OpenMP desligados; `GGML_NATIVE=OFF`.
+- `OPENFRAME_WHISPER_VARIANTS=ON` (padrão): `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, com o whisper e o ggml
+  como bibliotecas compartilhadas. Desligado: tudo estático, só a variante genérica (mais lenta).
+  `OPENFRAME_WHISPER=OFF` compila sem a transcrição ("motor indisponível").
+- As bibliotecas saem em `OPENFRAME_WHISPER_LIB_DIR` (padrão `<build>/ggml`). O Qt passa a precisar do
+  componente **Network** (`find_package` no `qt/CMakeLists.txt`).
+- **Para o app no Windows (05):** chame `openframe_deploy_whisper(<alvo>)` (em `qt/cmake/Whisper.cmake`) no
+  CMake do app; ele copia as DLLs do whisper/ggml para a pasta do executável depois do build (sem elas, o
+  executável nem abre). Os testes já recebem a pasta no `PATH`.
+
+### Arquivos que o pacote leva (05)
+
+O núcleo carrega a variante na primeira transcrição (nunca ao abrir o app) e procura nesta ordem: a pasta do
+executável, `<pasta do executável>/../lib/openframe` e a pasta do build. Sem nenhuma variante, a transcrição
+termina com "motor indisponível", sem travar.
+
+**Windows (MSVC):** tudo ao lado do `OpenFrame.exe` (o windeployqt não conhece estes arquivos):
+- `whisper.dll`, `ggml.dll`, `ggml-base.dll`;
+- 9 variantes: `ggml-cpu-x64.dll`, `ggml-cpu-sse42.dll`, `ggml-cpu-sandybridge.dll`, `ggml-cpu-haswell.dll`,
+  `ggml-cpu-skylakex.dll`, `ggml-cpu-cannonlake.dll`, `ggml-cpu-cascadelake.dll`, `ggml-cpu-icelake.dll`,
+  `ggml-cpu-alderlake.dll` (o MSVC não monta ivybridge, piledriver, cooperlake, zen4 nem sapphirerapids).
+
+**Linux (AppImage):**
+- em `usr/lib` (o linuxdeploy já as leva, porque o executável depende delas): `libwhisper.so.1`,
+  `libggml.so.0`, `libggml-base.so.0`;
+- em `usr/lib/openframe/` (o linuxdeploy **não** as conhece: são carregadas com `dlopen`): as 14 variantes
+  `libggml-cpu-{x64,sse42,sandybridge,ivybridge,piledriver,haswell,skylakex,cannonlake,cascadelake,icelake,cooperlake,zen4,alderlake,sapphirerapids}.so`.
+
+É só copiar o conteúdo de `OPENFRAME_WHISPER_LIB_DIR` com essas regras. Tamanho: no Mac, cada variante tem
+~0,9 MB, o ggml-base 0,75 MB e o whisper 0,4 MB; no x86, falta medir (estimo 10–15 MB no total).
+
+**Rede:** o download usa HTTPS (huggingface.co): o pacote precisa do Qt Network e do plugin de TLS
+(`plugins/tls`: `qschannelbackend` no Windows; `qopensslbackend` no Linux, que usa a OpenSSL do sistema). Vale
+testar um download de verdade no pacote. É o único acesso à rede do app, só quando o usuário pede.
+
+### Medições (CPU, 65 s de fala do `say`, build Release)
+
+Apple M5, 8 threads, variante apple_m4 (sem o Accelerate, que só o Mac tem):
+
+| Modelo | 1ª vez (com o carregamento) | 2ª vez | WER |
+|---|---|---|---|
+| base | 4,7 s | 4,4 s | 0 |
+| small (recomendado) | 12,6 s | 12,1 s | 0 |
+| turbo | 113 s | 65 s | 0 |
+
+No app do Mac (Swift, CPU com o Accelerate), o small leva 4,5 s e o turbo 10,4 s. No Windows/Linux, sem o BLAS
+da Apple, o turbo leva o tempo da própria fala num M5 e mais que isso num PC comum: por isso o recomendado é o
+small. Os tempos na CI dependem do push (`OPENFRAME_BENCH=1`).
+Tempos das palavras na fala com pausas conhecidas (modelo base): erro médio de 14 ms no início e no fim, com o
+ajuste pela energia (sem ele, 0,31 s no DTW e 0,35 s nos tokens), como no Swift.
 

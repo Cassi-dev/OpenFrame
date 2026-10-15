@@ -2,9 +2,12 @@
 
 #include "Captions.h"
 #include "Project.h"
+#include "WhisperEngine.h"
 #include "WhisperModels.h"
 
 #include <QObject>
+#include <atomic>
+#include <functional>
 #include <memory>
 
 namespace of {
@@ -40,9 +43,8 @@ QString message(TranscriptionError error, WhisperModel model = WhisperModel::Sma
 /// Transcrição das legendas automáticas: mistura o áudio como a exportação ouve, converte para 16 kHz mono,
 /// transcreve com o whisper.cpp na CPU e devolve palavras com tempos na timeline.
 ///
-/// Etapa 1 (provisória): com `OPENFRAME_FAKE_TRANSCRIPTION=1`, devolve palavras falsas espalhadas pelo trecho
-/// (~2,6 por segundo, com pausas nas pontuações) e um progresso de ~0,8 s, para a interface; sem a variável,
-/// termina com o erro "modelo não instalado" ou "motor indisponível".
+/// Com `OPENFRAME_FAKE_TRANSCRIPTION=1`, devolve palavras falsas espalhadas pelo trecho (~2,6 por segundo, com
+/// pausas nas pontuações) e um progresso de ~0,8 s (capturas de tela e testes da interface).
 ///
 /// Roda numa thread de trabalho; os sinais chegam na thread do Transcriber.
 class Transcriber : public QObject
@@ -77,6 +79,16 @@ public:
 
     /// Palavras falsas no trecho (as de `OPENFRAME_FAKE_TRANSCRIPTION=1`).
     static QList<TranscribedWord> fakeWords(TimeRange range);
+
+    /// A transcrição, síncrona, com o arquivo do modelo e as opções do motor à escolha (é o que o `start` roda
+    /// na thread; os testes e as medições chamam direto). Vazio com `cancelled` (sem erro) ou com a mensagem
+    /// em `error` (sem áudio, motor indisponível, falha do whisper).
+    static std::optional<QList<TranscribedWord>> run(const Project &project, const TranscriptionSource &source,
+                                                     const QString &modelPath, std::optional<WhisperModel> model,
+                                                     const WhisperEngine::Options &options,
+                                                     const std::atomic<bool> &cancelled,
+                                                     const std::function<void(const TranscriptionProgress &)> &progress,
+                                                     QString *error);
 
 signals:
     void progress(const of::TranscriptionProgress &progress);
