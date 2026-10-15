@@ -9,6 +9,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QJsonDocument>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -672,6 +673,47 @@ void Snapshot::motionScenario()
         log(QStringLiteral("motion: duplo clique no texto → aba %1, seleção %2")
                 .arg(m_model->inspectorTab(), m_model->selection().isEmpty() ? "vazia" : "o texto"));
     });
+
+    // Aba Animação: texto (todos os tipos) e vídeo (sem os só de texto).
+    then(300, [this] {
+        m_model->seek(1.0);
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        m_model->setInspectorTab("animation");
+    });
+    then(1000, [this] {
+        log(QStringLiteral("motion: animações de texto %1, de vídeo %2, loops %3")
+                .arg(m_model->animationOptions(true).size()).arg(m_model->animationOptions(false).size())
+                .arg(m_model->loopOptions().size()));
+        capture("motion-8-animacao-texto");
+    });
+    // Escolher toca o trecho e volta ao playhead.
+    then(0, [this] {
+        log(QStringLiteral("motion: escolhendo a entrada com o playhead em %1").arg(m_model->playheadText()));
+        m_model->setAnimation("in", "zoomIn");
+        log(QStringLiteral("motion: tocando o trecho = %1, playhead %2")
+                .arg(m_model->isPlaying() ? "sim" : "não", m_model->playheadText()));
+    });
+    then(400, [this] { capture("motion-9-animacao-tocando"); });
+    waitUntil([this] { return !m_model->isPlaying(); }, 5000);
+    then(300, [this] {
+        log(QStringLiteral("motion: depois do trecho, playhead %1, entrada %2")
+                .arg(m_model->playheadText(),
+                     m_model->selectedSegment().value("animationIn").toMap().value("kind").toString()));
+        m_model->setLoop("pulse");
+    });
+    waitUntil([this] { return !m_model->isPlaying(); }, 8000);
+    then(300, [this] { scrollInspector(1); });
+    then(500, [this] {
+        log("motion: loop " + QString::fromUtf8(QJsonDocument::fromVariant(m_model->selectedSegment().value("loop"))
+                                                    .toJson(QJsonDocument::Compact)));
+        capture("motion-10-animacao-loop");
+        scrollInspector(0);
+    });
+    then(0, [this] {
+        m_model->setSelection(firstMainSegment(m_model->project()));
+        m_model->setInspectorTab("animation");
+    });
+    then(800, [this] { capture("motion-11-animacao-video"); });
 
     // Na reprodução, o contorno some e o clique não responde.
     then(300, [this] { m_model->togglePlay(); });

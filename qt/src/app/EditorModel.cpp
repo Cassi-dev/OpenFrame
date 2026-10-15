@@ -1,4 +1,5 @@
 #include "EditorModel.h"
+#include "MotionCore.h"
 
 #include "CoreBridge.h"
 #include "FontCatalog.h"
@@ -522,6 +523,10 @@ QVariantMap EditorModel::segmentMap(const Segment &seg) const
         const QColor color = seg.text->style.color.color();
         map["textColor"] = color;
     }
+    if (const auto loop = MotionCore::loop(m_project, seg.id))
+        map["loop"] = QVariantMap{{"kind", loop->kind},
+                                  {"periodSeconds", Time::toSeconds(loop->period)},
+                                  {"intensity", loop->intensity}};
     return map;
 }
 
@@ -1434,6 +1439,15 @@ void EditorModel::setAnimation(const QString &which, const QString &key)
                 anim = SegmentAnimation{*kind, anim ? anim->duration : 500'000};
         });
     });
+    // Toca o trecho do efeito: a entrada com um respiro de 0,3 s, a saída até o fim.
+    const auto seg = m_project.segment(id);
+    const auto &anim = seg ? (which == "out" ? seg->animationOut : seg->animationIn) : std::nullopt;
+    if (!seg || !anim)
+        return;
+    if (which == "out")
+        playExcerpt(std::max(seg->targetStart, seg->targetEnd() - anim->duration), seg->targetEnd());
+    else
+        playExcerpt(seg->targetStart, std::min(seg->targetEnd(), seg->targetStart + anim->duration + 300'000));
 }
 
 void EditorModel::setTransition(const QString &key)
@@ -1556,11 +1570,7 @@ QVariantList EditorModel::transitionOptions() const
 
 QVariantList EditorModel::animationOptions(bool text) const
 {
-    QVariantList list{QVariantMap{{"value", QString()}, {"title", QStringLiteral("Nenhuma")}}};
-    for (auto a : allCases<AnimationKind>())
-        if (text || !isTextOnly(a))
-            list.append(QVariantMap{{"value", enumKey(a)}, {"title", displayName(a)}});
-    return list;
+    return MotionCore::animationKinds(text);
 }
 
 QVariantList EditorModel::textPresets() const
@@ -1590,6 +1600,20 @@ void EditorModel::playerTimeChanged(Micros t)
 {
     if (!m_playing)
         return;
+    if (m_excerpt && t >= m_excerpt->first) {
+        // Fim do trecho: volta depois do sinal, porque o Player ainda pede o quadro do
+        // tick em seguida e ele passaria à frente do quadro da volta.
+        const Micros resume = m_excerpt->second;
+        m_excerpt.reset();
+        QTimer::singleShot(0, this, [this, resume] {
+            if (m_excerpt || !m_playing)
+                return;
+            m_preview->pause();
+            setPlaying(false);
+            seekMicros(resume);
+        });
+        return;
+    }
     setPlayheadMicros(std::min(t, m_project.duration()));
     revealPlayhead();
     if (m_playhead >= m_project.duration())
@@ -1598,6 +1622,7 @@ void EditorModel::playerTimeChanged(Micros t)
 
 void EditorModel::togglePlay()
 {
+    m_excerpt.reset();
     if (m_playing) {
         m_preview->pause();
         setPlaying(false);

@@ -283,6 +283,14 @@ public:
     Q_INVOKABLE QVariantList effectOptions() const;
     Q_INVOKABLE QVariantList transitionOptions() const;
     Q_INVOKABLE QVariantList animationOptions(bool text) const;
+    // Aba Animação (EditorMotion.cpp)
+    Q_INVOKABLE QVariantList loopOptions() const;
+    /// `kind` vazio tira o loop. Escolher toca dois ciclos no preview.
+    Q_INVOKABLE void setLoop(const QString &kind);
+    /// "periodSeconds" (0,5…6) ou "intensity" (0…1).
+    Q_INVOKABLE void setLoopValue(const QString &key, qreal value);
+    /// Toca o trecho uma vez e volta ao ponto em que o playhead estava (prévia de um efeito).
+    void playExcerpt(Micros start, Micros end);
     Q_INVOKABLE QVariantList textPresets() const;
 
     // Reprodução
@@ -464,6 +472,8 @@ private:
     KeyedListModel *m_junctions;
     KeyedListModel *m_cues;
 
+    /// Trecho tocado ao escolher um efeito: onde parar e para onde voltar.
+    std::optional<std::pair<Micros, Micros>> m_excerpt;
     std::optional<PlacementDrag> m_placementDrag;
     QList<SnapGuide> m_canvasGuides;
     std::optional<double> m_canvasRotationLabel;
