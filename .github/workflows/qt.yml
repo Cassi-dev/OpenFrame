@@ -27,6 +27,9 @@ env:
   # para o teste de transcrição. A chave do cache é o sha256.
   WHISPER_BASE_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
   WHISPER_BASE_SHA256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+  # O ilammy/msvc-dev-cmd ainda não tem versão em Node 24 (nem a v1.13.0); as
+  # outras actions já têm. Força o Node 24 em todas, até ele publicar uma.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
