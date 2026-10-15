@@ -200,6 +200,21 @@ jobs:
             .github/scripts/pacote-linux.sh build pacotes
           fi
 
+      # Tira a libva do sistema e toca o AppImage gravando a saída de som: prova que
+      # o pacote, sem o plugin de mídia do Qt, não cai e o som sai.
+      - name: AppImage sem libva, com som
+        if: runner.os == 'Linux'
+        run: .github/scripts/som-appimage.sh pacotes/*.AppImage som
+
+      - name: Publicar o teste de som
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: som-Linux
+          path: som
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Publicar os pacotes
         uses: actions/upload-artifact@v4
         with:
