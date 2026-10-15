@@ -29,5 +29,13 @@ Inter (fonte da interface), de Rasmus Andersson
 Lucide (ícones da interface)
   Licença: ISC (licencas/LICENSE-Lucide.txt). https://lucide.dev
 
+whisper.cpp 1.9.5 e ggml (transcrição das legendas automáticas)
+  Licença: MIT. Texto: Sources/CWhisper/LICENSE no código-fonte (no app do Mac,
+  Contents/Resources/licencas/whisper.cpp-LICENSE.txt).
+  Por enquanto só no app do Mac; entra neste pacote com o porte das legendas.
+  Código-fonte: https://github.com/ggml-org/whisper.cpp (tag v1.9.5).
+  Os modelos do Whisper (OpenAI, licença MIT) não vêm no pacote: são baixados
+  só quando o usuário pede, de https://huggingface.co/ggerganov/whisper.cpp.
+
 Runtime do Microsoft Visual C++ (só no Windows)
   Redistribuído conforme os termos da Microsoft para o Visual Studio.

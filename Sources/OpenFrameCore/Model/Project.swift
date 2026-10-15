@@ -57,6 +57,8 @@ public struct Segment: Codable, Hashable, Sendable, Identifiable {
     public var effects: [VideoEffect] = []
     public var animationIn: SegmentAnimation?
     public var animationOut: SegmentAnimation?
+    /// Sem loop, a chave não é gravada (projetos e fixtures antigos ficam iguais).
+    public var animationLoop: LoopAnimation?
     public var transition: Transition?
     public var text: TextContent?
 
@@ -87,11 +89,40 @@ public struct Track: Codable, Hashable, Sendable, Identifiable {
     public var isMain: Bool
     public var muted = false
     public var hidden = false
+    /// Faixa das legendas automáticas ("substituir anteriores" e o painel Legendas).
+    /// Só é gravada quando ligada; ausente na leitura = desligada.
+    public var isAutoCaptions = false
     public var segments: [Segment] = []
 
     public init(kind: TrackKind, isMain: Bool = false) {
         self.kind = kind
         self.isMain = isMain
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, isMain, muted, hidden, isAutoCaptions, segments
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        kind = try c.decode(TrackKind.self, forKey: .kind)
+        isMain = try c.decode(Bool.self, forKey: .isMain)
+        muted = try c.decode(Bool.self, forKey: .muted)
+        hidden = try c.decode(Bool.self, forKey: .hidden)
+        isAutoCaptions = try c.decodeIfPresent(Bool.self, forKey: .isAutoCaptions) ?? false
+        segments = try c.decode([Segment].self, forKey: .segments)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(isMain, forKey: .isMain)
+        try c.encode(muted, forKey: .muted)
+        try c.encode(hidden, forKey: .hidden)
+        if isAutoCaptions { try c.encode(true, forKey: .isAutoCaptions) }
+        try c.encode(segments, forKey: .segments)
     }
 }
 

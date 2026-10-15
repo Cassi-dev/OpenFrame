@@ -145,7 +145,8 @@ public enum TimelineEditor {
     public static func freeTrack(kind: TrackKind, range: TimeRange, in p: Project, excluding id: UUID?) -> Int? {
         p.tracks.indices.first { t in
             let track = p.tracks[t]
-            guard track.kind == kind, !track.isMain else { return false }
+            // A faixa das legendas automáticas é só delas (substituir não pode levar texto do usuário).
+            guard track.kind == kind, !track.isMain, !track.isAutoCaptions else { return false }
             return !track.segments.contains { other in
                 other.id != id && other.targetStart < range.end && range.start < other.targetEnd
             }
@@ -171,6 +172,7 @@ public enum TimelineEditor {
             right.source.start = seg.source.start + offsetSrc
         }
         right.targetStart = time
+        shiftWords(&right, by: seg.targetStart - time)
         left.transition = nil
         left.animationOut = nil
         left.fadeOut = 0
@@ -280,9 +282,18 @@ public enum TimelineEditor {
         deltaSrc = min(deltaSrc, s.source.duration - Micros(Double(minDuration) * s.speed))
         if timed { s.source.start += deltaSrc }
         s.source.duration -= deltaSrc
+        let oldStart = s.targetStart
         s.targetStart += Micros((Double(deltaSrc) / s.speed).rounded())
+        shiftWords(&s, by: oldStart - s.targetStart)
         p.tracks[t].segments[i] = s
         normalize(&p)
+    }
+
+    /// Os tempos das palavras são relativos ao início do segmento: quando o início muda
+    /// (aparar, dividir), elas continuam no mesmo instante da timeline.
+    private static func shiftWords(_ s: inout Segment, by delta: Micros) {
+        guard delta != 0, let words = s.text?.words else { return }
+        s.text!.words = words.map { CaptionWord(text: $0.text, start: $0.start + delta, end: $0.end + delta) }
     }
 
     /// Apara o fim do segmento até `newEnd` (tempo da timeline).
@@ -308,6 +319,39 @@ public enum TimelineEditor {
         guard let (t, i) = p.locate(id) else { return }
         change(&p.tracks[t].segments[i])
         relayoutMain(&p)
+    }
+
+    /// Grava posição/escala/rotação no lugar certo: `text.style` no texto, `transform` no visual.
+    public static func setPlacement(_ p: inout Project, segment id: UUID, center: CGPoint, scale: Double, rotation: Double) {
+        let scale = max(scale, 0.01)
+        update(&p, segment: id) { s in
+            if s.text != nil {
+                s.text!.style.x = center.x
+                s.text!.style.y = center.y
+                s.text!.style.scale = scale
+                s.text!.style.rotation = rotation
+            } else {
+                s.transform.x = center.x
+                s.transform.y = center.y
+                s.transform.scale = scale
+                s.transform.rotation = rotation
+            }
+        }
+    }
+
+    /// Muda a largura da caixa de um texto (`style.maxWidth`, limitada a `TextStyle.maxWidthRange`); o texto
+    /// se reorganiza. Numa faixa de legendas automáticas, vale para todos os textos da faixa.
+    public static func setTextWidth(_ p: inout Project, segment id: UUID, maxWidth: Double) {
+        guard maxWidth.isFinite, let (t, i) = p.locate(id), p.tracks[t].segments[i].text != nil else { return }
+        let range = TextStyle.maxWidthRange
+        let width = min(max(maxWidth, range.lowerBound), range.upperBound)
+        if p.tracks[t].isAutoCaptions {
+            for k in p.tracks[t].segments.indices where p.tracks[t].segments[k].text != nil {
+                p.tracks[t].segments[k].text!.style.maxWidth = width
+            }
+        } else {
+            p.tracks[t].segments[i].text!.style.maxWidth = width
+        }
     }
 
     /// Vídeo e áudio têm duração limitada pelo arquivo; foto e texto não.

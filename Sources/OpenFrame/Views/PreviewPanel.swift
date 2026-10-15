@@ -8,11 +8,14 @@ struct PreviewPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                PlayerLayerView(player: model.player)
+                PlayerLayerView(player: model.player) { points, scale in
+                    model.previewViewportChanged(points: points, scale: scale)
+                }
                     .aspectRatio(model.project.aspectValue, contentMode: .fit)
                     .overlay {
                         if model.showGrid { ThirdsGrid().allowsHitTesting(false) }
                     }
+                    .overlay { CanvasManipulationLayer() }
                     .overlay {
                         if model.duration == 0 { emptyState }
                     }
@@ -116,22 +119,43 @@ private struct TransportBar: View {
     }
 }
 
+/// Resolução do preview: acompanha o player em pixels físicos, em degraus.
+enum PreviewResolution {
+    static let steps = [540, 720, 1080, 1440, 2160]
+    /// Teto mesmo em telas maiores (medido no `DebugSnapshot`, cenário `resolucao`).
+    static let maxShortSide = 2160
+
+    /// Menor degrau que cobre o lado menor do player em pixels (pontos × escala da tela), até o teto.
+    /// Não depende da exportação: o preview fica nítido na tela mesmo com a saída em resolução menor.
+    static func shortSide(points: CGSize, scale: CGFloat, cap: Int = maxShortSide) -> Int {
+        let physical = Int((min(points.width, points.height) * scale).rounded(.up))
+        let step = steps.first { $0 >= physical } ?? steps.last!
+        return max(2, min(step, cap))
+    }
+}
+
 /// Exibe o AVPlayer numa AVPlayerLayer, sem os controles do AVKit.
 struct PlayerLayerView: NSViewRepresentable {
     let player: AVPlayer
+    /// Tamanho em pontos e escala da tela, a cada mudança.
+    var onViewportChange: (CGSize, CGFloat) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> PlayerNSView {
         let view = PlayerNSView()
         view.playerLayer.player = player
+        view.onViewportChange = onViewportChange
         return view
     }
 
     func updateNSView(_ view: PlayerNSView, context: Context) {
         if view.playerLayer.player !== player { view.playerLayer.player = player }
+        view.onViewportChange = onViewportChange
     }
 
     final class PlayerNSView: NSView {
         let playerLayer = AVPlayerLayer()
+        var onViewportChange: (CGSize, CGFloat) -> Void = { _, _ in }
+        private var reported: (CGSize, CGFloat)?
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -152,6 +176,25 @@ struct PlayerLayerView: NSViewRepresentable {
             CATransaction.setDisableActions(true)
             playerLayer.frame = bounds
             CATransaction.commit()
+            reportViewport()
+        }
+
+        override func viewDidChangeBackingProperties() {
+            super.viewDidChangeBackingProperties()
+            reportViewport()
+        }
+
+        /// A camada desenha na escala da tela (sem ampliar um bitmap de 1x) e avisa o tamanho.
+        private func reportViewport() {
+            guard let scale = window?.backingScaleFactor else { return }
+            if playerLayer.contentsScale != scale {
+                layer?.contentsScale = scale
+                playerLayer.contentsScale = scale
+            }
+            let size = bounds.size
+            if let reported, reported.0 == size, reported.1 == scale { return }
+            reported = (size, scale)
+            onViewportChange(size, scale)
         }
     }
 }

@@ -31,18 +31,31 @@ private let percent: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
 private let signedPercent: (Double) -> String = { String(format: "%+.0f", $0 * 100) }
 private let secondsFormat: (Double) -> String = { String(format: "%.1fs", $0) }
 
-/// Cartão selecionável usado nas grades de filtros, efeitos e transições.
-private struct ChoiceTile<Preview: View>: View {
+/// Cartão selecionável usado nas grades de filtros, efeitos, animações e transições.
+struct ChoiceTile<Preview: View>: View {
     let title: String
     let selected: Bool
     let action: () -> Void
-    @ViewBuilder let preview: () -> Preview
+    /// Recebe se o ponteiro está sobre o cartão (miniaturas que tocam no hover).
+    let preview: (Bool) -> Preview
     @State private var hovering = false
+
+    init(title: String, selected: Bool, action: @escaping () -> Void, @ViewBuilder preview: @escaping () -> Preview) {
+        self.init(title: title, selected: selected, action: action, hoverPreview: { _ in preview() })
+    }
+
+    init(title: String, selected: Bool, action: @escaping () -> Void,
+         @ViewBuilder hoverPreview: @escaping (Bool) -> Preview) {
+        self.title = title
+        self.selected = selected
+        self.action = action
+        preview = hoverPreview
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                preview()
+                preview(hovering)
                     .frame(height: 50)
                     .frame(maxWidth: .infinity)
                     .background(Theme.raised)
@@ -53,6 +66,7 @@ private struct ChoiceTile<Preview: View>: View {
                 Text(title)
                     .font(Theme.font(11, selected ? .medium : .regular))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .foregroundStyle(selected ? Theme.accent : (hovering ? Theme.textPrimary : Theme.textSecondary))
             }
             .contentShape(Rectangle())
@@ -62,7 +76,7 @@ private struct ChoiceTile<Preview: View>: View {
     }
 }
 
-private let tileColumns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
+let tileColumns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
 
 /// Campo de texto de uma linha com a aparência dos campos do tema.
 private struct InputField: View {
@@ -345,45 +359,6 @@ private struct EffectsTab: View {
     }
 }
 
-private struct AnimationTab: View {
-    let segment: Segment
-
-    var body: some View {
-        let isText = segment.text != nil
-        let kinds = AnimationKind.allCases.filter { isText || !$0.textOnly }
-        AnimationPicker(title: "Entrada", id: segment.id, keyPath: \.animationIn, kinds: kinds)
-        AnimationPicker(title: "Saída", id: segment.id, keyPath: \.animationOut, kinds: kinds)
-    }
-}
-
-private struct AnimationPicker: View {
-    @Environment(EditorModel.self) private var model
-    let title: String
-    let id: UUID
-    let keyPath: WritableKeyPath<Segment, SegmentAnimation?>
-    let kinds: [AnimationKind]
-
-    var body: some View {
-        let anim = model.binding(id, keyPath)
-        SectionHeader(title: title)
-        FieldRow(label: "Tipo") {
-            MenuField(selection: Binding<AnimationKind?>(
-                get: { anim.wrappedValue?.kind },
-                set: { kind in
-                    anim.wrappedValue = kind.map { SegmentAnimation(kind: $0, duration: anim.wrappedValue?.duration ?? 500_000) }
-                }),
-                      options: [nil] + kinds.map(Optional.some),
-                      title: { $0?.displayName ?? "Nenhuma" })
-        }
-        if anim.wrappedValue != nil {
-            ParamSlider(title: "Duração",
-                        value: Binding(get: { anim.wrappedValue?.duration.seconds ?? 0.5 },
-                                       set: { anim.wrappedValue?.duration = Time.seconds($0) }),
-                        range: 0.1...3, defaultValue: 0.5, format: secondsFormat)
-        }
-    }
-}
-
 private struct TransitionTab: View {
     @Environment(EditorModel.self) private var model
     let segment: Segment
@@ -461,6 +436,8 @@ private struct TextTab: View {
         return model.binding(id, path)
     }
 
+    @FocusState private var editorFocused: Bool
+
     var body: some View {
         TextEditor(text: model.binding(id, \.text!.text))
             .font(Theme.font(13))
@@ -468,6 +445,9 @@ private struct TextTab: View {
             .scrollContentBackground(.hidden)
             .padding(6)
             .field()
+            .focused($editorFocused)
+            .onAppear(perform: takeFocusIfRequested)
+            .onChange(of: model.focusTextEditor) { takeFocusIfRequested() }
 
         SectionHeader(title: "Estilos prontos")
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
@@ -480,9 +460,18 @@ private struct TextTab: View {
         fontSection
         spacingSection
         colorSection
+        highlightSection
+        emphasisSection
         backgroundSection
         shadowSection
         positionSection
+    }
+
+    private func takeFocusIfRequested() {
+        guard model.focusTextEditor else { return }
+        model.focusTextEditor = false
+        // Depois do layout: a aba acabou de aparecer.
+        DispatchQueue.main.async { editorFocused = true }
     }
 
     @ViewBuilder private var fontSection: some View {
@@ -519,46 +508,13 @@ private struct TextTab: View {
             .help("Maiúsculas e minúsculas")
     }
 
-    /// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
     private var familyMenu: some View {
-        let current = style.wrappedValue.fontName
-        let pick: (String) -> Void = { family in
+        FontFamilyMenu(current: style.wrappedValue.fontName, suggested: Self.suggested, installed: Self.installed) { family in
             var s = style.wrappedValue
             s.fontName = family
             if !Self.faces(of: family).contains(s.fontFace) { s.fontFace = "" }
             style.wrappedValue = s
         }
-        return Menu {
-            Section("Sugeridas") {
-                ForEach(Self.suggested.filter(Self.installed.contains), id: \.self) { family in
-                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
-                }
-            }
-            Section("Todas") {
-                ForEach(Self.installed, id: \.self) { family in
-                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text(current)
-                    .font(Theme.font(12))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.down")
-                    .font(Theme.font(9, .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .frame(maxWidth: .infinity)
-            .field()
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
     }
 
     @ViewBuilder private var spacingSection: some View {
@@ -584,6 +540,99 @@ private struct TextTab: View {
         if style.wrappedValue.strokeWidth > 0 {
             ColorRow(title: "Cor", color: color(value(\.strokeColor)))
         }
+    }
+
+    /// Só para textos com tempo por palavra (legendas automáticas).
+    @ViewBuilder private var highlightSection: some View {
+        if let text = model.project.segment(id)?.text, text.words?.isEmpty == false {
+            let highlight = model.binding(id, \.text!.highlight)
+            SectionHeader(title: "Destaque da palavra")
+            SwitchRow(title: "Destacar a palavra falada",
+                      isOn: Binding(get: { highlight.wrappedValue != nil },
+                                    set: { highlight.wrappedValue = $0 ? (highlight.wrappedValue ?? WordHighlight()) : nil }))
+            if let current = highlight.wrappedValue {
+                if text.activeHighlight == nil {
+                    Text("O texto foi editado e as palavras não batem mais com a fala: o destaque fica desligado até o número de palavras voltar a ser o mesmo.")
+                        .font(Theme.font(11))
+                        .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.35))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                FieldRow(label: "Modo") {
+                    PillPicker(selection: highlightValue(\.mode), options: HighlightMode.allCases,
+                               title: { $0 == .current ? "Só a atual" : "Progressivo" })
+                }
+                FieldRow(label: "Revelação") {
+                    MenuField(selection: highlightValue(\.reveal), options: WordReveal.allCases,
+                              title: \.displayName)
+                }
+                if current.reveal == .dim {
+                    ParamSlider(title: "Opacidade das próximas", value: highlightValue(\.dimOpacity), range: 0...1,
+                                defaultValue: WordHighlight().dimOpacity, format: percent)
+                }
+                ColorRow(title: "Cor", color: color(highlightValue(\.color)))
+                ParamSlider(title: "Escala", value: highlightValue(\.scale), range: 1...1.6,
+                            defaultValue: WordHighlight().scale, format: percent)
+                SwitchRow(title: "Pílula atrás da palavra", isOn: highlightValue(\.backgroundEnabled))
+                if current.backgroundEnabled {
+                    ColorRow(title: "Cor da pílula", color: color(highlightValue(\.backgroundColor)))
+                }
+            }
+        }
+    }
+
+    /// Só para textos com palavra-chave (visuais Editorial e Empilhado).
+    @ViewBuilder private var emphasisSection: some View {
+        if let text = model.project.segment(id)?.text, let emphasis = text.emphasis {
+            let words = TextContent.words(of: text.text)
+            SectionHeader(title: "Palavra-chave")
+            Text("Clique numa palavra para ligar ou desligar a ênfase.")
+                .font(Theme.font(11))
+                .foregroundStyle(Theme.textTertiary)
+            WordChips(words: words.map(String.init), selected: Set(emphasis.words)) { index in
+                var e = emphasis
+                if let i = e.words.firstIndex(of: index) { e.words.remove(at: i) } else { e.words = (e.words + [index]).sorted() }
+                model.mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.emphasis = e } }
+            }
+            ColorRow(title: "Cor", color: color(Binding(
+                get: { emphasisValue(\.color).wrappedValue ?? style.wrappedValue.color },
+                set: { emphasisValue(\.color).wrappedValue = $0 })))
+            FieldRow(label: "Fonte") {
+                FontFamilyMenu(current: emphasis.fontName, suggested: Self.suggested, installed: Self.installed) { family in
+                    var e = emphasis
+                    e.fontName = family
+                    if !Self.faces(of: family).contains(e.fontFace) { e.fontFace = "" }
+                    model.mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.emphasis = e } }
+                }
+            }
+            FieldRow(label: "Estilo") {
+                MenuField(selection: emphasisValue(\.fontFace), options: [""] + Self.faces(of: emphasis.fontName),
+                          title: { $0.isEmpty ? "Padrão" : $0 })
+            }
+            ParamSlider(title: "Tamanho", value: emphasisValue(\.scale), range: 0.6...2.5,
+                        defaultValue: WordEmphasis().scale, format: percent)
+        }
+    }
+
+    private func emphasisValue<T: Equatable>(_ keyPath: WritableKeyPath<WordEmphasis, T>) -> Binding<T> {
+        let emphasis = model.binding(id, \.text!.emphasis)
+        return Binding(
+            get: { (emphasis.wrappedValue ?? WordEmphasis())[keyPath: keyPath] },
+            set: { value in
+                var e = emphasis.wrappedValue ?? WordEmphasis()
+                e[keyPath: keyPath] = value
+                emphasis.wrappedValue = e
+            })
+    }
+
+    private func highlightValue<T: Equatable>(_ keyPath: WritableKeyPath<WordHighlight, T>) -> Binding<T> {
+        let highlight = model.binding(id, \.text!.highlight)
+        return Binding(
+            get: { (highlight.wrappedValue ?? WordHighlight())[keyPath: keyPath] },
+            set: { value in
+                var h = highlight.wrappedValue ?? WordHighlight()
+                h[keyPath: keyPath] = value
+                highlight.wrappedValue = h
+            })
     }
 
     @ViewBuilder private var backgroundSection: some View {
@@ -636,8 +685,171 @@ private struct TextTab: View {
         ParamSlider(title: "Escala", value: value(\.scale), range: 0.2...3, defaultValue: 1, format: percent)
         ParamSlider(title: "Rotação", value: value(\.rotation), range: -180...180,
                     format: { String(format: "%.0f°", $0) })
-        ParamSlider(title: "Largura máxima", value: value(\.maxWidth), range: 0.2...1,
-                    defaultValue: 0.9, format: percent)
+        BoxWidthControl(value: boxWidth, wholeTrack: model.isInAutoCaptions(id))
+    }
+
+    /// Largura da caixa pela mesma função das alças do preview: numa legenda automática, vale para a faixa.
+    private var boxWidth: Binding<Double> {
+        Binding(get: { style.wrappedValue.maxWidth },
+                set: { w in model.mutate(coalesce: "\(id)boxWidth") { TimelineEditor.setTextWidth(&$0, segment: id, maxWidth: w) } })
+    }
+}
+
+/// Menu de famílias: sugeridas primeiro, depois todas as instaladas.
+private struct FontFamilyMenu: View {
+    let current: String
+    let suggested: [String]
+    let installed: [String]
+    let pick: (String) -> Void
+
+    var body: some View {
+        Menu {
+            Section("Sugeridas") {
+                ForEach(suggested.filter(installed.contains), id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+            Section("Todas") {
+                ForEach(installed, id: \.self) { family in
+                    Toggle(family, isOn: Binding(get: { family == current }, set: { _ in pick(family) }))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(current)
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(Theme.font(9, .medium))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity)
+            .field()
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+}
+
+/// Palavras da legenda como fichas que ligam e desligam a ênfase; quebram linha como texto.
+private struct WordChips: View {
+    let words: [String]
+    let selected: Set<Int>
+    let toggle: (Int) -> Void
+
+    var body: some View {
+        ChipFlow(spacing: 5) {
+            ForEach(Array(words.enumerated()), id: \.offset) { index, word in
+                let on = selected.contains(index)
+                Button { toggle(index) } label: {
+                    Text(word)
+                        .font(Theme.font(12, on ? .medium : .regular))
+                        .foregroundStyle(on ? Theme.onAccent : Theme.textPrimary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(on ? Theme.accent : Theme.raised, in: Capsule())
+                        .overlay(Capsule().strokeBorder(on ? .clear : Theme.hairline))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// Fileiras que quebram como texto.
+private struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map { $0.width }.max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for i in row.items {
+                let size = subviews[i].sizeThatFits(.unspecified)
+                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = [Row()]
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(.unspecified)
+            let extra = rows[rows.count - 1].items.isEmpty ? size.width : size.width + spacing
+            if rows[rows.count - 1].width + extra > width, !rows[rows.count - 1].items.isEmpty {
+                rows.append(Row())
+            }
+            let last = rows.count - 1
+            rows[last].width += rows[last].items.isEmpty ? size.width : size.width + spacing
+            rows[last].height = max(rows[last].height, size.height)
+            rows[last].items.append(i)
+        }
+        return rows
+    }
+}
+
+/// "Largura da caixa": slider e campo em % da largura do quadro. Passa de 100% para caber numa linha só.
+private struct BoxWidthControl: View {
+    @Binding var value: Double
+    let wholeTrack: Bool
+    @State private var typed = 0
+    @FocusState private var focused: Bool
+
+    private static let defaultValue = TextStyle().maxWidth
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Text(wholeTrack ? "Largura da caixa · todas as legendas" : "Largura da caixa")
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { value = Self.defaultValue }
+                    .help(wholeTrack ? "Vale para todas as legendas automáticas da faixa. Clique duas vezes para redefinir."
+                                     : "Clique duas vezes para redefinir")
+                Spacer(minLength: 6)
+                TextField("", value: $typed, format: .number.grouping(.never))
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(width: 34)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onChange(of: focused) { if !focused { commit() } }
+                Text("%").foregroundStyle(Theme.textTertiary)
+            }
+            .font(Theme.font(12))
+            ThinSlider(value: $value, range: TextStyle.maxWidthRange)
+        }
+        .onAppear { typed = Self.percent(value) }
+        .onChange(of: value) { if !focused { typed = Self.percent(value) } }
+    }
+
+    private static func percent(_ w: Double) -> Int { Int((w * 100).rounded()) }
+
+    private func commit() {
+        let range = TextStyle.maxWidthRange
+        let w = min(max(Double(typed) / 100, range.lowerBound), range.upperBound)
+        if Self.percent(w) != Self.percent(value) { value = w }
+        typed = Self.percent(w)
     }
 }
 

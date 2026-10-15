@@ -11,6 +11,8 @@ public struct RenderPlan: @unchecked Sendable {
     public var trackIDs: [UUID: CMPersistentTrackID]
     /// Segmento de vídeo → orientação de exibição (vídeos gravados em pé).
     public var orientations: [UUID: CGImagePropertyOrientation]
+    /// Material de foto → imagem já carregada (prévias que não vêm de arquivo).
+    var stills: [UUID: CIImage] = [:]
 
     public init(project: Project, renderSize: CGSize,
                 trackIDs: [UUID: CMPersistentTrackID] = [:],
@@ -131,7 +133,7 @@ public final class FrameRenderer: @unchecked Sendable {
             img = frame
             if let o = plan.orientations[seg.id], o != .up { img = img.oriented(o) }
         case .photo:
-            guard let photo = photo(m) else { return nil }
+            guard let photo = plan.stills[m.id] ?? photo(m) else { return nil }
             img = photo
         case .audio:
             return nil
@@ -171,6 +173,10 @@ public final class FrameRenderer: @unchecked Sendable {
         let geo = ImageEffects.geometry(seg.effects, time: seconds)
         let w = img.extent.width
         let h = img.extent.height
+        // Depois de medir: o brilho do reflexo passa da borda e não pode mudar o centro.
+        if let shine = anim.shine {
+            img = TextMotion.applyShine(img, in: img.extent, position: shine.position, strength: shine.strength)
+        }
         let fit = min(canvas.width / w, canvas.height / h)
         let scale = fit * seg.transform.scale * anim.scale * geo.scale
         let cx = canvas.midX + (seg.transform.x + anim.dx + geo.dx) * canvas.width / 2
@@ -181,18 +187,39 @@ public final class FrameRenderer: @unchecked Sendable {
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(rotationAngle: radians))
             .concatenating(CGAffineTransform(translationX: cx, y: cy))
-        img = img.transformed(by: t, highQualityDownsample: true)
+        img = finish(img.transformed(by: t, highQualityDownsample: true), anim: anim, canvas: canvas)
+        if anim.glow > 0 { img = TextMotion.applyGlow(img, amount: anim.glow, sigma: 0.012 * canvas.height) }
         return withAlpha(img, seg.opacity * anim.alpha)
+    }
+
+    /// Desfoque da animação "foco", já no espaço do canvas.
+    private func finish(_ img: CIImage, anim: AnimationState, canvas: CGRect) -> CIImage {
+        let sigma = anim.blur * canvas.height
+        return sigma > 0.3 ? img.applyingGaussianBlur(sigma: sigma) : img
     }
 
     private func textLayer(_ seg: Segment, time: Micros, canvas: CGRect) -> CIImage? {
         guard let content = seg.text else { return nil }
         let anim = Animations.state(for: seg, local: time - seg.targetStart)
-        guard let img = TextRenderer.shared.image(for: content, canvas: canvas.size, reveal: anim.reveal) else { return nil }
+        // O texto é rasterizado já na escala efetiva (canvas × r: fonte, margens, sombra e
+        // largura máxima crescem juntas, o layout é o mesmo) e só reduzido depois: ampliar
+        // uma imagem pequena serrilha. O centro da imagem continua sendo o centro do texto.
         let style = content.style
-        let w = img.extent.width
-        let h = img.extent.height
-        let scale = style.scale * anim.scale
+        let r = TextRenderer.shared.rasterScale(for: content, canvas: canvas.size, peak: Animations.peakScale(for: seg))
+        let raster = CGSize(width: canvas.width * r, height: canvas.height * r)
+        let img: CIImage
+        let w: CGFloat
+        let h: CGFloat
+        if Animations.usesUnits(seg) {
+            // Por unidade no clipe inteiro; a caixa nominal é a da imagem estática.
+            let granularity = Animations.granularity(for: seg, state: anim)
+            guard let out = TextMotion.image(content, canvas: raster, state: anim, granularity: granularity) else { return nil }
+            (img, w, h) = (out.image, out.size.width, out.size.height)
+        } else {
+            guard let still = TextRenderer.shared.image(for: content, canvas: raster, reveal: anim.reveal) else { return nil }
+            (img, w, h) = (still, still.extent.width, still.extent.height)
+        }
+        let scale = style.scale * anim.scale / r
         let cx = canvas.midX + (style.x + anim.dx) * canvas.width / 2
         let cy = canvas.midY + (style.y + anim.dy) * canvas.height / 2
         let radians = -(style.rotation + anim.rotation) * .pi / 180
@@ -200,7 +227,8 @@ public final class FrameRenderer: @unchecked Sendable {
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(rotationAngle: radians))
             .concatenating(CGAffineTransform(translationX: cx, y: cy))
-        return withAlpha(img.transformed(by: t, highQualityDownsample: true), seg.opacity * anim.alpha)
+        let placed = finish(img.transformed(by: t, highQualityDownsample: true), anim: anim, canvas: canvas)
+        return withAlpha(placed, seg.opacity * anim.alpha)
     }
 
     private func withAlpha(_ img: CIImage, _ alpha: Double) -> CIImage {
