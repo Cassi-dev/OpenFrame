@@ -106,8 +106,268 @@ QString styleKey(const TextStyle &s)
                        QString::number(s.backgroundEnabled), c(s.backgroundColor), n(s.backgroundRadius),
                        n(s.backgroundPaddingX), n(s.backgroundPaddingY), QString::number(s.shadow), c(s.shadowColor),
                        n(s.shadowDistance), n(s.shadowAngle), n(s.shadowBlur), QString::number(int(s.alignment)),
-                       n(s.maxWidth)}
+                       n(s.maxWidth), QString::number(s.balanceLines), QString::number(s.fitLines)}
         .join(u'|');
+}
+
+/// Chave do conteúdo que muda o desenho: texto, estilo e palavra-chave (os tempos não mudam a imagem estática).
+QString contentKey(const QString &text, const TextContent &content)
+{
+    QString key = text + u'\x1f' + styleKey(content.style);
+    if (const auto &e = content.emphasis) {
+        QStringList words;
+        for (const int w : e->words)
+            words.append(QString::number(w));
+        key += u'\x1f' + words.join(u',') + u'|' + e->fontName + u'|' + e->fontFace + u'|' +
+               QString::number(e->scale, 'g', 17);
+        if (e->color)
+            key += QStringLiteral("|%1,%2,%3,%4").arg(e->color->r).arg(e->color->g).arg(e->color->b).arg(e->color->a);
+    }
+    return key;
+}
+
+/// Trechos (UTF-16, [início, fim)) das palavras do texto: a divisão de `TextContent::wordsOf`.
+QList<std::pair<int, int>> wordRanges(const QString &text)
+{
+    QList<std::pair<int, int>> ranges;
+    int start = -1;
+    for (int i = 0; i <= text.size(); ++i) {
+        const bool blank = i == text.size() || text[i].isSpace();
+        if (blank && start >= 0) {
+            ranges.append({start, i});
+            start = -1;
+        } else if (!blank && start < 0) {
+            start = i;
+        }
+    }
+    return ranges;
+}
+
+/// Tamanho mínimo da fonte no QTextLayout. O QFont só aceita pixels inteiros: montar o texto grande e escalar
+/// o resultado deixa o erro de arredondamento das fontes ampliadas ou reduzidas (palavra-chave, `fitLines`) em
+/// ~0,1%. Sem hinting, o layout é linear no tamanho.
+constexpr int minLayoutPx = 512;
+
+int layoutPixels(double fontPx) { return std::max(minLayoutPx, int(std::lround(fontPx))); }
+
+/// Faixa de escala de cada linha no `fitLines`.
+constexpr double fitMin = 0.6, fitMax = 2.5;
+
+/// Texto montado: fontes por trecho, linhas e caixa, em pixels. O QTextLayout trabalha em pixels inteiros
+/// de fonte (`layoutPx`, no mínimo `minLayoutPx`) e tudo é escalado por `s = fontPx/layoutPx`.
+struct Layout {
+    FontFace face;
+    double fontPx = 0;
+    /// Maior fonte do texto (palavra-chave e linhas ampliadas pelo `fitLines`): as margens contam com ela.
+    double peakFontPx = 0;
+    double s = 1;
+    /// Espaço extra entre letras da fonte base, em pixels.
+    double kern = 0;
+    std::shared_ptr<QTextLayout> layout;
+    struct Line {
+        int start, length;
+        double width, top, height, baseline;
+    };
+    QList<Line> lines;
+    QSizeF textSize;
+    /// Trechos das palavras-chave e a cor delas (vazia = a do texto).
+    QList<std::pair<int, int>> accent;
+    std::optional<RGBA> accentColor;
+};
+
+/// Número de linhas da quebra automática na largura `width` (pixels de layout).
+int countLines(QTextLayout &layout, double width)
+{
+    int count = 0;
+    layout.beginLayout();
+    for (;;) {
+        QTextLine line = layout.createLine();
+        if (!line.isValid())
+            break;
+        line.setLineWidth(width);
+        ++count;
+    }
+    layout.endLayout();
+    return count;
+}
+
+/// Monta o texto: fonte, palavras-chave, linhas ajustadas à largura (`fitLines`) e quebra (comum, equilibrada
+/// ou só nos `\n`). Mesmas regras do `TextRenderer.layout` do Swift.
+Layout buildLayout(const QString &text, const TextStyle &style, QSize canvas, const std::optional<WordEmphasis> &emphasis)
+{
+    Layout l;
+    l.fontPx = std::max(4.0, style.fontSize * canvas.height());
+    const int layoutPx = layoutPixels(l.fontPx);
+    l.s = l.fontPx / layoutPx;
+    l.face = makeFont(style, layoutPx);
+    l.kern = style.letterSpacing * l.fontPx;
+    l.peakFontPx = l.fontPx;
+    const double s = l.s;
+
+    // Fonte de cada posição: 0 = a do texto, 1 = a da palavra-chave; e o tamanho em pixels.
+    const int n = int(text.size());
+    QList<char> kind(n, 0);
+    QList<double> size(n, l.fontPx);
+    TextStyle accentStyle = style;
+    double accentPx = l.fontPx;
+    if (emphasis && !emphasis->words.isEmpty()) {
+        accentStyle.fontName = emphasis->fontName;
+        accentStyle.fontFace = emphasis->fontFace;
+        accentStyle.bold = false;
+        accentStyle.italic = false;
+        accentPx = l.fontPx * std::clamp(emphasis->scale, 0.2, 5.0);
+        const auto words = wordRanges(text);
+        QList<int> picked = emphasis->words;
+        std::sort(picked.begin(), picked.end());
+        picked.erase(std::unique(picked.begin(), picked.end()), picked.end());
+        for (const int w : picked) {
+            if (w < 0 || w >= words.size())
+                continue;
+            for (int i = words[w].first; i < words[w].second; ++i) {
+                kind[i] = 1;
+                size[i] = accentPx;
+            }
+            l.accent.append(words[w]);
+        }
+        if (!l.accent.isEmpty()) {
+            l.peakFontPx = std::max(l.peakFontPx, accentPx);
+            l.accentColor = emphasis->color;
+        }
+    }
+
+    // Fontes já criadas por (tipo, tamanho de layout).
+    QHash<QString, QFont> fonts;
+    const auto fontFor = [&](int k, double px) {
+        const int layoutSize = std::max(1, int(std::lround(px / s)));
+        const QString key = QStringLiteral("%1|%2").arg(k).arg(layoutSize);
+        if (const auto it = fonts.constFind(key); it != fonts.constEnd())
+            return *it;
+        QFont font = k == 0 ? l.face.font : makeFont(accentStyle, layoutSize).font;
+        font.setPixelSize(layoutSize);
+        if (style.letterSpacing != 0)
+            font.setLetterSpacing(QFont::AbsoluteSpacing, style.letterSpacing * px / s);
+        fonts.insert(key, font);
+        return font;
+    };
+    const auto formats = [&](int from, int to) {
+        QList<QTextLayout::FormatRange> ranges;
+        for (int i = from; i < to;) {
+            int j = i + 1;
+            while (j < to && kind[j] == kind[i] && size[j] == size[i])
+                ++j;
+            QTextLayout::FormatRange r;
+            r.start = i - from;
+            r.length = j - i;
+            r.format.setFont(fontFor(kind[i], size[i]));
+            ranges.append(r);
+            i = j;
+        }
+        return ranges;
+    };
+    const auto naturalHeight = [&](double px) {
+        const QFontMetricsF m(fontFor(0, px));
+        return (m.ascent() + m.descent() + m.leading()) * s;
+    };
+    // Altura fixa de linha quando há espaçamento extra; senão, a natural da fonte.
+    const auto fixedHeight = [&](double px) -> std::optional<double> {
+        if (style.lineSpacing == 0)
+            return std::nullopt;
+        return std::max(px * 0.3, naturalHeight(px) + style.lineSpacing * px);
+    };
+
+    // Parágrafos (separados por `\n`) e a altura fixa de cada um.
+    QList<std::pair<int, int>> paragraphs;
+    for (int i = 0, start = 0; i <= n; ++i)
+        if (i == n || text[i] == u'\n') {
+            paragraphs.append({start, i});
+            start = i + 1;
+        }
+    QList<std::optional<double>> paragraphHeight(paragraphs.size(), fixedHeight(l.fontPx));
+
+    const double boxWidth = std::max(l.fontPx, style.maxWidth * canvas.width());
+    if (style.fitLines) {
+        // Cada linha ocupa a largura da caixa, dentro da faixa de escala, com a altura de linha da própria fonte.
+        for (int p = 0; p < paragraphs.size(); ++p) {
+            const auto [from, to] = paragraphs[p];
+            if (to <= from)
+                continue;
+            QTextLayout measure(text.mid(from, to - from));
+            measure.setFormats(formats(from, to));
+            QTextOption option;
+            option.setWrapMode(QTextOption::NoWrap);
+            measure.setTextOption(option);
+            measure.beginLayout();
+            QTextLine line = measure.createLine();
+            line.setLineWidth(1e6);
+            measure.endLayout();
+            const double natural = line.naturalTextWidth() * s - l.kern;
+            if (natural <= 0)
+                continue;
+            const double k = std::clamp(boxWidth / natural, fitMin, fitMax);
+            for (int i = from; i < to; ++i)
+                size[i] *= k;
+            paragraphHeight[p] = fixedHeight(l.fontPx * k);
+            l.peakFontPx = std::max(l.peakFontPx, l.fontPx * k);
+        }
+    }
+
+    // O QTextLayout só quebra a linha no separador de linha (U+2028), não no "\n";
+    // a troca é de um caractere por um, então os índices continuam valendo.
+    QString layoutText = text;
+    layoutText.replace(u'\n', QChar::LineSeparator);
+    l.layout = std::make_shared<QTextLayout>(layoutText, l.face.font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    l.layout->setTextOption(option);
+    if (style.letterSpacing != 0 || !l.accent.isEmpty() || style.fitLines)
+        l.layout->setFormats(formats(0, n));
+    else {
+        QFont font = l.face.font;
+        if (l.kern != 0)
+            font.setLetterSpacing(QFont::AbsoluteSpacing, l.kern / s);
+        l.layout->setFont(font);
+    }
+
+    double wrap = boxWidth;
+    if (style.fitLines) {
+        // As linhas já têm a largura da caixa: só os `\n` quebram (o que passar dos limites de escala, sai).
+        wrap = 1e6;
+    } else if (style.balanceLines) {
+        // Menor largura com o mesmo número de linhas (`text-wrap: balance`), até meio pixel.
+        const int lines = countLines(*l.layout, wrap / s);
+        if (lines > 1) {
+            double lo = 0, hi = wrap;
+            while (hi - lo > 0.5) {
+                const double mid = (lo + hi) / 2;
+                (countLines(*l.layout, mid / s) <= lines ? hi : lo) = mid;
+            }
+            wrap = hi;
+        }
+    }
+
+    double y = 0, widest = 0;
+    l.layout->beginLayout();
+    for (;;) {
+        QTextLine line = l.layout->createLine();
+        if (!line.isValid())
+            break;
+        line.setLeadingIncluded(true);
+        line.setLineWidth(wrap / s);
+        const int start = line.textStart();
+        int paragraph = 0;
+        while (paragraph + 1 < paragraphs.size() && paragraphs[paragraph].second < start)
+            ++paragraph;
+        const double natural = line.height() * s;
+        const double height = paragraphHeight[paragraph].value_or(natural);
+        // A linha de base fica a (descida + entrelinha) do fim da linha, como no Core Text.
+        const double lineDescent = line.descent() * s + line.leading() * s;
+        l.lines.append({start, line.textLength(), line.naturalTextWidth() * s, y, height, y + height - lineDescent});
+        widest = std::max(widest, line.naturalTextWidth() * s);
+        y += height;
+    }
+    l.layout->endLayout();
+    l.textSize = QSizeF(std::ceil(widest) + 1, std::ceil(y) + 1);
+    return l;
 }
 
 /// Desfoque da sombra nos valores sRGB pré-multiplicados (como o Core Graphics).
@@ -193,8 +453,8 @@ QImage TextRenderer::image(const TextContent &content, QSize canvas, double reve
     if (characters == 0 || canvas.height() <= 0)
         return {};
     const int visible = reveal >= 1 ? characters : int(std::ceil(characters * reveal));
-    const QString key = QStringLiteral("%1\x1f%2\x1f%3x%4\x1f%5")
-                            .arg(text, styleKey(content.style))
+    const QString key = QStringLiteral("%1\x1f%2x%3\x1f%4")
+                            .arg(contentKey(text, content))
                             .arg(canvas.width())
                             .arg(canvas.height())
                             .arg(visible);
@@ -203,71 +463,31 @@ QImage TextRenderer::image(const TextContent &content, QSize canvas, double reve
         if (const QImage *cached = m_cache.object(key))
             return *cached;
     }
-    const QImage image = render(text, content.style, canvas, visible);
+    const QImage image = render(text, content.style, content.emphasis, canvas, visible);
     QMutexLocker locker(&m_lock);
     m_cache.insert(key, new QImage(image));
     return image;
 }
 
-QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize canvas, int visibleCharacters)
+QImage TextRenderer::render(const QString &text, const TextStyle &style, const std::optional<WordEmphasis> &emphasis,
+                            QSize canvas, int visibleCharacters)
 {
-    const double fontPx = std::max(4.0, style.fontSize * canvas.height());
-    // O layout roda num tamanho inteiro e tudo é escalado para o tamanho exato.
-    const int layoutPx = std::max(1, int(std::lround(fontPx)));
-    const double s = fontPx / layoutPx;
-    const FontFace face = makeFont(style, layoutPx);
-    QFont font = face.font;
-    const double kern = style.letterSpacing * fontPx;
-    if (kern != 0)
-        font.setLetterSpacing(QFont::AbsoluteSpacing, kern / s);
-
-    const QFontMetricsF metrics(face.font);
-    const double ascent = metrics.ascent() * s, descent = metrics.descent() * s, leading = metrics.leading() * s;
-    // Altura fixa de linha quando há espaçamento extra; senão, a natural da fonte.
-    const std::optional<double> fixedLine =
-        style.lineSpacing != 0
-            ? std::optional(std::max(fontPx * 0.3, ascent + descent + leading + style.lineSpacing * fontPx))
-            : std::nullopt;
-
-    // O QTextLayout só quebra a linha no separador de linha (U+2028), não no "\n";
-    // a troca é de um caractere por um, então os índices continuam valendo.
-    QString layoutText = text;
-    layoutText.replace(u'\n', QChar::LineSeparator);
-    QTextLayout layout(layoutText, font);
-    QTextOption option;
-    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-    layout.setTextOption(option);
-    const double maxWidth = std::max(fontPx, style.maxWidth * canvas.width());
-    struct LineInfo {
-        int start, length;
-        double width, top, height, baseline;
+    const Layout l = buildLayout(text, style, canvas, emphasis);
+    const double fontPx = l.fontPx, s = l.s, kern = l.kern;
+    const FontFace &face = l.face;
+    const QTextLayout &layout = *l.layout;
+    const QSizeF textSize = l.textSize;
+    const auto isAccent = [&](qsizetype index) {
+        return std::any_of(l.accent.cbegin(), l.accent.cend(),
+                           [&](const auto &r) { return index >= r.first && index < r.second; });
     };
-    QList<LineInfo> lines;
-    double y = 0, widest = 0;
-    layout.beginLayout();
-    for (;;) {
-        QTextLine line = layout.createLine();
-        if (!line.isValid())
-            break;
-        line.setLeadingIncluded(true);
-        line.setLineWidth(maxWidth / s);
-        const double natural = line.height() * s;
-        const double height = fixedLine.value_or(natural);
-        // A linha de base fica a (descida + entrelinha) do fim da linha, como no Core Text.
-        const double lineDescent = line.descent() * s + line.leading() * s;
-        lines.append({line.textStart(), line.textLength(), line.naturalTextWidth() * s, y, height,
-                      y + height - lineDescent});
-        widest = std::max(widest, line.naturalTextWidth() * s);
-        y += height;
-    }
-    layout.endLayout();
-    const QSizeF textSize(std::ceil(widest) + 1, std::ceil(y) + 1);
 
     // Contornos das letras visíveis e retângulos do sublinhado, em pixels da caixa de texto.
     const QList<int> ends = graphemeEnds(text);
     const int cut = visibleCharacters <= 0 ? 0 : ends[std::min(visibleCharacters, int(ends.size())) - 1];
-    QPainterPath glyphs, underlines;
+    QPainterPath glyphs, accentGlyphs, underlines;
     glyphs.setFillRule(Qt::WindingFill);
+    accentGlyphs.setFillRule(Qt::WindingFill);
     struct ColorRun {
         QRawFont font;
         QList<quint32> indexes;
@@ -276,7 +496,7 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
     QList<ColorRun> colorRuns;
     // O espaço entre letras também vai depois da última da linha: desconta a sobra.
     const double shift = style.alignment == TextAlignment::Left ? 0 : style.alignment == TextAlignment::Center ? kern / 2 : kern;
-    for (const LineInfo &info : lines) {
+    for (const Layout::Line &info : l.lines) {
         const double offset = style.alignment == TextAlignment::Left     ? 0
                               : style.alignment == TextAlignment::Center ? (textSize.width() - info.width) / 2
                                                                          : textSize.width() - info.width;
@@ -312,12 +532,14 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
                     }
                     continue;
                 }
+                // A palavra-chave tem a fonte própria (sem negrito nem itálico sintéticos) e a cor dela.
+                const bool accent = isAccent(index);
                 QTransform t;
                 t.translate(p.x(), p.y());
                 t.scale(s, s);
-                if (face.syntheticItalic)
+                if (face.syntheticItalic && !accent)
                     t.shear(-syntheticSlant, 0);
-                glyphs.addPath(t.map(outline));
+                (accent ? accentGlyphs : glyphs).addPath(t.map(outline));
             }
             if (!colored.indexes.isEmpty())
                 colorRuns.append(colored);
@@ -342,9 +564,11 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
     const double shadowBlur = style.shadow ? std::max(0.0, style.shadowBlur) * fontPx : 0;
     const double shadowX = style.shadow ? std::abs(shadowOffset.x()) + shadowBlur * 1.5 : 0;
     const double shadowY = style.shadow ? std::abs(shadowOffset.y()) + shadowBlur * 1.5 : 0;
-    const double slant = (style.italic || face.syntheticItalic) ? fontPx * 0.25 : 0;
-    const double tight = std::max(0.0, -style.lineSpacing) * fontPx;
-    const double base = std::ceil(fontPx * 0.35);
+    // A palavra-chave (às vezes itálica) e as linhas ampliadas pedem margens pela maior fonte.
+    const double peak = l.peakFontPx;
+    const double slant = (style.italic || face.syntheticItalic || !l.accent.isEmpty()) ? peak * 0.25 : 0;
+    const double tight = std::max(0.0, -style.lineSpacing) * peak;
+    const double base = std::ceil(peak * 0.35);
     const double padX = std::max(base, std::ceil(fontPx * 0.12 + std::max(strokeOut, bgX) + shadowX + slant));
     const double padY = std::max(base, std::ceil(fontPx * 0.12 + std::max(strokeOut, bgY) + shadowY + tight));
     const int width = int(textSize.width() + padX * 2);
@@ -360,6 +584,7 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
         if (strokeOut > 0) {
             QPen pen(qcolor(style.strokeColor), strokeOut * 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             p.strokePath(glyphs, pen);
+            p.strokePath(accentGlyphs, pen);
             p.strokePath(underlines, pen);
         }
         const QColor color = qcolor(style.color);
@@ -367,6 +592,8 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
             p.strokePath(glyphs, QPen(color, syntheticBold * fontPx, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.fillPath(glyphs, color);
         p.fillPath(underlines, color);
+        if (!accentGlyphs.isEmpty())
+            p.fillPath(accentGlyphs, qcolor(l.accentColor.value_or(style.color)));
         // Glifos coloridos (emoji) não têm contorno vetorial: são desenhados como estão.
         for (const ColorRun &run : colorRuns) {
             QRawFont raw = run.font;
@@ -417,6 +644,62 @@ QImage TextRenderer::render(const QString &text, const TextStyle &style, QSize c
     p.setOpacity(opacity);
     p.drawImage(0, 0, group);
     return faded;
+}
+
+std::optional<QSizeF> TextRenderer::boxSize(const TextContent &content, QSize canvas)
+{
+    const QString text = cased(content.text, content.style.textCase);
+    if (text.isEmpty() || canvas.height() <= 0)
+        return std::nullopt;
+    const QString key = QStringLiteral("box\x1f%1\x1f%2x%3").arg(contentKey(text, content)).arg(canvas.width()).arg(canvas.height());
+    {
+        QMutexLocker locker(&m_lock);
+        if (const QSizeF *cached = m_sizes.object(key))
+            return *cached;
+    }
+    const TextStyle &style = content.style;
+    const Layout l = buildLayout(text, style, canvas, content.emphasis);
+    const double bgX = style.backgroundEnabled ? std::max(0.0, style.backgroundPaddingX) * l.fontPx : 0;
+    const double bgY = style.backgroundEnabled ? std::max(0.0, style.backgroundPaddingY) * l.fontPx : 0;
+    const QSizeF size(l.textSize.width() + bgX * 2, l.textSize.height() + bgY * 2);
+    QMutexLocker locker(&m_lock);
+    m_sizes.insert(key, new QSizeF(size));
+    return size;
+}
+
+double TextRenderer::lineWidth(const QString &text, const TextStyle &style, double fontPx)
+{
+    const int layoutPx = layoutPixels(fontPx);
+    const double s = fontPx / layoutPx;
+    QFont font = makeFont(style, layoutPx).font;
+    if (style.letterSpacing != 0)
+        font.setLetterSpacing(QFont::AbsoluteSpacing, style.letterSpacing * fontPx / s);
+    QTextLayout layout(cased(text, style.textCase), font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::NoWrap);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    if (!line.isValid()) {
+        layout.endLayout();
+        return 0;
+    }
+    line.setLineWidth(1e9);
+    layout.endLayout();
+    // Como o `CTLineGetTypographicBounds`: com os espaços e o espaçamento do fim.
+    return line.horizontalAdvance() * s;
+}
+
+QStringList TextRenderer::lineTexts(const TextContent &content, QSize canvas)
+{
+    const QString text = cased(content.text, content.style.textCase);
+    if (text.isEmpty() || canvas.height() <= 0)
+        return {};
+    const Layout l = buildLayout(text, content.style, canvas, content.emphasis);
+    QStringList out;
+    for (const Layout::Line &line : l.lines)
+        out.append(text.mid(line.start, line.length).trimmed());
+    return out;
 }
 
 } // namespace of

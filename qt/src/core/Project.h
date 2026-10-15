@@ -57,6 +57,8 @@ struct Segment {
     QList<VideoEffect> effects;
     std::optional<SegmentAnimation> animationIn;
     std::optional<SegmentAnimation> animationOut;
+    /// Sem loop, a chave não é gravada (projetos e fixtures antigos ficam iguais).
+    std::optional<LoopAnimation> animationLoop;
     std::optional<Transition> transition;
     std::optional<TextContent> text;
 
@@ -82,6 +84,9 @@ struct Track {
     bool isMain = false;
     bool muted = false;
     bool hidden = false;
+    /// Faixa das legendas automáticas ("substituir anteriores" e o painel Legendas).
+    /// Só é gravada quando ligada; ausente na leitura = desligada.
+    bool isAutoCaptions = false;
     QList<Segment> segments;
 
     Track() = default;

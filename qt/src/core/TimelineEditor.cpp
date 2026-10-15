@@ -1,6 +1,7 @@
 #include "TimelineEditor.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace of::TimelineEditor {
 
@@ -63,6 +64,18 @@ bool isTimed(const Segment &s, const Project &p)
 }
 
 Micros center(const Segment &s) { return (s.targetStart + s.targetEnd()) / 2; }
+
+/// Os tempos das palavras são relativos ao início do segmento: quando o início muda
+/// (aparar, dividir), elas continuam no mesmo instante da timeline.
+void shiftWords(Segment &s, Micros delta)
+{
+    if (delta == 0 || !s.text || !s.text->words)
+        return;
+    for (auto &w : *s.text->words) {
+        w.start += delta;
+        w.end += delta;
+    }
+}
 
 std::optional<Micros> nearestPoint(Micros t, const QList<Micros> &points, Micros threshold)
 {
@@ -186,7 +199,8 @@ std::optional<int> freeTrack(TrackKind kind, TimeRange range, const Project &p, 
 {
     for (int t = 0; t < p.tracks.size(); ++t) {
         const Track &track = p.tracks[t];
-        if (track.kind != kind || track.isMain)
+        // A faixa das legendas automáticas é só delas (substituir não pode levar texto do usuário).
+        if (track.kind != kind || track.isMain || track.isAutoCaptions)
             continue;
         const bool collides = std::any_of(track.segments.cbegin(), track.segments.cend(), [&](const Segment &other) {
             return other.id != excluding && other.targetStart < range.end() && range.start < other.targetEnd();
@@ -218,6 +232,7 @@ std::optional<QUuid> split(Project &p, const QUuid &id, Micros time)
     if (!seg.text && !(m && m->kind == MaterialKind::Photo))
         right.source.start = seg.source.start + offsetSrc;
     right.targetStart = time;
+    shiftWords(right, seg.targetStart - time);
     left.transition.reset();
     left.animationOut.reset();
     left.fadeOut = 0;
@@ -352,7 +367,9 @@ void trimStart(Project &p, const QUuid &id, Micros newStart)
     if (timed)
         s.source.start += deltaSrc;
     s.source.duration -= deltaSrc;
+    const Micros oldStart = s.targetStart;
     s.targetStart += Time::round(double(deltaSrc) / s.speed);
+    shiftWords(s, oldStart - s.targetStart);
     p.tracks[loc->track].segments[loc->index] = s;
     normalize(p);
 }
@@ -385,6 +402,40 @@ void update(Project &p, const QUuid &id, const std::function<void(Segment &)> &c
         return;
     change(p.tracks[loc->track].segments[loc->index]);
     relayoutMain(p);
+}
+
+void setPlacement(Project &p, const QUuid &id, QPointF center, double scale, double rotation)
+{
+    scale = std::max(scale, 0.01);
+    update(p, id, [&](Segment &s) {
+        if (s.text) {
+            s.text->style.x = center.x();
+            s.text->style.y = center.y();
+            s.text->style.scale = scale;
+            s.text->style.rotation = rotation;
+        } else {
+            s.transform.x = center.x();
+            s.transform.y = center.y();
+            s.transform.scale = scale;
+            s.transform.rotation = rotation;
+        }
+    });
+}
+
+void setTextWidth(Project &p, const QUuid &id, double maxWidth)
+{
+    const auto loc = p.locate(id);
+    if (!std::isfinite(maxWidth) || !loc || !p.tracks[loc->track].segments[loc->index].text)
+        return;
+    const double width = std::clamp(maxWidth, TextStyle::maxWidthMin, TextStyle::maxWidthMax);
+    Track &track = p.tracks[loc->track];
+    if (track.isAutoCaptions) {
+        for (auto &s : track.segments)
+            if (s.text)
+                s.text->style.maxWidth = width;
+    } else {
+        track.segments[loc->index].text->style.maxWidth = width;
+    }
 }
 
 // MARK: - Ímã (snap)

@@ -2,10 +2,17 @@
 add_library(openframe_core STATIC
     Timing.h Timing.cpp
     Enums.h
+    Color.h
+    Captions.h
     Effects.h Effects.cpp
     Project.h Project.cpp
     ProjectStore.h ProjectStore.cpp
     TimelineEditor.h TimelineEditor.cpp
+    CanvasLayout.h CanvasLayout.cpp
+    CaptionPresets.h CaptionPresets.cpp
+    CaptionBuilder.h CaptionBuilder.cpp
+    WhisperModels.h WhisperModels.cpp
+    Transcriber.h Transcriber.cpp
     Subtitles.h Subtitles.cpp
     ExportSettings.h ExportSettings.cpp
     ProjectLibrary.h ProjectLibrary.cpp

@@ -2,6 +2,7 @@
 
 #include "Project.h"
 
+#include <QPointF>
 #include <functional>
 
 namespace of {
@@ -77,6 +78,14 @@ void setSpeed(Project &p, const QUuid &id, double speed);
 
 /// Altera um segmento e reaplica o layout da faixa principal.
 void update(Project &p, const QUuid &id, const std::function<void(Segment &)> &change);
+
+/// Grava posição/escala/rotação no lugar certo: `text.style` no texto, `transform` no visual.
+/// `center` normalizado (-1...1, y para cima); escala mínima 0,01.
+void setPlacement(Project &p, const QUuid &id, QPointF center, double scale, double rotation);
+
+/// Muda a largura da caixa de um texto (`style.maxWidth`, limitada a `TextStyle::maxWidthMin...Max`); o texto
+/// se reorganiza. Numa faixa de legendas automáticas, vale para todos os textos da faixa. Ignora NaN/infinito.
+void setTextWidth(Project &p, const QUuid &id, double maxWidth);
 
 // Ímã (snap)
 
