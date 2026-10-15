@@ -9,6 +9,10 @@ function(openframe_add_test name)
     # do contexto da plataforma "windows" e derruba os testes que consultam fontes.
     if(NOT WIN32)
         set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    elseif(OPENFRAME_WHISPER_LIB_DIR AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+        # As DLLs do whisper/ggml ficam numa pasta própria do build.
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${OPENFRAME_WHISPER_LIB_DIR}")
     endif()
 endfunction()
 
@@ -29,9 +33,26 @@ openframe_add_test(CaptionRenderTests CaptionRenderTests.cpp)
 openframe_add_test(TextSharpnessTests TextSharpnessTests.cpp)
 openframe_add_test(MotionReferenceTests MotionReferenceTests.cpp)
 openframe_add_test(AudioMixTests AudioMixTests.cpp)
+openframe_add_test(WhisperUnitTests WhisperUnitTests.cpp)
+target_link_libraries(WhisperUnitTests PRIVATE Qt6::Network)
+openframe_add_test(TranscriptionTests TranscriptionTests.cpp)
+openframe_add_test(WhisperVariantTests WhisperVariantTests.cpp)
+foreach(t TranscriptionTests WhisperVariantTests)
+    # OPENFRAME_GGML_DL e OPENFRAME_GGML_BUILD_DIR (a pasta das variantes).
+    if(TARGET openframe::whisper)
+        target_link_libraries(${t} PRIVATE openframe::whisper)
+    else()
+        target_compile_definitions(${t} PRIVATE "OPENFRAME_GGML_BUILD_DIR=\"\"")
+    endif()
+    set_tests_properties(${t} PROPERTIES TIMEOUT 900)
+endforeach()
 openframe_add_test(PlayerTests PlayerTests.cpp)
 openframe_add_test(ExportTests ExportTests.cpp)
 # Lê o arquivo exportado direto pelo FFmpeg (codec, fps, marcas de cor).
 include(FFmpeg)
 target_link_libraries(ExportTests PRIVATE FFmpeg::FFmpeg)
 set_tests_properties(ExportTests PROPERTIES TIMEOUT 600)
+
+# Os pesados (whisper e medições de tempo) um de cada vez, como o HeavyWork do Swift.
+set_tests_properties(TranscriptionTests WhisperVariantTests MotionTests CaptionRenderTests TextSharpnessTests
+    PlayerTests ExportTests PROPERTIES RESOURCE_LOCK heavy)
