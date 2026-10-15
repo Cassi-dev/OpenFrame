@@ -227,6 +227,28 @@ struct CaptionPresetTests {
         #expect(style.fitLines && !style.balanceLines && style.textCase == .upper)
     }
 
+    @Test("Empilhado: o bloco mais alto fica em ~45% da altura do quadro em qualquer proporção",
+          arguments: [(16.0 / 9, CGSize(width: 1920, height: 1080)), (9.0 / 16, CGSize(width: 1080, height: 1920)),
+                      (1.0, CGSize(width: 1080, height: 1080))])
+    func stackedHeight(aspect: Double, canvas: CGSize) {
+        let style = CaptionBuilder.defaultStyle(.stacked, aspect: aspect)
+        let cues = CaptionBuilder.cues(from: spokenWords(speech + " Pronto: as legendas aparecem na timeline, uma faixa só delas."),
+                                       preset: .stacked, aspect: aspect)
+        let heights = cues.map { cue -> CGFloat in
+            var content = TextContent(text: cue.text, style: style)
+            content.emphasis = WordEmphasis(words: CaptionBuilder.keywords(cue))
+            return TextRenderer.shared.boxSize(for: content, canvas: canvas)!.height / canvas.height
+        }
+        #expect(heights.max()! <= 0.47, "\(heights.max()!)")
+        #expect(heights.max()! >= 0.35)
+        // Em pé, o mesmo de antes (caixa de 64% da largura, fonte de 0,13 do lado menor).
+        if aspect < 1 {
+            #expect(abs(style.maxWidth - 0.64) < 0.001)
+            #expect(abs(style.fontSize * canvas.height - 0.13 * canvas.width) < 0.1)
+        }
+        #expect(CaptionBuilder.defaultStyle(.stacked, aspect: 16.0 / 9) == CaptionBuilder.defaultStyle(.stacked))
+    }
+
     @Test("Palavra-chave: nunca uma palavra funcional, no máximo uma (duas com mais de 6 palavras); determinística")
     func keywords() {
         let texts = [

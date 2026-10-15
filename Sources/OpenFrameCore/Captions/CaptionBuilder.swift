@@ -608,6 +608,9 @@ public enum CaptionBuilder {
 
     /// Largura máxima da caixa das legendas (fração do quadro), em qualquer proporção.
     static let widestBox = 0.9
+    /// Largura padrão da caixa do Empilhado em frações da altura do quadro, e a fonte em frações dessa largura.
+    static let stackedBlock = 0.36
+    static let stackedFont = 0.2031
 
     /// O estilo padrão do visual na proporção `aspect` (largura/altura) do canvas. Em pé (9:16, 4:5…), o tamanho
     /// da fonte é medido pelo lado menor, como no 16:9: no mesmo tamanho de quadro, a letra tem os mesmos pixels
@@ -616,6 +619,15 @@ public enum CaptionBuilder {
     public static func defaultStyle(_ preset: CaptionPreset, aspect: Double) -> TextStyle {
         var s = defaultStyle(preset)
         guard aspect > 0, aspect.isFinite else { return s }
+        if s.fitLines {
+            // Empilhado: a altura do bloco acompanha a largura da caixa. A largura em pixels fica em
+            // `stackedBlock` × a altura do quadro (no máximo 90% da largura), e a fonte é proporcional a ela:
+            // o bloco mais alto fica em ~45% da altura em qualquer proporção.
+            let block = min(stackedBlock, widestBox * aspect)
+            s.maxWidth = block / aspect
+            s.fontSize = stackedFont * block
+            return s
+        }
         let font = min(1, aspect)
         s.fontSize *= font
         s.maxWidth = min(max(s.maxWidth, widestBox), s.maxWidth * ((16.0 / 9) / aspect) * font)
@@ -723,8 +735,8 @@ public enum CaptionBuilder {
             s.maxWidth = 0.5
         case .stacked:
             s.fontFace = "Condensed Black"
-            // Grande: as linhas curtas chegam à largura antes do limite de 2,5×.
-            s.fontSize = 0.13
+            // Fonte grande em relação à caixa: as linhas curtas chegam à largura antes do limite de 2,5×.
+            s.fontSize = stackedFont * stackedBlock
             s.textCase = .upper
             s.fitLines = true
             s.balanceLines = false
@@ -734,7 +746,7 @@ public enum CaptionBuilder {
             s.shadowColor = RGBA(0, 0, 0, 0.5)
             s.shadowBlur = 0.2
             s.y = 0
-            s.maxWidth = 0.36
+            s.maxWidth = stackedBlock / (16.0 / 9)
         }
         return s
     }
