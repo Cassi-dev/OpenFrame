@@ -842,6 +842,12 @@ enum DebugSnapshot {
         generation.preset = .rise
         await wait(1.5)
         capture("estilos-2-janela-surgir-cor", to: dir)
+        // Projeto 9:16: as prévias seguem a proporção (estilo e segmentação do núcleo).
+        model.mutate { $0.canvas.aspect = .r9x16 }
+        await wait(6)
+        capture("estilos-2b-janela-9x16", to: dir)
+        model.undo()
+        await wait(0.5)
 
         /// Gera com a predefinição e devolve a faixa automática.
         func generate(_ preset: CaptionPreset) async -> Track? {

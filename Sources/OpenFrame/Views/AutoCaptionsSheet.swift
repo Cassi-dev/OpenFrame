@@ -334,16 +334,25 @@ private struct CaptionStyleCard: View {
 
     var body: some View {
         let color = model.captionGeneration.highlightColor
-        let key = CaptionPreviewFrames.Key(preset: preset, color: preset.usesAccent ? color : nil)
+        let aspect = CaptionPreviewFrames.nearestAspect(model.project.aspectValue)
+        let key = CaptionPreviewFrames.Key(preset: preset, color: preset.usesAccent ? color : nil, aspect: aspect)
         let store = model.animationStrips
         Button(action: action) {
             VStack(alignment: .leading, spacing: 6) {
+                // O quadro na proporção do projeto, centrado no cartão 16:9: a legenda sai como vai ficar.
                 ZStack {
-                    CardBackdrop()
-                    FrameStripView(frames: store.strip(key), rest: CaptionPreviewFrames.restIndex,
-                                   playing: hovering || selected, cycle: CaptionPreviewFrames.cycle) {
-                        CaptionSample(layout: preset.layout, highlight: color.color)
-                    }
+                    Color.black.opacity(0.35)
+                    // A área vem do Color.clear: o fundo em "preencher" não pode alargá-la.
+                    Color.clear
+                        .aspectRatio(aspect.value ?? 16 / 9, contentMode: .fit)
+                        .overlay {
+                            CardBackdrop()
+                            FrameStripView(frames: store.strip(key), rest: CaptionPreviewFrames.restIndex,
+                                           playing: hovering || selected, cycle: CaptionPreviewFrames.cycle) {
+                                CaptionSample(layout: preset.layout, highlight: color.color)
+                            }
+                        }
+                        .clipped()
                 }
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -548,9 +557,24 @@ enum CaptionPreviewFrames {
         let preset: CaptionPreset
         /// Cor do destaque (só nas predefinições que a usam).
         let color: RGBA?
+        /// Proporção do projeto (a mais próxima das do app): o estilo e a segmentação dependem dela.
+        let aspect: AspectRatio
     }
 
-    static let pixelSize = CGSize(width: 384, height: 216)
+    /// Proporção do app mais próxima (em escala logarítmica, para 9:16 e 16:9 ficarem simétricas).
+    static func nearestAspect(_ value: Double) -> AspectRatio {
+        let cases = AspectRatio.allCases.filter { $0.value != nil }
+        guard value > 0, value.isFinite else { return .r16x9 }
+        return cases.min { abs(log($0.value! / value)) < abs(log($1.value! / value)) } ?? .r16x9
+    }
+
+    /// Tamanho em pixels do quadro: cabe em 384×216 (o cartão 16:9 com escala 2).
+    static func pixelSize(_ aspect: AspectRatio) -> CGSize {
+        let a = aspect.value ?? 16 / 9
+        func even(_ v: Double) -> CGFloat { CGFloat(max(2, Int((v / 2).rounded()) * 2)) }
+        return a >= 16 / 9 ? CGSize(width: 384, height: even(384 / a)) : CGSize(width: even(216 * a), height: 216)
+    }
+
     static let cycle = 3.6
     static let count = 72
     /// Quadro parado: no meio da frase, com uma palavra destacada.
@@ -574,10 +598,13 @@ enum CaptionPreviewFrames {
     static func frames(_ key: Key) -> [CGImage] {
         var project = Project()
         project.canvas.background = .color(RGBA(0, 0, 0, 0))
-        let cues = CaptionBuilder.cues(from: words(), preset: key.preset)
+        project.canvas.aspect = key.aspect
+        // `apply` usa `defaultStyle(preset, aspect:)` pela proporção do canvas.
+        let cues = CaptionBuilder.cues(from: words(), preset: key.preset, aspect: project.aspectValue)
         CaptionBuilder.apply(cues, preset: key.preset, accent: key.color, to: &project, replacing: false)
-        let plan = RenderPlan(project: project, renderSize: pixelSize)
-        let rect = CGRect(origin: .zero, size: pixelSize)
+        let size = pixelSize(key.aspect)
+        let plan = RenderPlan(project: project, renderSize: size)
+        let rect = CGRect(origin: .zero, size: size)
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         return (0..<count).compactMap { i in
             let time = Micros(cycle * 1_000_000 * Double(i) / Double(count))
