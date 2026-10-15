@@ -31,6 +31,19 @@ void apply(AnimationKind kind, double p, bool exiting, AnimationState &st)
         st.scale *= std::max(p, 0.001);
         break;
     case AnimationKind::Typewriter: st.reveal = std::min(st.reveal, p); break;
+    // Provisório até o render por unidade (etapa 2): o foco esmaece crescendo de 1,08 para 1, e as
+    // animações por letra, palavra ou linha esmaecem o texto inteiro.
+    case AnimationKind::Focus:
+        st.scale *= 1 + 0.08 * hidden;
+        st.alpha *= p;
+        break;
+    case AnimationKind::Cascade:
+    case AnimationKind::Elastic:
+    case AnimationKind::Wave:
+    case AnimationKind::WordByWord:
+    case AnimationKind::MaskReveal:
+    case AnimationKind::Tracking:
+    case AnimationKind::Decode: st.alpha *= p; break;
     }
 }
 
