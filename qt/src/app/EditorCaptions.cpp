@@ -6,8 +6,6 @@
 #include "ProjectStore.h"
 #include "TimelineEditor.h"
 
-#include <cmath>
-
 namespace of {
 
 namespace {
@@ -25,6 +23,8 @@ void EditorModel::setupCaptions()
     m_captions = new CaptionGeneration(this);
     connect(this, &EditorModel::projectChanged, this, &EditorModel::captionStateChanged);
     connect(this, &EditorModel::selectionChanged, this, &EditorModel::captionStateChanged);
+    // O fundo dos cartões depende da faixa principal e da miniatura do material.
+    connect(this, &EditorModel::thumbnailsChanged, this, &EditorModel::captionStateChanged);
     connect(m_captions, &CaptionGeneration::optionsChanged, this, &EditorModel::captionStateChanged);
 
     CaptionsCore::Engine *engine = m_captions->engine();
@@ -232,15 +232,7 @@ QString EditorModel::captionBackdrop() const
 
 qreal EditorModel::captionPreviewAspect() const
 {
-    // Em escala logarítmica, para 9:16 e 16:9 ficarem simétricas.
-    const double value = m_project.aspectValue();
-    double best = 16.0 / 9;
-    if (!(value > 0) || !std::isfinite(value))
-        return best;
-    for (auto a : allCases<AspectRatio>())
-        if (const auto r = ratio(a); r && std::abs(std::log(*r / value)) < std::abs(std::log(best / value)))
-            best = *r;
-    return best;
+    return ratio(CaptionsCore::Preview::nearestAspect(m_project.aspectValue())).value_or(16.0 / 9);
 }
 
 void EditorModel::setTextWidth(qreal width)

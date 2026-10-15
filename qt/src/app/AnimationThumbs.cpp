@@ -1,5 +1,6 @@
 #include "AnimationThumbs.h"
 
+#include "CaptionsCore.h"
 #include "EditorModel.h"
 #include "MediaCache.h"
 #include "MotionCore.h"
@@ -10,6 +11,21 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 namespace of {
+
+namespace {
+
+/// Desenha `image` encaixada (sem cortar) e centrada no item.
+void drawFitted(QPainter *painter, const QImage &image, QSizeF box)
+{
+    painter->setRenderHint(QPainter::SmoothPixmapTransform);
+    const double scale = std::min(box.width() / image.width(), box.height() / image.height());
+    const QSizeF size(image.width() * scale, image.height() * scale);
+    painter->drawImage(QRectF((box.width() - size.width()) / 2, (box.height() - size.height()) / 2, size.width(),
+                              size.height()),
+                       image);
+}
+
+} // namespace
 
 // MARK: - AnimationStrips
 
@@ -163,15 +179,94 @@ void AnimatedThumb::paint(QPainter *painter)
     } else if (const QList<QImage> *rest = AnimationStrips::instance()->strip(restKey()); rest && !rest->isEmpty()) {
         image = rest->first();
     }
-    if (image.isNull())
+    if (!image.isNull())
+        drawFitted(painter, image, QSizeF(width(), height()));
+}
+
+// MARK: - CaptionPreviewStrip
+
+namespace {
+
+AspectRatio projectAspect()
+{
+    EditorModel *model = EditorModel::instance();
+    return CaptionsCore::Preview::nearestAspect(model ? model->project().aspectValue() : 16.0 / 9);
+}
+
+} // namespace
+
+CaptionPreviewStrip::CaptionPreviewStrip(QQuickItem *parent) : QQuickPaintedItem(parent)
+{
+    setAntialiasing(true);
+    m_tick.setInterval(33);
+    connect(&m_tick, &QTimer::timeout, this, [this] { update(); });
+    connect(this, &CaptionPreviewStrip::sourceChanged, this, [this] {
+        request();
+        update();
+        emit framesChanged();
+    });
+    connect(this, &CaptionPreviewStrip::playingChanged, this, [this] {
+        if (m_playing) {
+            m_clock.restart();
+            m_tick.start();
+        } else {
+            m_tick.stop();
+        }
+        update();
+    });
+    connect(AnimationStrips::instance(), &AnimationStrips::stripReady, this, [this](const QString &k) {
+        if (k == key()) {
+            update();
+            emit framesChanged();
+        }
+    });
+    // A proporção do projeto muda a segmentação e o estilo padrão.
+    if (EditorModel *model = EditorModel::instance())
+        connect(model, &EditorModel::projectChanged, this, [this] {
+            if (!m_preset.isEmpty() && !hasFrames())
+                emit sourceChanged();
+        });
+}
+
+QString CaptionPreviewStrip::key() const
+{
+    if (m_preset.isEmpty())
+        return {};
+    return QStringLiteral("caption|%1|%2|%3")
+        .arg(m_preset, m_usesAccent ? m_accent.name(QColor::HexArgb) : QString())
+        .arg(enumKey(projectAspect()));
+}
+
+void CaptionPreviewStrip::request()
+{
+    const QString k = key();
+    if (k.isEmpty())
         return;
-    painter->setRenderHint(QPainter::SmoothPixmapTransform);
-    const QSizeF box(width(), height());
-    const double scale = std::min(box.width() / image.width(), box.height() / image.height());
-    const QSizeF size(image.width() * scale, image.height() * scale);
-    painter->drawImage(QRectF((box.width() - size.width()) / 2, (box.height() - size.height()) / 2, size.width(),
-                              size.height()),
-                       image);
+    const QString preset = m_preset;
+    const std::optional<QColor> accent = m_usesAccent ? std::optional<QColor>(m_accent) : std::nullopt;
+    const AspectRatio aspect = projectAspect();
+    AnimationStrips::instance()->request(k, true, [preset, accent, aspect] {
+        return CaptionsCore::Preview::frames(preset, accent, aspect);
+    });
+}
+
+bool CaptionPreviewStrip::hasFrames() const
+{
+    const QList<QImage> *frames = AnimationStrips::instance()->strip(key());
+    return frames && !frames->isEmpty();
+}
+
+void CaptionPreviewStrip::paint(QPainter *painter)
+{
+    const QList<QImage> *frames = AnimationStrips::instance()->strip(key());
+    if (!frames || frames->isEmpty())
+        return;
+    int index = std::min<int>(CaptionsCore::Preview::restIndex, int(frames->size()) - 1);
+    if (m_playing) {
+        const double fps = frames->size() / CaptionsCore::Preview::cycle;
+        index = int(m_clock.elapsed() / 1000.0 * fps) % int(frames->size());
+    }
+    drawFitted(painter, frames->at(index), QSizeF(width(), height()));
 }
 
 } // namespace of

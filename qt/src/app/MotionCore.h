@@ -10,7 +10,7 @@
 
 // Única ligação da aba Animação com o núcleo: tipos de entrada/saída, loops
 // (`LoopKind`/`Segment::animationLoop`) e quadros das miniaturas
-// (`AnimationPreview::frames`, etapa 2 do 04; até lá, os cartões mostram o ícone).
+// (`AnimationPreview::frames`).
 
 namespace of::MotionCore {
 
@@ -32,7 +32,7 @@ void setLoop(Project &p, const QUuid &id, const std::optional<Loop> &loop);
 
 /// Parte animada de uma miniatura: "entry:<tipo>", "exit:<tipo>", "loop:<tipo>" ou "" (repouso).
 /// Quadros da miniatura do segmento (texto curto com o estilo dele, ou a imagem da
-/// mídia); vazio sem o `AnimationPreview` do núcleo.
+/// mídia), pelo `AnimationPreview::frames`; vazio se a parte for desconhecida.
 QList<QImage> frames(const Segment &seg, const QImage &mediaImage, const QString &part, QSize size, int count);
 /// Chave do assunto da miniatura (texto e estilo, ou o material).
 QString subjectKey(const Segment &seg);

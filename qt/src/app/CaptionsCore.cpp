@@ -2,8 +2,12 @@
 
 #include "CaptionBuilder.h"
 #include "CaptionPresets.h"
+#include "Renderer.h"
 #include "Transcriber.h"
 #include "WhisperModels.h"
+
+#include <cmath>
+#include <limits>
 
 namespace of::CaptionsCore {
 
@@ -94,6 +98,73 @@ void applyStyleToAll(Project &p, const Segment &source)
         }
     }
 }
+
+// MARK: - Prévia dos cartões
+
+namespace Preview {
+
+namespace {
+
+const QString sample = QStringLiteral("Hoje eu vou mostrar como gerar legendas no seu computador.");
+
+/// Uma palavra a cada ~0,26 s, a partir de 0,2 s.
+QList<TranscribedWord> words()
+{
+    QList<TranscribedWord> list;
+    Micros t = 200'000;
+    for (const QString &word : sample.split(u' ')) {
+        const Micros length = 170'000 + 18'000 * word.size();
+        list.append({word, t, t + length, 1});
+        t += length + 50'000;
+    }
+    return list;
+}
+
+} // namespace
+
+AspectRatio nearestAspect(double value)
+{
+    AspectRatio best = AspectRatio::R16x9;
+    if (!(value > 0) || !std::isfinite(value))
+        return best;
+    double distance = std::numeric_limits<double>::infinity();
+    for (auto a : allCases<AspectRatio>())
+        if (const auto r = ratio(a); r && std::abs(std::log(*r / value)) < distance) {
+            distance = std::abs(std::log(*r / value));
+            best = a;
+        }
+    return best;
+}
+
+QSize pixelSize(AspectRatio aspect)
+{
+    const double a = ratio(aspect).value_or(16.0 / 9);
+    const auto even = [](double v) { return std::max(2, int(std::lround(v / 2)) * 2); };
+    return a >= 16.0 / 9 ? QSize(384, even(384 / a)) : QSize(even(216 * a), 216);
+}
+
+QList<QImage> frames(const QString &preset, const std::optional<QColor> &accent, AspectRatio aspect)
+{
+    const CaptionPreset p = enumFromKey<CaptionPreset>(preset).value_or(CaptionPreset::Phrases);
+    Project project;
+    project.canvas.aspect = aspect;
+    // O `apply` usa o `defaultStyle(preset, aspect)` pela proporção do canvas.
+    const auto cues = CaptionBuilder::cues(words(), p, project.aspectValue());
+    std::optional<RGBA> color;
+    if (accent)
+        color = RGBA{accent->redF(), accent->greenF(), accent->blueF(), accent->alphaF()};
+    CaptionBuilder::apply(cues, p, color, project, false);
+    const QSize size = pixelSize(aspect);
+    RenderOptions options;
+    options.transparent = true;
+    QList<QImage> list;
+    list.reserve(count);
+    for (int i = 0; i < count; ++i)
+        list.append(Renderer::shared().render(project, Micros(cycle * 1'000'000 * i / count), size, options));
+    return list;
+}
+
+} // namespace Preview
 
 // MARK: - Engine
 
