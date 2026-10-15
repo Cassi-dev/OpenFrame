@@ -173,6 +173,48 @@ struct CaptionRevealTests {
         for span in spans { #expect(count(end, in: span, white) > 200) }
     }
 
+    @Test("Digitação: o fundo cresce com o texto digitado, sem pulo, e termina igual ao estático")
+    func typingBackground() {
+        let spans = wordSpans()
+        func boxed(_ reveal: WordReveal, highlight: Bool = true) -> Project {
+            var p = project(reveal: reveal, highlight: highlight)
+            let t = p.tracks.firstIndex { $0.kind == .text }!
+            p.tracks[t].segments[0].text!.style.backgroundEnabled = true
+            p.tracks[t].segments[0].text!.style.backgroundColor = RGBA(1, 0, 0)
+            p.tracks[t].segments[0].text!.style.backgroundPaddingX = 0.3
+            return p
+        }
+        let p = boxed(.type)
+        let red = { (r: Int, g: Int, b: Int) in r > 200 && g < 60 && b < 60 }
+        func last(_ b: Bitmap, _ test: (Int, Int, Int) -> Bool) -> Int {
+            (0..<b.width).last { x in count(b, in: x...x, test) > 0 } ?? -1
+        }
+        func rightEdge(_ t: Micros) -> Int { last(render(p, at: t), red) }
+        // Digitando SOL (S e O já apareceram): o fundo cobre MAR e o começo de SOL, mas não chega ao CEU.
+        let mid = render(p, at: 1_400_000)
+        #expect(count(mid, in: spans[0], red) > 300)
+        #expect(count(mid, in: spans[1].lowerBound...(spans[1].lowerBound + spans[1].count / 3), red) > 100)
+        #expect(count(mid, in: spans[2], red) == 0)
+        // A borda direita só avança e passa por posições intermediárias em volta de cada letra (O em 1,3 s).
+        let times = Array(stride(from: Micros(1_200_000), through: 1_500_000, by: 16_667))
+        let edges = times.map(rightEdge)
+        #expect(zip(edges, edges.dropFirst()).allSatisfy { $0 <= $1 }, "\(edges)")
+        let before = rightEdge(1_200_000)
+        let after = rightEdge(1_500_000)
+        #expect(after - before > 10, "\(before) \(after)")
+        #expect(edges.filter { $0 > before && $0 < after }.count >= 2, "\(before) \(edges) \(after)")
+        // O cursor (na cor do destaque) fica sempre dentro do fundo.
+        for t in Array(stride(from: Micros(0), through: 2_700_000, by: 33_333)) {
+            let b = render(p, at: t)
+            #expect(last(b, blue) < last(b, red) - 2, "\(t): \(last(b, blue)) \(last(b, red))")
+        }
+        // As letras já digitadas não se mexem: MAR igual ao do fim.
+        let end = render(p, at: 3_350_000)
+        #expect(maxDiff(mid, end, in: spans[0]) <= 3)
+        // No fim, o fundo é o da imagem estática.
+        #expect(maxDiff(end, render(boxed(.none, highlight: false), at: 3_350_000), in: 0...(end.width - 1)) <= 3)
+    }
+
     @Test("Texto editado (a contagem não bate): tudo visível, sem revelação", arguments: WordReveal.allCases)
     func edited(reveal: WordReveal) {
         let p = project(text: "MAR SOL CEU AZUL", reveal: reveal)

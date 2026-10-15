@@ -39,6 +39,12 @@ final class TextUnits: @unchecked Sendable {
     let shadowOffset: CGSize
     let shadowBlur: CGFloat
     let characterCount: Int
+    /// Caixa do texto (sem o fundo) e, por linha, o trecho horizontal com letras, nas coordenadas da imagem.
+    var textBox: CGRect = .zero
+    var lineSpans: [ClosedRange<CGFloat>] = []
+    /// Folga e raio do fundo, em pixels (o fundo desenhado é `textBox` com a folga).
+    var backgroundPadding: CGSize = .zero
+    var backgroundRadius: CGFloat = 0
 
     init(size: CGSize, units: [TextUnit], lineBands: [CGRect], background: CIImage?, style: TextStyle,
          fontPx: CGFloat, shadowOffset: CGSize, shadowBlur: CGFloat, characterCount: Int) {
@@ -179,9 +185,16 @@ extension TextRenderer {
             ctx.fillPath()
             background = ctx.makeImage().map(Self.gammaImage)
         }
-        return TextUnits(size: CGSize(width: m.width, height: m.height), units: units, lineBands: bands,
-                         background: background, style: style, fontPx: l.fontPx,
-                         shadowOffset: m.shadowOffset, shadowBlur: m.shadowBlur, characterCount: text.count)
+        let set = TextUnits(size: CGSize(width: m.width, height: m.height), units: units, lineBands: bands,
+                            background: background, style: style, fontPx: l.fontPx,
+                            shadowOffset: m.shadowOffset, shadowBlur: m.shadowBlur, characterCount: text.count)
+        set.textBox = CGRect(origin: pad, size: l.textSize)
+        set.lineSpans = lines.indices.map { k in
+            lineMax[k] > lineMin[k] ? (lineMin[k] + pad.x)...(lineMax[k] + pad.x) : (pad.x)...(pad.x)
+        }
+        set.backgroundPadding = CGSize(width: m.bgX, height: m.bgY)
+        set.backgroundRadius = max(0, CGFloat(style.backgroundRadius)) * l.fontPx
+        return set
     }
 
     /// Desenha as formas recortadas em `box` (coordenadas da caixa de texto) e devolve a imagem
@@ -471,7 +484,13 @@ enum TextMotion {
             shadow = shadow.transformed(by: CGAffineTransform(translationX: set.shadowOffset.width, y: set.shadowOffset.height))
             out = out.composited(over: shadow)
         }
-        if let bg = set.background {
+        // Na digitação, o fundo cresce com o texto digitado; com tudo digitado, é o da imagem estática.
+        var background = set.background
+        if reveal == .type, background != nil {
+            background = typingBackground(times: letterTimes, set: set, shifts: shifts, local: state.local, em: em)
+                ?? background
+        }
+        if let bg = background {
             out = out.composited(over: alpha(bg, state.backgroundAlpha))
         }
         out = out.applyingFilter("CISRGBToneCurveToLinear")
@@ -545,6 +564,67 @@ enum TextMotion {
         let x = last != nil ? unit.cellCenterX + unit.cellWidth / 2 + gap : unit.cellCenterX - unit.cellWidth / 2 - gap - width
         let rect = CGRect(x: x + (shifts[unit.word] ?? 0), y: unit.baseline - 0.12 * em, width: width, height: 0.9 * em)
         return solid(CIImage(color: .white).cropped(to: rect), color)
+    }
+
+    /// Transição do fundo da digitação para cada letra: começa `typingLead` antes de ela aparecer (os instantes são
+    /// conhecidos) e está em ~85% quando ela aparece; a folga do fundo cobre o resto, e o cursor não sai do fundo.
+    static let typingGrow: Micros = 80_000
+    static let typingLead: Micros = 60_000
+
+    /// Fundo da digitação no instante: a caixa das letras já digitadas (até o cursor), com a folga e o raio do
+    /// fundo do estilo. Cada letra empurra as bordas da caixa anterior até a sua, com smoothstep em `typingGrow`;
+    /// os empurrões se somam, então o fundo não volta nem pula quando as letras chegam mais rápido que isso. Nil
+    /// quando já chegou à caixa inteira (o fundo da imagem estática).
+    static func typingBackground(times: [Micros], set: TextUnits, shifts: [Int: CGFloat], local: Micros,
+                                 em: CGFloat) -> CIImage? {
+        guard !set.units.isEmpty, times.count == set.units.count, !set.textBox.isEmpty,
+              set.lineSpans.count == set.lineBands.count else { return nil }
+        let ordered = set.units.indices.sorted { set.units[$0].character < set.units[$1].character }
+        guard let last = ordered.last, local < times[last] - typingLead + typingGrow else { return nil }
+        let box = set.textBox
+        let gap = 0.05 * em
+        let width = max(1.5, 0.07 * em)
+        // Base da faixa da linha `k`: entre ela e a seguinte; a última vai até a base da caixa.
+        func bottom(_ k: Int) -> CGFloat {
+            guard k + 1 < set.lineBands.count else { return box.minY }
+            return min(box.maxY, max(box.minY, (set.lineBands[k].minY + set.lineBands[k + 1].maxY) / 2))
+        }
+        // Bordas (esquerda, base, direita) da caixa com as letras até a posição `p` de `ordered`
+        // (-1: só o cursor antes da primeira; a última: a caixa inteira). O topo é sempre o da caixa.
+        func reach(_ p: Int) -> (left: CGFloat, bottom: CGFloat, right: CGFloat) {
+            if p >= ordered.count - 1 { return (box.minX, box.minY, box.maxX) }
+            if p < 0 {
+                let u = set.units[ordered[0]]
+                let x = u.cellCenterX - u.cellWidth / 2 - gap - width + (shifts[u.word] ?? 0)
+                return (x, bottom(u.line), x + width)
+            }
+            let u = set.units[ordered[p]]
+            let k = min(u.line, set.lineSpans.count - 1)
+            let cursor = min(box.maxX, u.cellCenterX + u.cellWidth / 2 + gap + width + (shifts[u.word] ?? 0))
+            let left = set.lineSpans[0...k].map(\.lowerBound).min()!
+            let right = max(cursor, set.lineSpans[0..<k].map(\.upperBound).max() ?? -.infinity)
+            return (left, bottom(k), right)
+        }
+        var edges = reach(-1)
+        var previous = edges
+        for (p, i) in ordered.enumerated() {
+            let next = reach(p)
+            defer { previous = next }
+            let x = Animations.clamp(Double(local - times[i] + typingLead) / Double(typingGrow))
+            guard x > 0 else { continue }
+            let e = CGFloat(x * x * (3 - 2 * x))
+            edges.left += (next.left - previous.left) * e
+            edges.bottom += (next.bottom - previous.bottom) * e
+            edges.right += (next.right - previous.right) * e
+        }
+        let rect = CGRect(x: edges.left, y: edges.bottom, width: max(0, edges.right - edges.left),
+                          height: box.maxY - edges.bottom)
+            .insetBy(dx: -set.backgroundPadding.width, dy: -set.backgroundPadding.height)
+        let radius = min(set.backgroundRadius, min(rect.width, rect.height) / 2)
+        guard let shape = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+            "inputExtent": CIVector(cgRect: rect), "inputRadius": radius, "inputColor": CIColor.white,
+        ])?.outputImage else { return nil }
+        return solid(shape, set.style.backgroundColor)
     }
 
     // MARK: - Destaque da palavra
