@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDir>
+#include <QImage>
 #include <QObject>
 #include <deque>
 #include <functional>
@@ -45,10 +46,14 @@ private:
     using Step = std::function<void()>;
     /// Agenda `step` depois de `ms` milissegundos, na ordem.
     void then(int ms, Step step);
-    /// Espera `done` ficar verdadeiro (conferindo a cada 200 ms, até `timeoutMs`).
-    void waitUntil(std::function<bool()> done, int timeoutMs);
+    /// Espera `done` ficar verdadeiro (conferindo a cada 200 ms, até `timeoutMs`). Se
+    /// `required`, esgotar o tempo é uma falha (`what` diz o que se esperava).
+    void waitUntil(std::function<bool()> done, int timeoutMs, const QString &what = {}, bool required = true);
     void next();
+    /// Sai com 1 se houve falha: a CI não pode passar verde com capturas vazias.
     void finish();
+    /// Registra a falha, descarta os passos que dependiam dela e encerra.
+    void fail(const QString &message);
 
     void homeScenario();
     void mediaScenario(const QString &mediaDir);
@@ -66,6 +71,9 @@ private:
     /// Recorte do item `objectName` (com `above` px acima, para o título e as abas).
     void captureItem(const QString &objectName, const QString &name, int above = 0);
     void scrollInspector(double fraction);
+    /// Folha de quadros: uma linha por tira (rótulo + `columns` quadros espaçados),
+    /// para conferir a animação das miniaturas sem tocar.
+    void saveFrameSheet(const QString &name, const QList<std::pair<QString, QList<QImage>>> &rows, int columns);
     /// Rola o inspetor até o item `objectName`, deixando `above` pt acima dele.
     void scrollInspectorTo(const QString &objectName, qreal above = 0);
     QQuickWindow *window() const;
@@ -80,8 +88,11 @@ private:
         Step step;
         std::function<bool()> until;
         int timeoutMs = 0;
+        QString what;
+        bool required = true;
     };
     std::deque<Pending> m_steps;
+    int m_failures = 0;
 };
 
 } // namespace of
