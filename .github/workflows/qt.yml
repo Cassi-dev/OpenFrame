@@ -1,8 +1,6 @@
 # Versão Windows/Linux (qt/): compila, roda os testes do núcleo e as capturas
 # offscreen do app em Windows (MSVC) e Ubuntu, e gera os pacotes (instalador e
 # zip portátil no Windows, AppImage no Linux). Capturas e pacotes ficam nos artefatos.
-# Por enquanto, o modelo do Whisper e as capturas de motion e legendas só rodam
-# no Linux (no Windows, depois de combinar).
 name: Qt (Windows e Linux)
 
 on:
@@ -124,15 +122,14 @@ jobs:
           "$root/bin/ffmpeg" -hide_banner -version | head -n 1
 
       - name: Cache do modelo Whisper (base)
-        if: runner.os == 'Linux'
         id: whisper-cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/whisper-models
-          key: whisper-ggml-base-${{ env.WHISPER_BASE_SHA256 }}
+          key: whisper-ggml-base-${{ runner.os }}-${{ env.WHISPER_BASE_SHA256 }}
 
       - name: Baixar o modelo Whisper (base)
-        if: runner.os == 'Linux' && steps.whisper-cache.outputs.cache-hit != 'true'
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/whisper-models"
           cd "$RUNNER_TEMP/whisper-models"
@@ -143,9 +140,10 @@ jobs:
       # Com OPENFRAME_REQUIRE_WHISPER_MODEL, o teste de transcrição falha em vez
       # de pular quando o modelo falta: na CI o pulo não pode acontecer.
       - name: Modelo Whisper no ambiente
-        if: runner.os == 'Linux'
         run: |
-          echo "OPENFRAME_MODELS_DIR=$RUNNER_TEMP/whisper-models" >> "$GITHUB_ENV"
+          models="$RUNNER_TEMP/whisper-models"
+          if [[ "$RUNNER_OS" == Windows ]]; then models=$(cygpath -m "$models"); fi
+          echo "OPENFRAME_MODELS_DIR=$models" >> "$GITHUB_ENV"
           echo "OPENFRAME_REQUIRE_WHISPER_MODEL=1" >> "$GITHUB_ENV"
           ls -l "$RUNNER_TEMP/whisper-models"
 
@@ -182,7 +180,7 @@ jobs:
         env:
           OPENFRAME_QPA: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           OPENFRAME_SOFTWARE: ${{ runner.os == 'Windows' && '1' || '' }}
-          OPENFRAME_CAPTURAS_MOTION: ${{ runner.os == 'Linux' && '1' || '' }}
+          OPENFRAME_CAPTURAS_MOTION: "1"
         run: .github/scripts/capturas.sh "${{ matrix.app }}" capturas
 
       - name: Publicar as capturas
