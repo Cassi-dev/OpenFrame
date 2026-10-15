@@ -1,5 +1,7 @@
 #include "Snapshot.h"
 
+#include "CanvasOverlay.h"
+#include "CaptionsCore.h"
 #include "EditorModel.h"
 #include "ProjectStore.h"
 
@@ -8,6 +10,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QJsonDocument>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -175,6 +178,17 @@ void Snapshot::captureItem(const QString &objectName, const QString &name, int a
     log(name);
 }
 
+void Snapshot::scrollInspectorTo(const QString &objectName, qreal above)
+{
+    QQuickItem *flick = findItem(QStringLiteral("inspectorScroll"));
+    QQuickItem *item = findItem(objectName);
+    auto *content = flick ? flick->property("contentItem").value<QQuickItem *>() : nullptr;
+    if (!content || !item)
+        return;
+    const qreal travel = std::max<qreal>(0, flick->property("contentHeight").toReal() - flick->height());
+    flick->setProperty("contentY", std::clamp<qreal>(item->mapToItem(content, QPointF()).y() - above, 0, travel));
+}
+
 void Snapshot::scrollInspector(double fraction)
 {
     QQuickItem *flick = findItem(QStringLiteral("inspectorScroll"));
@@ -226,7 +240,13 @@ void Snapshot::mediaScenario(const QString &mediaDir)
         log(QStringLiteral("projeto: %1 materiais, %2 clipes").arg(p.materials.size()).arg(m_model->clipCount()));
     });
     then(2000, [] {});
-    editorScenario();
+    const QString scenario = qEnvironmentVariable("OPENFRAME_SNAPSHOT_SCENARIO");
+    if (scenario == "motion")
+        motionScenario();
+    else if (scenario == "legendas")
+        captionsScenario();
+    else
+        editorScenario();
 }
 
 void Snapshot::editorScenario()
@@ -492,6 +512,498 @@ void Snapshot::dragScenario()
                 m_model->undo();
         });
     }
+}
+
+// MARK: - Motion (manipulação no preview e aba Animação)
+
+void Snapshot::canvasDrag(QPointF from, QPointF to, bool snapping, bool release)
+{
+    auto *overlay = qobject_cast<CanvasOverlay *>(findItem(QStringLiteral("canvasOverlay")));
+    if (!overlay) {
+        log("motion: overlay não encontrado");
+        return;
+    }
+    const CanvasMapping mapping = overlay->mapping();
+    m_model->canvasPointerDown(from, mapping);
+    const int steps = 12;
+    for (int i = 1; i <= steps; ++i)
+        m_model->canvasPointerMoved(from + (to - from) * (double(i) / steps), mapping, snapping);
+    if (release)
+        m_model->canvasPointerUp();
+}
+
+void Snapshot::motionScenario()
+{
+    struct Probe {
+        Snapshot *self;
+        CanvasOverlay *overlay() const
+        {
+            return qobject_cast<CanvasOverlay *>(self->findItem(QStringLiteral("canvasOverlay")));
+        }
+        std::optional<SelectionFrame> frame() const
+        {
+            auto *o = overlay();
+            return o ? self->m_model->selectionFrame(o->mapping()) : std::nullopt;
+        }
+        QString describe() const
+        {
+            const auto id = self->m_model->selectionId();
+            const auto seg = id ? self->m_model->project().segment(*id) : std::nullopt;
+            if (!seg)
+                return QStringLiteral("sem seleção");
+            if (seg->text) {
+                const TextStyle &st = seg->text->style;
+                return QStringLiteral("texto x %1 y %2 escala %3 rotação %4 maxWidth %5")
+                    .arg(st.x, 0, 'f', 3).arg(st.y, 0, 'f', 3).arg(st.scale, 0, 'f', 3)
+                    .arg(st.rotation, 0, 'f', 1).arg(st.maxWidth, 0, 'f', 3);
+            }
+            const Transform &t = seg->transform;
+            return QStringLiteral("clipe x %1 y %2 escala %3 rotação %4")
+                .arg(t.x, 0, 'f', 3).arg(t.y, 0, 'f', 3).arg(t.scale, 0, 'f', 3).arg(t.rotation, 0, 'f', 1);
+        }
+    };
+    auto probe = std::make_shared<Probe>(Probe{this});
+    // Passos de desfazer disponíveis (desfaz tudo e refaz de volta).
+    auto countUndo = [this] {
+        const QString selection = m_model->selection();
+        const Micros playhead = m_model->playheadMicros();
+        int n = 0;
+        while (m_model->canUndo() && n < 400) {
+            m_model->undo();
+            ++n;
+        }
+        for (int i = 0; i < n; ++i)
+            m_model->redo();
+        m_model->seekMicros(playhead);
+        m_model->setSelection(selection);
+        return n;
+    };
+
+    then(0, [this] {
+        m_model->seek(1.0);
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        m_model->setInspectorTab("text");
+    });
+    then(1200, [this, probe] {
+        if (auto *o = probe->overlay())
+            log(QStringLiteral("motion: overlay %1×%2 pt, preview com lado menor %3 px")
+                    .arg(o->width()).arg(o->height()).arg(m_model->previewShortSide()));
+        log("motion: " + probe->describe());
+        capture("motion-1-selecao-texto");
+    });
+    then(0, [this] { m_model->setSelection(firstMainSegment(m_model->project())); });
+    then(800, [this, probe] {
+        log("motion: " + probe->describe() + (probe->frame() && probe->frame()->resizesWidth
+                                                  ? ", com alças laterais" : ", sem alças laterais"));
+        capture("motion-2-selecao-video");
+    });
+
+    // Giro pela alça, com a etiqueta de graus (gesto aberto na captura).
+    then(0, [this, probe, countUndo] {
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        const int before = countUndo();
+        const auto f = probe->frame();
+        if (!f)
+            return log("motion: texto fora do playhead");
+        const QPointF knob = f->rotationHandle();
+        const QPointF to = f->center + SelectionFrame::rotate(knob - f->center, 32);
+        canvasDrag(knob, to, true, false);
+        log(QStringLiteral("motion: girando, etiqueta %1°, desfazer antes: %2")
+                .arg(m_model->canvasRotationLabel().value_or(-999), 0, 'f', 0).arg(before));
+    });
+    then(500, [this] { capture("motion-3-girando"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois do giro, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+    });
+
+    // Escala pelo canto inferior direito, para fora.
+    then(300, [this, probe] {
+        const auto f = probe->frame();
+        if (!f)
+            return;
+        const QPointF corner = f->corners[2];
+        canvasDrag(corner, corner + (corner - f->center) * 0.35, true, false);
+    });
+    then(500, [this] { capture("motion-4-escala"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois da escala, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+    });
+
+    // Mover o corpo perto do centro (com ímã: guias quando o núcleo tiver o Snapping) e com Ctrl.
+    then(300, [this, probe] {
+        const auto f = probe->frame();
+        auto *o = probe->overlay();
+        if (!f || !o)
+            return;
+        const QPointF target(o->width() / 2 + 3, o->height() / 2 + 2);
+        canvasDrag(f->center, target, true, false);
+        log(QStringLiteral("motion: movendo com ímã, %1 guias; ").arg(m_model->canvasGuides().size()) + probe->describe());
+    });
+    then(500, [this] { capture("motion-5-movendo"); });
+    then(0, [this, probe] {
+        auto *o = probe->overlay();
+        if (!o || !m_model->placementDrag())
+            return;
+        m_model->canvasPointerMoved(QPointF(o->width() / 2 + 3, o->height() / 2 + 2), o->mapping(), false);
+        log(QStringLiteral("motion: mesmo ponto com Ctrl (sem ímã), %1 guias; ").arg(m_model->canvasGuides().size())
+            + probe->describe());
+        m_model->canvasPointerUp();
+    });
+
+    // Largura pela alça lateral direita: etiqueta "N%".
+    then(300, [this, probe, countUndo] {
+        const int before = countUndo();
+        const auto f = probe->frame();
+        if (!f)
+            return;
+        const QPointF edge = f->edgeHandle(EdgeSide::Right);
+        log(QStringLiteral("motion: alça sob o ponto da direita = %1")
+                .arg(f->handle(edge) && f->handle(edge)->kind == OverlayHandle::Kind::Edge ? "lateral" : "outra"));
+        canvasDrag(edge, edge + f->right() * 70, true, false);
+        log(QStringLiteral("motion: largura arrastando, etiqueta %1, desfazer antes %2")
+                .arg(m_model->canvasWidthDrag() ? m_model->canvasWidthDrag()->label() : "-").arg(before));
+    });
+    then(500, [this] { capture("motion-6-largura"); });
+    then(0, [this, probe, countUndo] {
+        m_model->canvasPointerUp();
+        log("motion: depois da largura, " + probe->describe() + QStringLiteral(", desfazer: %1").arg(countUndo()));
+        m_model->undo();
+        log("motion: um desfazer, " + probe->describe());
+        m_model->redo();
+    });
+
+    // Duplo clique no texto abre a aba Texto; clique fora tira a seleção.
+    then(300, [this, probe] {
+        auto *o = probe->overlay();
+        const auto f = probe->frame();
+        if (!o || !f)
+            return;
+        const QPointF center = f->center;
+        m_model->setInspectorTab("basic");
+        m_model->setSelection({});
+        m_model->canvasPointerDown(center, o->mapping(), 2);
+        m_model->canvasPointerUp();
+        log(QStringLiteral("motion: duplo clique no texto → aba %1, seleção %2")
+                .arg(m_model->inspectorTab(), m_model->selection().isEmpty() ? "vazia" : "o texto"));
+    });
+
+    // Aba Animação: texto (todos os tipos) e vídeo (sem os só de texto).
+    then(300, [this] {
+        m_model->seek(1.0);
+        m_model->setSelection(firstOfKind(m_model->project(), TrackKind::Text));
+        m_model->setInspectorTab("animation");
+    });
+    then(1000, [this] {
+        log(QStringLiteral("motion: animações de texto %1, de vídeo %2, loops %3")
+                .arg(m_model->animationOptions(true).size()).arg(m_model->animationOptions(false).size())
+                .arg(m_model->loopOptions().size()));
+        capture("motion-8-animacao-texto");
+    });
+    // Escolher toca o trecho e volta ao playhead.
+    then(0, [this] {
+        log(QStringLiteral("motion: escolhendo a entrada com o playhead em %1").arg(m_model->playheadText()));
+        m_model->setAnimation("in", "zoomIn");
+        log(QStringLiteral("motion: tocando o trecho = %1, playhead %2")
+                .arg(m_model->isPlaying() ? "sim" : "não", m_model->playheadText()));
+    });
+    then(400, [this] { capture("motion-9-animacao-tocando"); });
+    waitUntil([this] { return !m_model->isPlaying(); }, 5000);
+    then(300, [this] {
+        log(QStringLiteral("motion: depois do trecho, playhead %1, entrada %2")
+                .arg(m_model->playheadText(),
+                     m_model->selectedSegment().value("animationIn").toMap().value("kind").toString()));
+        m_model->setLoop("pulse");
+    });
+    waitUntil([this] { return !m_model->isPlaying(); }, 8000);
+    then(300, [this] { scrollInspector(1); });
+    then(500, [this] {
+        log("motion: loop " + QString::fromUtf8(QJsonDocument::fromVariant(m_model->selectedSegment().value("loop"))
+                                                    .toJson(QJsonDocument::Compact)));
+        capture("motion-10-animacao-loop");
+        scrollInspector(0);
+    });
+    then(0, [this] {
+        m_model->setSelection(firstMainSegment(m_model->project()));
+        m_model->setInspectorTab("animation");
+    });
+    then(800, [this] { capture("motion-11-animacao-video"); });
+
+    // Na reprodução, o contorno some e o clique não responde.
+    then(300, [this] { m_model->togglePlay(); });
+    then(700, [this, probe] {
+        log(QStringLiteral("motion: reproduzindo, contorno %1").arg(probe->frame() ? "visível" : "escondido"));
+        capture("motion-7-reproduzindo");
+        m_model->togglePlay();
+    });
+}
+
+// MARK: - Legendas automáticas (janela, estilos no preview, painel e inspetor)
+
+namespace {
+
+/// Faixa automática de legendas, ou nada.
+const Track *autoCaptionTrack(const Project &p)
+{
+    for (const auto &t : p.tracks)
+        if (t.isAutoCaptions && !t.segments.isEmpty())
+            return &t;
+    return nullptr;
+}
+
+/// Legenda `index` da faixa automática (a última, se faltar), ou nada.
+std::optional<Segment> autoCaption(const Project &p, int index)
+{
+    const Track *t = autoCaptionTrack(p);
+    if (!t)
+        return std::nullopt;
+    return t->segments[std::min<qsizetype>(index, t->segments.size() - 1)];
+}
+
+/// Primeira legenda com U+00A0 (quebra suave), ou a segunda.
+std::optional<Segment> captionWithGlue(const Project &p)
+{
+    if (const Track *t = autoCaptionTrack(p))
+        for (const auto &s : t->segments)
+            if (s.text && s.text->text.contains(QChar(0xA0)))
+                return s;
+    return autoCaption(p, 1);
+}
+
+} // namespace
+
+void Snapshot::captionsScenario()
+{
+    CaptionGeneration *gen = m_model->captions();
+    // A segunda legenda, a 45% dela: no meio da fala, com palavras antes e depois.
+    auto seekMidCaption = [this] {
+        const auto seg = autoCaption(m_model->project(), 1);
+        if (!seg)
+            return log("legendas: sem faixa automática");
+        m_model->seekMicros(seg->targetStart + seg->targetDuration() * 45 / 100);
+    };
+    auto generate = [this, gen](const QString &preset) {
+        gen->setPreset(preset);
+        gen->setReplacePrevious(m_model->hasAutoCaptions());
+        m_model->generateCaptions();
+    };
+
+    // Janela: opções, modelos e os cartões dos estilos. Sem o texto padrão do projeto,
+    // que ficaria por cima das legendas nas capturas.
+    then(0, [this, gen] {
+        m_model->deleteCaption(firstOfKind(m_model->project(), TrackKind::Text));
+        m_model->setSelection({});
+        m_model->presentAutoCaptions();
+        gen->setLanguage(QStringLiteral("pt"));
+        log(QStringLiteral("legendas: modelo sugerido %1, problema da fonte \"%2\"")
+                .arg(gen->model(), m_model->captionSourceProblem()));
+    });
+    then(1200, [this] { capture("legendas-1-janela"); });
+    auto scrollForm = [this] {
+        if (QQuickItem *form = findItem(QStringLiteral("captionsForm")))
+            form->setProperty("contentY", std::max<qreal>(0, form->property("contentHeight").toReal() - form->height()));
+    };
+    then(0, [gen] { gen->setPreset(QStringLiteral("highlight")); });
+    then(400, [this, gen, scrollForm] {
+        scrollForm();
+        log(QStringLiteral("legendas: estilo %1, usa a cor do destaque = %2")
+                .arg(gen->preset(), gen->usesAccent() ? "sim" : "não"));
+    });
+    then(800, [this] { capture("legendas-2-estilos"); });
+    then(0, [this, gen, scrollForm] {
+        gen->setPreset(QStringLiteral("cinema"));
+        scrollForm();
+        log(QStringLiteral("legendas: estilo %1, usa a cor do destaque = %2")
+                .arg(gen->preset(), gen->usesAccent() ? "sim" : "não"));
+    });
+    then(500, [this] { capture("legendas-3-estilo-sem-destaque"); });
+
+    // Estados: baixando (simulado, o download real chega com a etapa 3), erro do download, gerando, pronto.
+    then(0, [gen] {
+        gen->setIncludesDownload(true);
+        gen->setPhase(QStringLiteral("downloading"), 0.42);
+    });
+    then(500, [this] { capture("legendas-4-baixando"); });
+    then(0, [this, gen] {
+        gen->backToOptions();
+        gen->setModel(QStringLiteral("small"));
+        log(QStringLiteral("legendas: small instalado = %1").arg(gen->engine()->isInstalled("small") ? "sim" : "não"));
+        m_model->generateCaptions();
+    });
+    waitUntil([gen] { return gen->phase() == "failed"; }, 3000);
+    then(300, [this, gen] {
+        log("legendas: erro = " + gen->error());
+        capture("legendas-5-erro");
+        gen->backToOptions();
+        gen->setModel(QStringLiteral("base"));
+        log(QStringLiteral("legendas: base instalado = %1").arg(gen->engine()->isInstalled("base") ? "sim" : "não"));
+    });
+    then(0, [generate] { generate(QStringLiteral("highlight")); });
+    waitUntil([gen] { return gen->phase() == "transcribing"; }, 3000);
+    then(0, [this, gen] {
+        log(QStringLiteral("legendas: %1, %2%").arg(gen->phase()).arg(qRound(gen->progress() * 100)));
+        capture("legendas-6-transcrevendo");
+    });
+    waitUntil([gen] { return !gen->running(); }, 5000);
+    then(300, [this, gen] {
+        log(QStringLiteral("legendas: fase %1, %2 legendas, erro \"%3\"")
+                .arg(gen->phase()).arg(gen->resultCount()).arg(gen->error()));
+        capture("legendas-7-pronto");
+    });
+
+    // Cancelar no meio volta às opções e não mexe no projeto.
+    then(0, [this, generate] {
+        const int before = autoCaptionTrack(m_model->project()) ? autoCaptionTrack(m_model->project())->segments.size() : 0;
+        generate(QStringLiteral("punch"));
+        m_model->cancelCaptionGeneration();
+        log(QStringLiteral("legendas: cancelado, fase %1, legendas %2 → %3")
+                .arg(m_model->captions()->phase()).arg(before)
+                .arg(autoCaptionTrack(m_model->project()) ? autoCaptionTrack(m_model->project())->segments.size() : 0));
+    });
+
+    // Cada estilo no preview, no meio da fala (a substituir as anteriores).
+    const auto presets = CaptionsCore::presets();
+    for (qsizetype i = 0; i < presets.size(); ++i) {
+        const QString id = presets[i].id;
+        const QString name = QStringLiteral("legendas-estilo-%1-%2").arg(i + 1, 2, 10, QLatin1Char('0')).arg(id);
+        then(400, [generate, id] { generate(id); });
+        waitUntil([gen] { return !gen->running(); }, 5000);
+        then(0, [this, seekMidCaption] {
+            m_model->closeAutoCaptions();
+            m_model->setSelection({});
+            seekMidCaption();
+        });
+        then(900, [this, id, name] {
+            const Track *t = autoCaptionTrack(m_model->project());
+            log(QStringLiteral("legendas: %1, %2 legendas na faixa, %3 faixas automáticas")
+                    .arg(id).arg(t ? t->segments.size() : 0)
+                    .arg(std::count_if(m_model->project().tracks.begin(), m_model->project().tracks.end(),
+                                       [](const Track &k) { return k.isAutoCaptions; })));
+            captureItem(QStringLiteral("canvasOverlay"), name);
+        });
+        then(0, [this] { m_model->presentAutoCaptions(); });
+    }
+    // Painel Legendas: lista, edição em linha (com o U+00A0, que o Frases usa) e a lixeira.
+    then(400, [generate] { generate(QStringLiteral("phrases")); });
+    waitUntil([gen] { return !gen->running(); }, 5000);
+    then(300, [this] {
+        m_model->closeAutoCaptions();
+        m_model->setLibraryPanel(QStringLiteral("captions"));
+        m_model->setLibraryVisible(true);
+        const auto seg = captionWithGlue(m_model->project());
+        if (!seg)
+            return;
+        m_model->setSelection(ProjectStore::uuidString(seg->id));
+        if (QQuickItem *panel = findItem(QStringLiteral("captionsPanel")))
+            panel->setProperty("editingId", ProjectStore::uuidString(seg->id));
+    });
+    then(800, [this] {
+        capture("legendas-8-painel-editando");
+        const auto seg = captionWithGlue(m_model->project());
+        if (!seg || !seg->text)
+            return;
+        const QString id = ProjectStore::uuidString(seg->id);
+        const QString before = seg->text->text;
+        m_model->setCaptionText(id, QStringLiteral("  ") + before + QStringLiteral(" (editada) "));
+        const QString after = m_model->project().segment(seg->id)->text->text;
+        log(QStringLiteral("legendas: editada \"%1\" → \"%2\", U+00A0 %3 → %4")
+                .arg(QString(before).replace(QChar(0xA0), u'·').replace(u'\n', u'/'),
+                     QString(after).replace(QChar(0xA0), u'·').replace(u'\n', u'/')).arg(before.count(QChar(0xA0))).arg(after.count(QChar(0xA0))));
+        if (QQuickItem *panel = findItem(QStringLiteral("captionsPanel")))
+            panel->setProperty("editingId", QString());
+        const int count = autoCaptionTrack(m_model->project())->segments.size();
+        const auto last = autoCaption(m_model->project(), 999);
+        m_model->deleteCaption(ProjectStore::uuidString(last->id));
+        log(QStringLiteral("legendas: lixeira, %1 → %2 legendas")
+                .arg(count).arg(autoCaptionTrack(m_model->project())->segments.size()));
+        m_model->setSelection(id);
+    });
+    then(600, [this] { capture("legendas-9-painel"); });
+
+    // Inspetor da legenda: o destaque com a revelação (Leitura guiada), depois a
+    // palavra-chave e a largura da caixa (Editorial).
+    auto inspectCaption = [this, gen, generate, seekMidCaption](const QString &preset) {
+        then(0, [this, generate, preset] {
+            m_model->presentAutoCaptions();
+            generate(preset);
+        });
+        waitUntil([gen] { return !gen->running(); }, 5000);
+        then(0, [this, seekMidCaption] {
+            m_model->closeAutoCaptions();
+            m_model->setLibraryVisible(false);
+            seekMidCaption();
+            if (const auto seg = autoCaption(m_model->project(), 1))
+                m_model->setSelection(ProjectStore::uuidString(seg->id));
+            m_model->setInspectorTab("text");
+        });
+    };
+    auto describeText = [this](const QString &key) {
+        return QString::fromUtf8(
+            QJsonDocument::fromVariant(m_model->selectedSegment().value("text").toMap().value(key))
+                .toJson(QJsonDocument::Compact));
+    };
+    inspectCaption(QStringLiteral("guided"));
+    then(800, [this, describeText] {
+        const QVariantMap seg = m_model->selectedSegment();
+        log(QStringLiteral("legendas: selecionada, legenda automática = %1, palavras %2, destaque ativo = %3, "
+                           "destaque %4")
+                .arg(seg.value("isAutoCaption").toBool() ? "sim" : "não")
+                .arg(seg.value("wordList").toStringList().join(u'|'))
+                .arg(seg.value("highlightActive").toBool() ? "sim" : "não")
+                .arg(describeText("highlight")));
+        log(QStringLiteral("legendas: revelações %1").arg(m_model->revealOptions().size()));
+        scrollInspectorTo(QStringLiteral("highlightSection"), 40);
+    });
+    then(600, [this] { capture("legendas-10-inspetor-destaque"); });
+
+    inspectCaption(QStringLiteral("editorial"));
+    then(800, [this, describeText] {
+        log("legendas: ênfase " + describeText("emphasis"));
+        m_model->toggleEmphasisWord(0);
+        log("legendas: ênfase depois de ligar a palavra 0: " + describeText("emphasis"));
+        scrollInspectorTo(QStringLiteral("emphasisSection"), 40);
+    });
+    then(600, [this] { capture("legendas-11-inspetor-palavra-chave"); });
+    then(0, [this] { scrollInspector(1); });
+    then(600, [this] { capture("legendas-12-inspetor-largura"); });
+
+    // Largura pela alça do preview: "N% · todas as legendas", e vale para a faixa toda.
+    then(0, [this] {
+        auto *o = qobject_cast<CanvasOverlay *>(findItem(QStringLiteral("canvasOverlay")));
+        const auto f = o ? m_model->selectionFrame(o->mapping()) : std::nullopt;
+        if (!f)
+            return log("legendas: sem contorno na legenda");
+        const QPointF edge = f->edgeHandle(EdgeSide::Right);
+        canvasDrag(edge, edge - f->right() * 40, true, false);
+        log(QStringLiteral("legendas: largura arrastando, etiqueta \"%1\"")
+                .arg(m_model->canvasWidthDrag() ? m_model->canvasWidthDrag()->label() : "-"));
+    });
+    then(500, [this] { capture("legendas-13-largura-alca"); });
+    then(0, [this] {
+        m_model->canvasPointerUp();
+        QStringList widths;
+        if (const Track *t = autoCaptionTrack(m_model->project()))
+            for (const auto &s : t->segments)
+                if (s.text && !widths.contains(QString::number(s.text->style.maxWidth, 'f', 3)))
+                    widths << QString::number(s.text->style.maxWidth, 'f', 3);
+        log("legendas: larguras na faixa depois do gesto: " + widths.join(", "));
+    });
+    then(600, [this] { capture("legendas-14-depois-da-largura"); });
+
+    // "Aplicar este estilo a todas": copia o destaque (reveal/dimOpacity) e o estilo da ênfase, sem os índices.
+    then(0, [this] {
+        m_model->setSegmentValue(QStringLiteral("text.style.fontSize"), 0.09);
+        m_model->applyStyleToAutoCaptions();
+        int same = 0, total = 0;
+        if (const Track *t = autoCaptionTrack(m_model->project()))
+            for (const auto &s : t->segments)
+                if (s.text) {
+                    ++total;
+                    same += qFuzzyCompare(s.text->style.fontSize, 0.09) ? 1 : 0;
+                }
+        log(QStringLiteral("legendas: aplicar a todas, fontSize 0,09 em %1 de %2").arg(same).arg(total));
+    });
 }
 
 } // namespace of

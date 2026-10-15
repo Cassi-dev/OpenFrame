@@ -38,11 +38,21 @@ qt_add_qml_module(OpenFrame
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml/OpenFrame"
     QML_FILES ${OPENFRAME_QML}
     SOURCES
+        AnimationThumbs.h AnimationThumbs.cpp
+        CanvasCore.h CanvasCore.cpp
+        CaptionGeneration.h CaptionGeneration.cpp
+        CaptionsCore.h CaptionsCore.cpp
+        CanvasGeometry.h CanvasGeometry.cpp
+        CanvasOverlay.h CanvasOverlay.cpp
         CoreBridge.h CoreBridge.cpp
+        EditorCanvas.cpp
+        EditorCaptions.cpp
         EditorModel.h EditorModel.cpp
+        EditorMotion.cpp
         FilterPreviews.h FilterPreviews.cpp
         KeyedListModel.h KeyedListModel.cpp
         MediaCache.h MediaCache.cpp
+        MotionCore.h MotionCore.cpp
         PaintedItems.h PaintedItems.cpp
         Snapshot.h Snapshot.cpp
         TextPresets.h TextPresets.cpp

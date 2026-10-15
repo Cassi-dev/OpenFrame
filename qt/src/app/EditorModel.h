@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CanvasGeometry.h"
+#include "CaptionGeneration.h"
 #include "ExportSettings.h"
 #include "KeyedListModel.h"
 #include "Project.h"
@@ -93,6 +95,17 @@ class EditorModel : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage WRITE setErrorMessage NOTIFY uiChanged)
     /// Diálogos e menus abertos no QML: as teclas do editor ficam desligadas.
     Q_PROPERTY(int modalCount READ modalCount WRITE setModalCount NOTIFY uiChanged)
+
+    // Legendas automáticas (EditorCaptions.cpp)
+    Q_PROPERTY(CaptionGeneration *captions READ captions CONSTANT)
+    Q_PROPERTY(bool showAutoCaptions READ showAutoCaptions WRITE setShowAutoCaptions NOTIFY uiChanged)
+    /// Por que a fonte escolhida não pode ser transcrita (vazio = pode).
+    Q_PROPERTY(QString captionSourceProblem READ captionSourceProblem NOTIFY captionStateChanged)
+    /// O selecionado é um clipe com áudio (fonte "Clipe selecionado").
+    Q_PROPERTY(bool clipWithAudio READ clipWithAudio NOTIFY captionStateChanged)
+    Q_PROPERTY(bool hasAutoCaptions READ hasAutoCaptions NOTIFY captionStateChanged)
+    /// O selecionado é uma legenda automática ("Aplicar este estilo a todas").
+    Q_PROPERTY(bool selectionIsAutoCaption READ selectionIsAutoCaption NOTIFY captionStateChanged)
 
     // Reprodução
     Q_PROPERTY(qreal playhead READ playhead NOTIFY playheadChanged)
@@ -282,6 +295,14 @@ public:
     Q_INVOKABLE QVariantList effectOptions() const;
     Q_INVOKABLE QVariantList transitionOptions() const;
     Q_INVOKABLE QVariantList animationOptions(bool text) const;
+    // Aba Animação (EditorMotion.cpp)
+    Q_INVOKABLE QVariantList loopOptions() const;
+    /// `kind` vazio tira o loop. Escolher toca dois ciclos no preview.
+    Q_INVOKABLE void setLoop(const QString &kind);
+    /// "periodSeconds" (0,5…6) ou "intensity" (0…1).
+    Q_INVOKABLE void setLoopValue(const QString &key, qreal value);
+    /// Toca o trecho uma vez e volta ao ponto em que o playhead estava (prévia de um efeito).
+    void playExcerpt(Micros start, Micros end);
     Q_INVOKABLE QVariantList textPresets() const;
 
     // Reprodução
@@ -327,6 +348,66 @@ public:
     /// Teclas do editor (espaço, Delete, Esc, setas, Home/End, Shift+Z).
     bool handleKey(int key, Qt::KeyboardModifiers modifiers);
 
+    // Legendas automáticas (EditorCaptions.cpp)
+    CaptionGeneration *captions() const { return m_captions; }
+    bool showAutoCaptions() const { return m_showAutoCaptions; }
+    void setShowAutoCaptions(bool show);
+    QString captionSourceProblem() const;
+    bool clipWithAudio() const;
+    bool hasAutoCaptions() const;
+    bool selectionIsAutoCaption() const;
+    /// Abre a janela: volta às opções (se não estiver gerando), idioma do sistema na primeira vez.
+    Q_INVOKABLE void presentAutoCaptions();
+    /// Baixa o modelo se faltar, transcreve, monta as legendas e as põe na timeline num
+    /// único passo de desfazer.
+    Q_INVOKABLE void generateCaptions();
+    Q_INVOKABLE void cancelCaptionGeneration();
+    /// Fecha a janela e volta às opções.
+    Q_INVOKABLE void closeAutoCaptions();
+    /// Copia o estilo do texto selecionado para todas as legendas automáticas.
+    Q_INVOKABLE void applyStyleToAutoCaptions();
+    /// Edição em linha no painel: só apara as pontas e não grava se não mudou.
+    Q_INVOKABLE void setCaptionText(const QString &id, const QString &text);
+    Q_INVOKABLE void deleteCaption(const QString &id);
+    /// Largura da caixa do texto selecionado (como as alças: numa faixa automática, vale para todas).
+    Q_INVOKABLE void setTextWidth(qreal width);
+    /// Revelações das palavras: [{value, title}].
+    Q_INVOKABLE QVariantList revealOptions() const;
+    /// Liga ou desliga a ênfase de uma palavra (índice de `TextContent::wordsOf`).
+    Q_INVOKABLE void toggleEmphasisWord(int index);
+    /// Fonte da palavra-chave; o estilo volta ao padrão se a família nova não o tiver.
+    Q_INVOKABLE void setEmphasisFont(const QString &family);
+    /// Fundo dos cartões de estilo: o primeiro quadro do vídeo da faixa principal (vazio sem vídeo).
+    Q_INVOKABLE QString captionBackdrop() const;
+    /// Proporção (largura/altura) mais próxima entre as do app, para as prévias dos cartões.
+    Q_INVOKABLE qreal captionPreviewAspect() const;
+
+    // Manipulação no preview (EditorCanvas.cpp)
+    /// Elementos visíveis no playhead (em repouso).
+    QList<ElementBox> canvasBoxes() const;
+    /// Contorno do selecionado, se ele aparece no playhead. Some durante a reprodução;
+    /// no arraste lateral, mostra a largura pedida.
+    std::optional<SelectionFrame> selectionFrame(const CanvasMapping &mapping) const;
+    /// Clique no preview: alça ou corpo do selecionado, senão o elemento mais acima sob o
+    /// ponteiro, senão tira a seleção. Duplo clique num texto abre a aba Texto.
+    void canvasPointerDown(QPointF p, const CanvasMapping &mapping, int clickCount = 1);
+    /// `snapping` falso com Ctrl segurado.
+    void canvasPointerMoved(QPointF p, const CanvasMapping &mapping, bool snapping = true);
+    void canvasPointerUp();
+    const std::optional<PlacementDrag> &placementDrag() const { return m_placementDrag; }
+    const QList<SnapGuide> &canvasGuides() const { return m_canvasGuides; }
+    std::optional<double> canvasRotationLabel() const { return m_canvasRotationLabel; }
+    std::optional<WidthDragState> canvasWidthDrag() const { return m_canvasWidthDrag; }
+    /// Seleciona o texto e abre a aba Texto.
+    void editText(const QUuid &id);
+
+    /// Tamanho do player em pontos e a escala da tela. O primeiro vale na hora; os
+    /// seguintes, ~300 ms depois que o tamanho parar.
+    Q_INVOKABLE void previewViewportChanged(qreal width, qreal height, qreal devicePixelRatio);
+    int previewShortSide() const;
+    void setPreviewShortSide(int side);
+    void updatePreviewResolution();
+
 signals:
     void screenChanged();
     void projectChanged();
@@ -342,6 +423,9 @@ signals:
     void exportSummaryChanged();
     void exportStateChanged();
     void dialogRequested(const QString &kind);
+    /// Gesto, guias e etiquetas do overlay do preview.
+    void canvasOverlayChanged();
+    void captionStateChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -434,6 +518,33 @@ private:
     KeyedListModel *m_clips;
     KeyedListModel *m_junctions;
     KeyedListModel *m_cues;
+
+    CaptionGeneration *m_captions = nullptr;
+    bool m_showAutoCaptions = false;
+    /// Trecho e opções da geração em andamento.
+    struct CaptionJob {
+        TimeRange range;
+        QString preset;
+        QColor accent;
+        bool replacing = true;
+        QString model;
+        QString language;
+        std::optional<QUuid> segment;
+        Project snapshot;
+    };
+    std::optional<CaptionJob> m_captionJob;
+    void startTranscription();
+    void setupCaptions();
+
+    /// Trecho tocado ao escolher um efeito: onde parar e para onde voltar.
+    std::optional<std::pair<Micros, Micros>> m_excerpt;
+    std::optional<PlacementDrag> m_placementDrag;
+    QList<SnapGuide> m_canvasGuides;
+    std::optional<double> m_canvasRotationLabel;
+    std::optional<WidthDragState> m_canvasWidthDrag;
+    QSizeF m_previewPoints;
+    qreal m_previewScale = 1;
+    QTimer m_previewResolutionTimer;
 
     PreviewEngine *m_preview = nullptr;
     ExportJob *m_exportJob = nullptr;
