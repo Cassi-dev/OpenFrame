@@ -16,6 +16,8 @@ struct TextUnit {
     let bounds: CGRect
     /// Primeiro caractere da unidade (para a máquina de escrever).
     let character: Int
+    /// Palavra (separada por espaço ou quebra) do primeiro caractere: o destaque das legendas.
+    let word: Int
     let line: Int
     /// Centro da linha da unidade (animação "espaçamento").
     let lineCenterX: CGFloat
@@ -37,6 +39,12 @@ final class TextUnits: @unchecked Sendable {
     let shadowOffset: CGSize
     let shadowBlur: CGFloat
     let characterCount: Int
+    /// Caixa do texto (sem o fundo) e, por linha, o trecho horizontal com letras, nas coordenadas da imagem.
+    var textBox: CGRect = .zero
+    var lineSpans: [ClosedRange<CGFloat>] = []
+    /// Folga e raio do fundo, em pixels (o fundo desenhado é `textBox` com a folga).
+    var backgroundPadding: CGSize = .zero
+    var backgroundRadius: CGFloat = 0
 
     init(size: CGSize, units: [TextUnit], lineBands: [CGRect], background: CIImage?, style: TextStyle,
          fontPx: CGFloat, shadowOffset: CGSize, shadowBlur: CGFloat, characterCount: Int) {
@@ -72,13 +80,15 @@ extension TextRenderer {
         guard !text.isEmpty, canvas.height > 0 else { return nil }
         let key = "\(content.hashValue)|\(Int(canvas.width))x\(Int(canvas.height))|\(granularity.rawValue)" as NSString
         if let cached = unitCache.object(forKey: key) { return cached }
-        guard let built = buildUnits(text, style: content.style, canvas: canvas, granularity: granularity) else { return nil }
+        guard let built = buildUnits(text, style: content.style, emphasis: content.emphasis, canvas: canvas,
+                                     granularity: granularity) else { return nil }
         unitCache.setObject(built, forKey: key)
         return built
     }
 
-    private func buildUnits(_ text: String, style: TextStyle, canvas: CGSize, granularity: TextGranularity) -> TextUnits? {
-        let l = layout(text, style: style, canvas: canvas)
+    private func buildUnits(_ text: String, style: TextStyle, emphasis: WordEmphasis?, canvas: CGSize,
+                            granularity: TextGranularity) -> TextUnits? {
+        let l = layout(text, style: style, canvas: canvas, emphasis: emphasis)
         let m = metrics(l, style: style)
         let (glyphs, lines) = glyphInfo(l, text: text as NSString, style: style)
 
@@ -152,7 +162,8 @@ extension TextRenderer {
             let first = group[0]
             let line = first.line
             units.append(TextUnit(fill: fill, stroke: stroke, bounds: box.offsetBy(dx: pad.x, dy: pad.y),
-                                  character: characterAt[first.utf16], line: line,
+                                  character: characterAt[first.utf16], word: max(0, wordOf[characterAt[first.utf16]]),
+                                  line: line,
                                   lineCenterX: (lineMin[line] + lineMax[line]) / 2 + pad.x,
                                   cellCenterX: first.position.x + (first.advance - l.kern) / 2 + pad.x,
                                   cellWidth: first.advance - l.kern,
@@ -174,9 +185,16 @@ extension TextRenderer {
             ctx.fillPath()
             background = ctx.makeImage().map(Self.gammaImage)
         }
-        return TextUnits(size: CGSize(width: m.width, height: m.height), units: units, lineBands: bands,
-                         background: background, style: style, fontPx: l.fontPx,
-                         shadowOffset: m.shadowOffset, shadowBlur: m.shadowBlur, characterCount: text.count)
+        let set = TextUnits(size: CGSize(width: m.width, height: m.height), units: units, lineBands: bands,
+                            background: background, style: style, fontPx: l.fontPx,
+                            shadowOffset: m.shadowOffset, shadowBlur: m.shadowBlur, characterCount: text.count)
+        set.textBox = CGRect(origin: pad, size: l.textSize)
+        set.lineSpans = lines.indices.map { k in
+            lineMax[k] > lineMin[k] ? (lineMin[k] + pad.x)...(lineMax[k] + pad.x) : (pad.x)...(pad.x)
+        }
+        set.backgroundPadding = CGSize(width: m.bgX, height: m.bgY)
+        set.backgroundRadius = max(0, CGFloat(style.backgroundRadius)) * l.fontPx
+        return set
     }
 
     /// Desenha as formas recortadas em `box` (coordenadas da caixa de texto) e devolve a imagem
@@ -335,16 +353,55 @@ enum TextMotion {
             scramble = TextRenderer.shared.scrambleGlyphs(style: content.style, canvas: canvas)
         }
 
+        // Destaque da palavra falada: cor (mistura), escala em torno do centro da palavra e pílula.
+        let highlight = content.activeHighlight
+        let amounts = highlight.map { highlightAmounts($0.words, mode: $0.style.mode, local: state.local) }
+        var wordRects: [Int: CGRect] = [:]
+        var wordLines: [Int: Int] = [:]
+        if highlight != nil {
+            for unit in set.units {
+                wordRects[unit.word] = wordRects[unit.word]?.union(unit.bounds) ?? unit.bounds
+                wordLines[unit.word] = wordLines[unit.word] ?? unit.line
+            }
+        }
+        let shifts = highlight.flatMap { h in amounts.map { wordShifts(h.style, amounts: $0, rects: wordRects, lines: wordLines) } } ?? [:]
+        var wordPoses: [Int: [Pose]] = [:]
+        // Revelação pela fala (só com o destaque ativo: texto editado aparece inteiro).
+        let reveal = highlight?.style.reveal ?? .none
+        let letterTimes = reveal == .type ? highlight.map { typingTimes($0.words, units: set.units) } ?? [] : []
+
         var strokes = CIImage.empty()
         var fills = CIImage.empty()
         let n = set.units.count
+        // Com o destaque, a "revelar por máscara" vem em sprites de palavra: o passo continua sendo a linha.
+        let byLine = state.unit.map { Animations.granularity($0.kind) == .line && granularity != .line } ?? false
         for (i, unit) in set.units.enumerated() where unit.character < visible {
             var pose = Pose()
             if let u = state.unit {
-                let q = unitProgress(u.progress, index: i, count: n, window: window(u.kind))
+                let (index, count) = byLine ? (unit.line, set.lineBands.count) : (i, n)
+                let q = unitProgress(u.progress, index: index, count: count, window: window(u.kind))
                 let band = set.lineBands.indices.contains(unit.line) ? set.lineBands[unit.line] : nil
                 pose = self.pose(u.kind, q: q, exiting: u.exiting, unit: unit, band: band, em: em)
             }
+            if let highlight, reveal != .none, highlight.words.indices.contains(unit.word) {
+                let word = highlight.words[unit.word]
+                switch reveal {
+                case .rise:
+                    // Sobe um pouco, de desfocada e transparente a nítida e opaca; antes de ser dita, não aparece.
+                    let e = Animations.expoOut(Animations.clamp(Double(state.local - word.start) / Double(riseDuration)))
+                    pose.alpha *= e
+                    pose.dy -= CGFloat(1 - e) * 0.3 * em
+                    pose.blur = max(pose.blur, CGFloat(1 - e) * 0.12 * em)
+                case .dim:
+                    let dim = Animations.clamp(highlight.style.dimOpacity)
+                    pose.alpha *= dim + (1 - dim) * rampOn(word.start, local: state.local)
+                case .type:
+                    if letterTimes.indices.contains(i), state.local < letterTimes[i] { pose.alpha = 0 }
+                case .fill, .none:
+                    break
+                }
+            }
+            if highlight != nil { wordPoses[unit.word, default: []].append(pose) }
             guard pose.alpha > 0.001 else { continue }
             var fill = unit.fill
             var stroke = unit.stroke
@@ -357,13 +414,35 @@ enum TextMotion {
                 fill = g.fill.transformed(by: move)
                 stroke = g.stroke?.transformed(by: move)
             }
+            var grow: CGFloat = 1
+            if let highlight, let amounts, amounts.color.indices.contains(unit.word) {
+                switch reveal {
+                case .fill:
+                    // A cor enche a palavra da esquerda para a direita ao longo da duração dela.
+                    let p = fillProgress(highlight.words[unit.word], local: state.local)
+                    if let rect = wordRects[unit.word] { fill = filled(fill, highlight.style.color, progress: p, rect: rect, em: em) }
+                case .type:
+                    // A cor vai para o cursor.
+                    break
+                default:
+                    let tint = amounts.color[unit.word]
+                    if tint > 0.001 { fill = tinted(fill, highlight.style.color, amount: tint) }
+                }
+                grow = 1 + CGFloat((highlight.style.scale - 1) * amounts.emphasis[unit.word])
+            }
+            let shift = shifts[unit.word] ?? 0
             func posed(_ img: CIImage) -> CIImage {
                 var out = img
+                if shift != 0 { out = out.transformed(by: CGAffineTransform(translationX: shift, y: 0)) }
                 if pose.scale != 1 || pose.dx != 0 || pose.dy != 0 {
                     let c = CGPoint(x: unit.bounds.midX, y: unit.bounds.midY)
                     out = out.transformed(by: CGAffineTransform(translationX: -c.x, y: -c.y)
                         .concatenating(CGAffineTransform(scaleX: max(pose.scale, 0.001), y: max(pose.scale, 0.001)))
                         .concatenating(CGAffineTransform(translationX: c.x + pose.dx, y: c.y + pose.dy)))
+                }
+                // A palavra cresce inteira, em torno do próprio centro (com letras separadas também).
+                if abs(grow - 1) > 0.0001, let rect = wordRects[unit.word] {
+                    out = out.transformed(by: scaling(grow, around: CGPoint(x: rect.midX + shift + pose.dx, y: rect.midY + pose.dy)))
                 }
                 if pose.blur > 0.3 { out = out.applyingGaussianBlur(sigma: Double(pose.blur)) }
                 if let clip = pose.clip { out = out.cropped(to: clip) }
@@ -371,6 +450,11 @@ enum TextMotion {
             }
             fills = posed(fill).composited(over: fills)
             if let stroke { strokes = posed(stroke).composited(over: strokes) }
+        }
+        if reveal == .type, let highlight,
+           let cursor = typingCursor(highlight.style.color, times: letterTimes, set: set, shifts: shifts,
+                                     local: state.local, em: em) {
+            fills = cursor.composited(over: fills)
         }
         let glyphs = fills.composited(over: strokes)
         let rect = CGRect(origin: .zero, size: set.size)
@@ -380,6 +464,11 @@ enum TextMotion {
         var out = glyphs
         if let shine = state.shine { out = applyShine(out, in: rect, position: shine.position, strength: shine.strength) }
         if state.glow > 0 { out = applyGlow(out, amount: state.glow, sigma: 0.012 * k) }
+        // Pílulas do destaque: por cima da sombra, por baixo das letras.
+        if let highlight, let amounts, highlight.style.backgroundEnabled {
+            out = out.composited(over: pills(highlight.style, amounts: amounts, set: set, wordRects: wordRects,
+                                             wordPoses: wordPoses, shifts: shifts, em: em))
+        }
         let style = set.style
         if style.shadow, style.shadowColor.a > 0 {
             let c = style.shadowColor
@@ -395,11 +484,246 @@ enum TextMotion {
             shadow = shadow.transformed(by: CGAffineTransform(translationX: set.shadowOffset.width, y: set.shadowOffset.height))
             out = out.composited(over: shadow)
         }
-        if let bg = set.background {
+        // Na digitação, o fundo cresce com o texto digitado; com tudo digitado, é o da imagem estática.
+        var background = set.background
+        if reveal == .type, background != nil {
+            background = typingBackground(times: letterTimes, set: set, shifts: shifts, local: state.local, em: em)
+                ?? background
+        }
+        if let bg = background {
             out = out.composited(over: alpha(bg, state.backgroundAlpha))
         }
         out = out.applyingFilter("CISRGBToneCurveToLinear")
         return (alpha(out, min(1, max(0, style.opacity))), set.size)
+    }
+
+    // MARK: - Revelação pela fala
+
+    /// Duração da entrada de cada palavra no "surgir".
+    static let riseDuration: Micros = 250_000
+    /// O cursor da digitação fica este tempo depois da última letra e some.
+    static let cursorHold: Micros = 300_000
+    /// Parado (sem letra nova) por mais que isto, o cursor pisca.
+    static let cursorIdle: Micros = 500_000
+
+    /// Rampa suave (0...1) de `highlightRamp`, centrada em `start`.
+    static func rampOn(_ start: Micros, local: Micros) -> Double {
+        let x = Animations.clamp(Double(local - start + highlightRamp / 2) / Double(highlightRamp))
+        return x * x * (3 - 2 * x)
+    }
+
+    /// Quanto da palavra já foi preenchido (0...1), ao longo da duração dela.
+    static func fillProgress(_ word: CaptionWord, local: Micros) -> Double {
+        guard word.end > word.start else { return local >= word.start ? 1 : 0 }
+        return Animations.clamp(Double(local - word.start) / Double(word.end - word.start))
+    }
+
+    /// O preenchimento com a cor até a fração `progress` da palavra (borda suave de 0,06 em).
+    static func filled(_ fill: CIImage, _ color: RGBA, progress: Double, rect: CGRect, em: CGFloat) -> CIImage {
+        guard progress > 0.001 else { return fill }
+        let target = solid(fill, color)
+        guard progress < 0.999 else { return target }
+        let soft = max(1, 0.06 * em)
+        let x = rect.minX + CGFloat(progress) * rect.width
+        guard let mask = CIFilter(name: "CISmoothLinearGradient", parameters: [
+            "inputPoint0": CIVector(x: x - soft / 2, y: 0), "inputPoint1": CIVector(x: x + soft / 2, y: 0),
+            "inputColor0": CIColor.white, "inputColor1": CIColor.clear,
+        ])?.outputImage else { return fill }
+        return target.applyingFilter("CIBlendWithAlphaMask", parameters: [
+            kCIInputBackgroundImageKey: fill, kCIInputMaskImageKey: mask,
+        ]).cropped(to: fill.extent)
+    }
+
+    /// Instante em que cada unidade (letra) aparece na digitação: as letras de cada palavra distribuídas no
+    /// tempo dela.
+    static func typingTimes(_ words: [CaptionWord], units: [TextUnit]) -> [Micros] {
+        var times = [Micros](repeating: 0, count: units.count)
+        var byWord: [Int: [Int]] = [:]
+        for (i, u) in units.enumerated() { byWord[u.word, default: []].append(i) }
+        for (w, members) in byWord where words.indices.contains(w) {
+            let span = max(0, words[w].end - words[w].start)
+            let ordered = members.sorted { units[$0].character < units[$1].character }
+            for (j, i) in ordered.enumerated() { times[i] = words[w].start + span * Micros(j) / Micros(ordered.count) }
+        }
+        return times
+    }
+
+    /// Cursor fino depois da última letra visível (antes da primeira, enquanto nada foi digitado). Pisca
+    /// quando para e some `cursorHold` depois da última letra.
+    static func typingCursor(_ color: RGBA, times: [Micros], set: TextUnits, shifts: [Int: CGFloat], local: Micros,
+                             em: CGFloat) -> CIImage? {
+        guard !set.units.isEmpty, times.count == set.units.count, let finish = times.max() else { return nil }
+        if local >= finish + cursorHold { return nil }
+        let shown = set.units.indices.filter { times[$0] <= local }
+        let last = shown.max { set.units[$0].character < set.units[$1].character }
+        let since = local - (last.map { times[$0] } ?? 0)
+        if since > cursorIdle, (since - cursorIdle) % 1_000_000 >= 500_000 { return nil }
+        let unit = set.units[last ?? set.units.indices.min { set.units[$0].character < set.units[$1].character }!]
+        let gap = 0.05 * em
+        let width = max(1.5, 0.07 * em)
+        let x = last != nil ? unit.cellCenterX + unit.cellWidth / 2 + gap : unit.cellCenterX - unit.cellWidth / 2 - gap - width
+        let rect = CGRect(x: x + (shifts[unit.word] ?? 0), y: unit.baseline - 0.12 * em, width: width, height: 0.9 * em)
+        return solid(CIImage(color: .white).cropped(to: rect), color)
+    }
+
+    /// Transição do fundo da digitação para cada letra: começa `typingLead` antes de ela aparecer (os instantes são
+    /// conhecidos) e está em ~85% quando ela aparece; a folga do fundo cobre o resto, e o cursor não sai do fundo.
+    static let typingGrow: Micros = 80_000
+    static let typingLead: Micros = 60_000
+
+    /// Fundo da digitação no instante: a caixa das letras já digitadas (até o cursor), com a folga e o raio do
+    /// fundo do estilo. Cada letra empurra as bordas da caixa anterior até a sua, com smoothstep em `typingGrow`;
+    /// os empurrões se somam, então o fundo não volta nem pula quando as letras chegam mais rápido que isso. Nil
+    /// quando já chegou à caixa inteira (o fundo da imagem estática).
+    static func typingBackground(times: [Micros], set: TextUnits, shifts: [Int: CGFloat], local: Micros,
+                                 em: CGFloat) -> CIImage? {
+        guard !set.units.isEmpty, times.count == set.units.count, !set.textBox.isEmpty,
+              set.lineSpans.count == set.lineBands.count else { return nil }
+        let ordered = set.units.indices.sorted { set.units[$0].character < set.units[$1].character }
+        guard let last = ordered.last, local < times[last] - typingLead + typingGrow else { return nil }
+        let box = set.textBox
+        let gap = 0.05 * em
+        let width = max(1.5, 0.07 * em)
+        // Base da faixa da linha `k`: entre ela e a seguinte; a última vai até a base da caixa.
+        func bottom(_ k: Int) -> CGFloat {
+            guard k + 1 < set.lineBands.count else { return box.minY }
+            return min(box.maxY, max(box.minY, (set.lineBands[k].minY + set.lineBands[k + 1].maxY) / 2))
+        }
+        // Bordas (esquerda, base, direita) da caixa com as letras até a posição `p` de `ordered`
+        // (-1: só o cursor antes da primeira; a última: a caixa inteira). O topo é sempre o da caixa.
+        func reach(_ p: Int) -> (left: CGFloat, bottom: CGFloat, right: CGFloat) {
+            if p >= ordered.count - 1 { return (box.minX, box.minY, box.maxX) }
+            if p < 0 {
+                let u = set.units[ordered[0]]
+                let x = u.cellCenterX - u.cellWidth / 2 - gap - width + (shifts[u.word] ?? 0)
+                return (x, bottom(u.line), x + width)
+            }
+            let u = set.units[ordered[p]]
+            let k = min(u.line, set.lineSpans.count - 1)
+            let cursor = min(box.maxX, u.cellCenterX + u.cellWidth / 2 + gap + width + (shifts[u.word] ?? 0))
+            let left = set.lineSpans[0...k].map(\.lowerBound).min()!
+            let right = max(cursor, set.lineSpans[0..<k].map(\.upperBound).max() ?? -.infinity)
+            return (left, bottom(k), right)
+        }
+        var edges = reach(-1)
+        var previous = edges
+        for (p, i) in ordered.enumerated() {
+            let next = reach(p)
+            defer { previous = next }
+            let x = Animations.clamp(Double(local - times[i] + typingLead) / Double(typingGrow))
+            guard x > 0 else { continue }
+            let e = CGFloat(x * x * (3 - 2 * x))
+            edges.left += (next.left - previous.left) * e
+            edges.bottom += (next.bottom - previous.bottom) * e
+            edges.right += (next.right - previous.right) * e
+        }
+        let rect = CGRect(x: edges.left, y: edges.bottom, width: max(0, edges.right - edges.left),
+                          height: box.maxY - edges.bottom)
+            .insetBy(dx: -set.backgroundPadding.width, dy: -set.backgroundPadding.height)
+        let radius = min(set.backgroundRadius, min(rect.width, rect.height) / 2)
+        guard let shape = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+            "inputExtent": CIVector(cgRect: rect), "inputRadius": radius, "inputColor": CIColor.white,
+        ])?.outputImage else { return nil }
+        return solid(shape, set.style.backgroundColor)
+    }
+
+    // MARK: - Destaque da palavra
+
+    /// Duração da transição de cor e escala entre palavras, centrada no início da palavra.
+    static let highlightRamp: Micros = 80_000
+
+    /// Quanto cada palavra está destacada no instante (0...1): `color` para a cor e `emphasis` para
+    /// a escala e a pílula. A palavra atual é a última que já começou: no silêncio entre duas
+    /// palavras, a anterior continua destacada (sem piscar). No modo progressivo, a cor fica nas
+    /// palavras já faladas; a escala e a pílula seguem só a atual.
+    static func highlightAmounts(_ words: [CaptionWord], mode: HighlightMode, local: Micros) -> (color: [Double], emphasis: [Double]) {
+        func on(_ start: Micros) -> Double {
+            let x = Animations.clamp(Double(local - start + highlightRamp / 2) / Double(highlightRamp))
+            return x * x * (3 - 2 * x)
+        }
+        var emphasis = [Double](repeating: 0, count: words.count)
+        var color = emphasis
+        for i in words.indices {
+            let reached = on(words[i].start)
+            let next = i + 1 < words.count ? on(words[i + 1].start) : 0
+            emphasis[i] = reached * (1 - next)
+            color[i] = mode == .progressive ? reached : emphasis[i]
+        }
+        return (color, emphasis)
+    }
+
+    /// Deslocamento horizontal de cada palavra para abrir espaço à que cresce: as da linha se
+    /// afastam metade do aumento para cada lado, e a linha continua centrada.
+    static func wordShifts(_ style: WordHighlight, amounts: (color: [Double], emphasis: [Double]),
+                           rects: [Int: CGRect], lines: [Int: Int]) -> [Int: CGFloat] {
+        var shifts: [Int: CGFloat] = [:]
+        for (v, rect) in rects where amounts.emphasis.indices.contains(v) && amounts.emphasis[v] > 0.001 {
+            let extra = CGFloat((style.scale - 1) * amounts.emphasis[v]) * rect.width / 2
+            guard extra != 0 else { continue }
+            for (w, other) in rects where w != v && lines[w] == lines[v] {
+                shifts[w, default: 0] += other.midX < rect.midX ? -extra : extra
+            }
+        }
+        return shifts
+    }
+
+    static func scaling(_ s: CGFloat, around c: CGPoint) -> CGAffineTransform {
+        CGAffineTransform(translationX: -c.x, y: -c.y)
+            .concatenating(CGAffineTransform(scaleX: s, y: s))
+            .concatenating(CGAffineTransform(translationX: c.x, y: c.y))
+    }
+
+    /// Sprite de cor única no lugar das letras (como a sombra: os valores sRGB entram como estão).
+    static func solid(_ img: CIImage, _ c: RGBA) -> CIImage {
+        img.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: c.a),
+            "inputBiasVector": CIVector(x: c.r, y: c.g, z: c.b, w: 0),
+        ])
+    }
+
+    /// O preenchimento misturado com a cor do destaque (`amount` 0...1).
+    static func tinted(_ fill: CIImage, _ color: RGBA, amount: Double) -> CIImage {
+        let target = solid(fill, color)
+        guard amount < 0.999 else { return target }
+        return fill.applyingFilter("CIDissolveTransition", parameters: [
+            kCIInputTargetImageKey: target, kCIInputTimeKey: amount,
+        ])
+    }
+
+    /// Retângulo arredondado atrás da palavra: a largura da palavra com folga e a altura da linha.
+    static func pillRect(word: CGRect, band: CGRect, em: CGFloat) -> CGRect {
+        CGRect(x: word.minX - 0.1 * em, y: band.minY, width: word.width + 0.2 * em, height: band.height)
+    }
+
+    private static func pills(_ style: WordHighlight, amounts: (color: [Double], emphasis: [Double]), set: TextUnits,
+                              wordRects: [Int: CGRect], wordPoses: [Int: [Pose]], shifts: [Int: CGFloat],
+                              em: CGFloat) -> CIImage {
+        var pills = CIImage.empty()
+        for (word, poses) in wordPoses {
+            guard amounts.emphasis.indices.contains(word), amounts.emphasis[word] > 0.001, !poses.isEmpty,
+                  let box = wordRects[word], let line = set.units.first(where: { $0.word == word })?.line,
+                  set.lineBands.indices.contains(line) else { continue }
+            // Pose média das unidades da palavra: com letras separadas, elas andam quase juntas.
+            let k = CGFloat(poses.count)
+            let dx = poses.map(\.dx).reduce(0, +) / k + (shifts[word] ?? 0)
+            let dy = poses.map(\.dy).reduce(0, +) / k
+            let a = poses.map(\.alpha).reduce(0, +) / Double(poses.count)
+            let e = amounts.emphasis[word]
+            let grow = 1 + CGFloat((style.scale - 1) * e)
+            let rect = pillRect(word: box, band: set.lineBands[line], em: em)
+            let radius = min(0.3 * em, rect.height / 2)
+            guard let shape = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+                "inputExtent": CIVector(cgRect: rect), "inputRadius": radius, "inputColor": CIColor.white,
+            ])?.outputImage else { continue }
+            let placed = solid(shape, style.backgroundColor)
+                .transformed(by: CGAffineTransform(translationX: dx, y: dy)
+                    .concatenating(scaling(grow, around: CGPoint(x: box.midX + dx, y: box.midY + dy))))
+            pills = alpha(placed, a * e).composited(over: pills)
+        }
+        return pills
     }
 
     static func alpha(_ img: CIImage, _ a: Double) -> CIImage {

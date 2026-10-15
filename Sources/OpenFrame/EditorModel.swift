@@ -78,9 +78,10 @@ final class EditorModel {
     var inspectorTab = InspectorTab.basic
     /// Pedido para pôr o foco no campo do texto (duplo clique num texto no preview).
     var focusTextEditor = false
-    /// Manipulação no preview: guias de encaixe e graus durante o giro.
+    /// Manipulação no preview: guias de encaixe, graus durante o giro e largura pedida pelas alças laterais.
     var canvasGuides: [SnapGuide] = []
     var canvasRotationLabel: Double?
+    var canvasWidthDrag: WidthDragState?
     @ObservationIgnored var placementDrag: PlacementDrag?
     /// Quadros das miniaturas animadas do inspetor.
     @ObservationIgnored let animationStrips = FrameStripStore()
@@ -103,6 +104,10 @@ final class EditorModel {
     var draggingMaterial: UUID?
     var exportSettings = ExportSettings()
     var showExport = false
+    var showAutoCaptions = false
+    /// Legenda com o texto em edição no painel Legendas.
+    var editingCaption: UUID?
+    @ObservationIgnored let captionGeneration = CaptionGeneration()
     var errorMessage: String?
     /// Tela inicial (projetos) ou editor.
     private(set) var screen = Screen.home
@@ -707,6 +712,161 @@ final class EditorModel {
             try SRT.serialize(cues).write(to: url, atomically: true, encoding: .utf8)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Legendas
+
+    /// Troca o texto de uma legenda (edição em linha do painel Legendas).
+    func setText(_ id: UUID, _ text: String) {
+        mutate { TimelineEditor.update(&$0, segment: id) { $0.text?.text = text } }
+    }
+
+    func deleteSegment(_ id: UUID) {
+        mutate { TimelineEditor.delete(&$0, segment: id) }
+        if selection == id { selection = nil }
+    }
+
+    /// O clipe selecionado, se tiver áudio para transcrever.
+    var selectedClipWithAudio: Segment? {
+        guard let seg = selectedSegment, let m = project.material(seg.materialId),
+              m.kind == .audio || m.hasAudio else { return nil }
+        return seg
+    }
+
+    /// Por que a fonte escolhida não pode ser transcrita (`nil` = pode).
+    var captionSourceProblem: String? {
+        switch captionGeneration.source {
+        case .clip:
+            return selectedClipWithAudio == nil ? "Selecione um clipe com áudio para transcrever só ele." : nil
+        case .timeline:
+            let audible = project.tracks.contains { track in
+                !track.muted && track.segments.contains { seg in
+                    guard seg.volume > 0, let m = project.material(seg.materialId) else { return false }
+                    return m.kind == .audio || m.hasAudio
+                }
+            }
+            return audible ? nil : "A timeline não tem áudio para transcrever."
+        }
+    }
+
+    /// Há uma faixa de legendas automáticas no projeto.
+    var hasAutoCaptions: Bool { project.tracks.contains { $0.isAutoCaptions } }
+
+    func presentAutoCaptions() {
+        let g = captionGeneration
+        if !g.phase.isRunning {
+            g.setPhase(.configuring)
+            g.replacePrevious = hasAutoCaptions
+        }
+        if !g.languageChosen {
+            g.language = CaptionGeneration.systemLanguage(in: Transcriber.languages.map(\.code))
+            g.languageChosen = true
+        }
+        if selectedClipWithAudio == nil { g.source = .timeline }
+        g.refreshInstalled()
+        showAutoCaptions = true
+    }
+
+    /// Baixa o modelo se faltar, transcreve, monta as legendas e as põe na timeline
+    /// num único passo de desfazer.
+    func generateCaptions() {
+        let g = captionGeneration
+        guard !g.phase.isRunning, captionSourceProblem == nil else { return }
+        let source: TranscriptionSource
+        switch g.source {
+        case .timeline: source = .timeline
+        case .clip:
+            guard let clip = selectedClipWithAudio else { return }
+            source = .segment(clip.id)
+        }
+        let snapshot = project
+        let range: TimeRange
+        do {
+            range = try Transcriber.sourceRange(project: snapshot, source: source)
+        } catch {
+            g.setPhase(.failed(error.localizedDescription))
+            return
+        }
+        if isPlaying { togglePlay() }
+        let whisper = g.model, preset = g.preset, language = g.language
+        let replacing = g.replacePrevious, color = g.highlightColor
+        let store = g.store
+        g.cancelDownload(whisper)
+        g.includesDownload = !store.isInstalled(whisper)
+        g.setPhase(g.includesDownload ? .downloading(received: 0, total: whisper.byteSize) : .mixing(0))
+        g.job = Task { [weak self, g] in
+            do {
+                if g.includesDownload {
+                    try await store.download(whisper) { fraction in
+                        Task { @MainActor in
+                            guard case .downloading = g.phase else { return }
+                            g.setPhase(.downloading(received: Int64(Double(whisper.byteSize) * fraction), total: whisper.byteSize))
+                        }
+                    }
+                    g.refreshInstalled()
+                    try Task.checkCancellation()
+                    g.setPhase(.mixing(0))
+                }
+                let words = try await Transcriber.transcribe(project: snapshot, source: source, model: whisper,
+                                                             language: language) { p in
+                    Task { @MainActor in
+                        guard g.phase.isRunning else { return }
+                        g.setPhase(p.phase == .mixing ? .mixing(p.overall) : .transcribing(p.overall))
+                    }
+                }
+                try Task.checkCancellation()
+                let cues = CaptionBuilder.cues(from: words, preset: preset, aspect: snapshot.aspectValue)
+                guard !cues.isEmpty else {
+                    throw TranscriptionError.failed("nenhuma fala foi reconhecida nesse trecho.")
+                }
+                self?.applyCaptions(cues, preset: preset, accent: color, replacing: replacing, range: range)
+                g.setPhase(.finished(count: cues.count))
+            } catch {
+                if Task.isCancelled || error is CancellationError {
+                    g.setPhase(.configuring)
+                } else {
+                    g.setPhase(.failed(error.localizedDescription))
+                }
+            }
+            g.job = nil
+        }
+    }
+
+    private func applyCaptions(_ cues: [CaptionCue], preset: CaptionPreset, accent: RGBA,
+                               replacing: Bool, range: TimeRange) {
+        mutate { CaptionBuilder.apply(cues, preset: preset, accent: accent, to: &$0, replacing: replacing, range: range) }
+        selection = nil
+        libraryPanel = .captions
+        libraryVisible = true
+    }
+
+    func cancelCaptionGeneration() {
+        captionGeneration.job?.cancel()
+        captionGeneration.job = nil
+        captionGeneration.setPhase(.configuring)
+    }
+
+    /// Copia o estilo do texto selecionado para todas as legendas automáticas: o destaque inteiro
+    /// (revelação incluída) e o visual da palavra-chave (fonte, escala e cor), sem as palavras
+    /// escolhidas, que são de cada legenda.
+    func applyStyleToAutoCaptions() {
+        guard let source = selectedSegment?.text else { return }
+        mutate { p in
+            for t in p.tracks.indices where p.tracks[t].isAutoCaptions {
+                for i in p.tracks[t].segments.indices {
+                    guard var text = p.tracks[t].segments[i].text else { continue }
+                    text.style = source.style
+                    if let highlight = source.highlight, text.words != nil {
+                        text.highlight = highlight
+                    }
+                    if var emphasis = source.emphasis {
+                        emphasis.words = text.emphasis?.words ?? []
+                        text.emphasis = emphasis
+                    }
+                    p.tracks[t].segments[i].text = text
+                }
+            }
         }
     }
 

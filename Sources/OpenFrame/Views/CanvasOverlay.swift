@@ -2,8 +2,8 @@ import AppKit
 import OpenFrameCore
 import SwiftUI
 
-// Manipulação direta no preview: seleção, alças de escala e rotação e guias de
-// encaixe. A geometria e o gesto ficam em tipos puros; a view só desenha.
+// Manipulação direta no preview: seleção, alças de escala, rotação e largura
+// (texto) e guias de encaixe. A geometria e o gesto ficam em tipos puros; a view só desenha.
 
 /// Conversão entre o espaço normalizado do canvas (x e y de -1 a 1, centro 0,
 /// y para cima) e os pontos da view do preview (origem no canto superior esquerdo).
@@ -39,23 +39,27 @@ struct SelectionFrame: Equatable {
     var corners: [CGPoint]
     /// Graus, positivo = horário na tela.
     var rotation: Double
+    /// Alças no meio das laterais para mudar a largura da caixa (só em texto).
+    var resizesWidth = false
 
     static let rotationHandleGap: CGFloat = 26
 
     /// Caixa de meia largura e meia altura dadas (pontos), girada em torno do centro.
-    init(center: CGPoint, halfSize: CGSize, rotation: Double) {
+    init(center: CGPoint, halfSize: CGSize, rotation: Double, resizesWidth: Bool = false) {
         self.center = center
         self.rotation = rotation
+        self.resizesWidth = resizesWidth
         let local = [CGPoint(x: -halfSize.width, y: -halfSize.height), CGPoint(x: halfSize.width, y: -halfSize.height),
                      CGPoint(x: halfSize.width, y: halfSize.height), CGPoint(x: -halfSize.width, y: halfSize.height)]
         corners = local.map { Self.rotate($0, by: rotation) + center }
     }
 
     /// Cantos já calculados (pelo núcleo), na ordem acima.
-    init(center: CGPoint, corners: [CGPoint], rotation: Double) {
+    init(center: CGPoint, corners: [CGPoint], rotation: Double, resizesWidth: Bool = false) {
         self.center = center
         self.corners = corners
         self.rotation = rotation
+        self.resizesWidth = resizesWidth
     }
 
     /// Gira um vetor em graus no sentido horário da tela (y para baixo).
@@ -70,7 +74,24 @@ struct SelectionFrame: Equatable {
     /// Direção "para cima" do elemento girado, unitária.
     var up: CGPoint { Self.rotate(CGPoint(x: 0, y: -1), by: rotation) }
 
+    /// Direção "para a direita" do elemento girado, unitária: o eixo em que as alças laterais andam.
+    var right: CGPoint { Self.rotate(CGPoint(x: 1, y: 0), by: rotation) }
+
     var rotationHandle: CGPoint { topCenter + up * Self.rotationHandleGap }
+
+    /// Ponto médio da borda de baixo (do elemento girado).
+    var bottomCenter: CGPoint { (corners[2] + corners[3]) * 0.5 }
+
+    /// Ponto médio de uma lateral.
+    func edgeHandle(_ side: EdgeSide) -> CGPoint {
+        side == .left ? (corners[0] + corners[3]) * 0.5 : (corners[1] + corners[2]) * 0.5
+    }
+
+    /// A caixa está de pé (girada 0° ou 180°): as alças laterais andam na horizontal da tela.
+    var isUpright: Bool {
+        let r = abs(rotation.truncatingRemainder(dividingBy: 180))
+        return r < 1 || r > 179
+    }
 
     func contains(_ p: CGPoint) -> Bool {
         // Ponto dentro do quadrilátero convexo: mesmo lado de todas as arestas.
@@ -85,19 +106,28 @@ struct SelectionFrame: Equatable {
         return true
     }
 
-    /// Alça sob o ponto: alças primeiro (com folga), depois o corpo.
+    /// Alça sob o ponto: alças primeiro (com folga; a mais próxima ganha), depois o corpo.
     func handle(at p: CGPoint, tolerance: CGFloat = 9) -> OverlayHandle? {
         if (p - rotationHandle).length <= tolerance + 3 { return .rotate }
-        if let i = corners.indices.min(by: { (p - corners[$0]).length < (p - corners[$1]).length }),
-           (p - corners[i]).length <= tolerance {
-            return .corner(i)
+        var handles = corners.indices.map { (OverlayHandle.corner($0), corners[$0]) }
+        if resizesWidth { handles += EdgeSide.allCases.map { (OverlayHandle.edge($0), edgeHandle($0)) } }
+        if let nearest = handles.min(by: { (p - $0.1).length < (p - $1.1).length }),
+           (p - nearest.1).length <= tolerance {
+            return nearest.0
         }
         return contains(p) ? .body : nil
     }
 }
 
+enum EdgeSide: CaseIterable {
+    case left, right
+
+    /// Sentido em que arrastar alarga: para fora da caixa.
+    var sign: CGFloat { self == .left ? -1 : 1 }
+}
+
 enum OverlayHandle: Equatable {
-    case body, corner(Int), rotate
+    case body, corner(Int), rotate, edge(EdgeSide)
 }
 
 /// Linha de guia em pontos da view.
@@ -119,6 +149,11 @@ struct PlacementDrag {
     /// Ponto inicial do ponteiro e centro do elemento, em pontos da view.
     let startPoint: CGPoint
     let startCenterView: CGPoint
+    /// Largura da caixa (fração da largura do canvas) de onde parte o arraste lateral, e a largura
+    /// da caixa visível no início: a moldura parte dela, para a alça não pular quando as duas diferem
+    /// (linhas equilibradas ou texto curto).
+    let startWidth: Double
+    let startVisibleWidth: Double
 
     static let scaleRange = 0.05...10.0
     /// Distância de encaixe na tela.
@@ -132,14 +167,20 @@ struct PlacementDrag {
         var guides: [SnapGuide] = []
         /// Graus mostrados na etiqueta durante o giro.
         var rotationLabel: Double?
+        /// Largura pedida pelas alças laterais (fração da largura do canvas) e a da moldura.
+        var width: Double?
+        var frameWidth: Double?
     }
 
-    init(handle: OverlayHandle, box: ElementBox, others: [ElementBox], at point: CGPoint, mapping: CanvasMapping) {
+    init(handle: OverlayHandle, box: ElementBox, others: [ElementBox], at point: CGPoint, mapping: CanvasMapping,
+         startWidth: Double = 0) {
+        startVisibleWidth = Double(box.size.width) / 2
         self.handle = handle
         self.box = box
         self.others = others
         startPoint = point
         startCenterView = mapping.view(box.center)
+        self.startWidth = startWidth
     }
 
     /// Posição, escala e rotação para o ponteiro em `p` (pontos da view).
@@ -162,8 +203,24 @@ struct PlacementDrag {
             let r = proposedRotation(at: p)
             out.rotation = snapping ? Snapping.snapRotation(r).degrees : r
             out.rotationLabel = out.rotation
+        case .edge(let side):
+            let width = proposedWidth(at: p, side: side, mapping: mapping)
+            out.width = width
+            // A moldura anda o mesmo que a largura, a partir da caixa visível.
+            out.frameWidth = max(startVisibleWidth + width - startWidth, 0.01)
         }
         return out
+    }
+
+    /// Largura simétrica em torno do centro: o quanto o ponteiro andou no eixo girado da caixa,
+    /// para fora, conta dos dois lados. Desfaz a escala do elemento.
+    func proposedWidth(at p: CGPoint, side: EdgeSide, mapping: CanvasMapping) -> Double {
+        let axis = SelectionFrame.rotate(CGPoint(x: 1, y: 0), by: box.rotation)
+        let d = p - startPoint
+        let outward = (d.x * axis.x + d.y * axis.y) * side.sign
+        let pointsPerWidth = max(abs(box.scale), 0.01) * mapping.size.width
+        let w = startWidth + Double(2 * outward / max(pointsPerWidth, 1))
+        return min(max(w, TextStyle.maxWidthRange.lowerBound), TextStyle.maxWidthRange.upperBound)
     }
 
     /// Centro proposto (normalizado) para um arraste do corpo.
@@ -203,7 +260,23 @@ extension SelectionFrame {
     init(_ box: ElementBox, mapping: CanvasMapping, aspect: Double) {
         self.init(center: mapping.view(box.center),
                   corners: CanvasLayout.corners(of: box, aspect: aspect).map(mapping.view),
-                  rotation: box.rotation)
+                  rotation: box.rotation, resizesWidth: box.isText)
+    }
+}
+
+/// Estado do arraste lateral mostrado no preview.
+struct WidthDragState: Equatable {
+    /// Largura pedida (fração da largura do canvas).
+    var width: Double
+    /// Largura da moldura: a caixa visível no início mais o que a largura mudou. Não acompanha a
+    /// quebra das linhas (que muda aos saltos), então a alça segue o ponteiro.
+    var frameWidth: Double
+    /// O texto está numa faixa de legendas automáticas: a largura vale para todas.
+    var wholeTrack: Bool
+
+    var label: String {
+        let percent = String(format: "%.0f%%", width * 100)
+        return wholeTrack ? "\(percent) · todas as legendas" : percent
     }
 }
 
@@ -223,9 +296,16 @@ extension EditorModel {
     func canvasBoxes() -> [ElementBox] { CanvasLayout.boxes(in: project, at: playhead) }
 
     /// Contorno do elemento selecionado, se ele aparece no playhead. Some durante a reprodução.
+    /// Durante o arraste lateral, mostra a largura pedida, não a do texto.
     func selectionFrame(mapping: CanvasMapping) -> SelectionFrame? {
-        guard !isPlaying, let id = selection, let box = canvasBoxes().first(where: { $0.id == id }) else { return nil }
+        guard !isPlaying, let id = selection, var box = canvasBoxes().first(where: { $0.id == id }) else { return nil }
+        if let widthDrag = canvasWidthDrag { box.size.width = widthDrag.frameWidth * 2 }
         return SelectionFrame(box, mapping: mapping, aspect: project.aspectValue)
+    }
+
+    /// O texto está numa faixa de legendas automáticas (a largura da caixa vale para a faixa toda).
+    func isInAutoCaptions(_ id: UUID) -> Bool {
+        project.locate(id).map { project.tracks[$0.track].isAutoCaptions } ?? false
     }
 
     /// Clique no preview: alça ou corpo do selecionado, senão o elemento mais acima
@@ -252,8 +332,17 @@ extension EditorModel {
             selection = target.box.id
         }
         placementDrag = PlacementDrag(handle: target.handle, box: target.box,
-                                      others: boxes.filter { $0.id != target.box.id }, at: p, mapping: mapping)
+                                      others: boxes.filter { $0.id != target.box.id }, at: p, mapping: mapping,
+                                      startWidth: startWidth(target.box))
         beginGesture()
+    }
+
+    /// De onde parte o arraste lateral. Numa legenda automática, da largura de quebra da faixa:
+    /// partir da largura do texto desta legenda estreitaria todas as outras. Num texto solto,
+    /// da caixa que se vê (num texto curto, a largura de quebra fica bem além dele).
+    private func startWidth(_ box: ElementBox) -> Double {
+        guard box.isText, let style = project.segment(box.id)?.text?.style else { return 0 }
+        return isInAutoCaptions(box.id) ? style.maxWidth : min(Double(box.size.width) / 2, style.maxWidth)
     }
 
     func canvasPointerMoved(to p: CGPoint, mapping: CanvasMapping) {
@@ -262,6 +351,13 @@ extension EditorModel {
                                     snapping: PlacementDrag.snappingEnabled)
         if canvasGuides != result.guides { canvasGuides = result.guides }
         if canvasRotationLabel != result.rotationLabel { canvasRotationLabel = result.rotationLabel }
+        if case .edge = drag.handle, let width = result.width, let frameWidth = result.frameWidth {
+            // O clique sem arrastar não muda nada (nem cria um passo de desfazer).
+            guard p != drag.startPoint || canvasWidthDrag != nil else { return }
+            canvasWidthDrag = WidthDragState(width: width, frameWidth: frameWidth, wholeTrack: isInAutoCaptions(drag.box.id))
+            updateGesture { TimelineEditor.setTextWidth(&$0, segment: drag.box.id, maxWidth: width) }
+            return
+        }
         updateGesture {
             TimelineEditor.setPlacement(&$0, segment: drag.box.id, center: result.center,
                                         scale: result.scale, rotation: result.rotation)
@@ -273,6 +369,7 @@ extension EditorModel {
         placementDrag = nil
         canvasGuides = []
         canvasRotationLabel = nil
+        canvasWidthDrag = nil
         endGesture()
     }
 }
@@ -309,16 +406,22 @@ struct CanvasManipulationLayer: View {
                     }
                 SelectionOverlayDrawing(frame: model.selectionFrame(mapping: mapping),
                                         guides: model.canvasGuides.map { OverlayGuide($0, mapping: mapping) },
-                                        rotationLabel: model.canvasRotationLabel)
+                                        rotationLabel: model.canvasRotationLabel,
+                                        widthLabel: model.canvasWidthDrag?.label)
             }
         }
         .allowsHitTesting(!model.isPlaying)
     }
 
     private func cursor(at p: CGPoint, mapping: CanvasMapping) -> NSCursor {
-        if model.placementDrag != nil { return .closedHand }
-        switch model.selectionFrame(mapping: mapping)?.handle(at: p) {
+        let frame = model.selectionFrame(mapping: mapping)
+        if let drag = model.placementDrag {
+            if case .edge = drag.handle, frame?.isUpright ?? true { return .resizeLeftRight }
+            return .closedHand
+        }
+        switch frame?.handle(at: p) {
         case .rotate?, .corner?: return .crosshair
+        case .edge?: return frame?.isUpright ?? true ? .resizeLeftRight : .crosshair
         case .body?: return .openHand
         case nil:
             let hit = CanvasLayout.hitTest(mapping.canvas(p), in: model.canvasBoxes(), aspect: model.project.aspectValue)
@@ -335,6 +438,8 @@ struct SelectionOverlayDrawing: View {
     var guides: [OverlayGuide]
     /// Etiqueta de graus durante o giro.
     var rotationLabel: Double?
+    /// Etiqueta da largura durante o arraste lateral.
+    var widthLabel: String?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -351,6 +456,9 @@ struct SelectionOverlayDrawing: View {
                 stem.move(to: frame.topCenter)
                 stem.addLine(to: frame.rotationHandle)
                 ctx.stroke(stem, with: .color(Theme.accent), lineWidth: 1)
+                if frame.resizesWidth {
+                    for side in EdgeSide.allCases { drawEdgeHandle(frame.edgeHandle(side), frame: frame, in: &ctx) }
+                }
                 for corner in frame.corners {
                     let r = CGRect(x: corner.x - 4.5, y: corner.y - 4.5, width: 9, height: 9)
                     let shape = Path(roundedRect: r, cornerRadius: 2.5)
@@ -374,8 +482,28 @@ struct SelectionOverlayDrawing: View {
                     .fixedSize()
                     .position(frame.rotationHandle + frame.up * 22)
             }
+            if let widthLabel, let frame {
+                Text(widthLabel)
+                    .font(Theme.mono(11, .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Color.black.opacity(0.65), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1))
+                    .fixedSize()
+                    .position(frame.bottomCenter - frame.up * 22)
+            }
         }
         .allowsHitTesting(false)
+    }
+
+    /// Pílula vertical curta, girada com a caixa: diferente dos cantos quadrados.
+    private func drawEdgeHandle(_ point: CGPoint, frame: SelectionFrame, in ctx: inout GraphicsContext) {
+        let pill = Path(roundedRect: CGRect(x: -3, y: -8, width: 6, height: 16), cornerRadius: 3)
+            .applying(CGAffineTransform(rotationAngle: frame.rotation * .pi / 180)
+                .concatenating(CGAffineTransform(translationX: point.x, y: point.y)))
+        ctx.fill(pill, with: .color(.white))
+        ctx.stroke(pill, with: .color(Theme.accent), lineWidth: 1.5)
     }
 
     private func draw(_ guide: OverlayGuide, in ctx: inout GraphicsContext, size: CGSize) {

@@ -34,6 +34,16 @@ enum DebugSnapshot {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "legendas" {
+                await captionsScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "legendas-estilos" {
+                await captionStylesScenario(model, dir: dir)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["OPENFRAME_SNAPSHOT_SCENARIO"] == "arraste" {
                 await dragScenario(model, dir: dir)
                 NSApp.terminate(nil)
@@ -578,7 +588,8 @@ enum DebugSnapshot {
         let renderer = ImageRenderer(content: SelectionOverlayDrawing(
             frame: model.selectionFrame(mapping: mapping),
             guides: model.canvasGuides.map { OverlayGuide($0, mapping: mapping) },
-            rotationLabel: model.canvasRotationLabel)
+            rotationLabel: model.canvasRotationLabel,
+            widthLabel: model.canvasWidthDrag?.label)
             .frame(width: mapping.size.width, height: mapping.size.height))
         let scale = rep.size.width > 0 ? CGFloat(rep.pixelsWide) / rep.size.width : 2
         renderer.scale = scale
@@ -665,6 +676,298 @@ enum DebugSnapshot {
         }
     }
 
+    /// Legendas automáticas (rodar com `OPENFRAME_FAKE_TRANSCRIPTION=1` e `OPENFRAME_MODELS_DIR` numa pasta
+    /// temporária; `OPENFRAME_SNAPSHOT_SPEECH` = áudio de fala, como o do `say`, posto na timeline antes).
+    /// A janela em cada estado, a geração de verdade com as palavras falsas, os três layouts no preview com
+    /// o destaque no meio de uma frase, o inspetor "Destaque da palavra" e a edição no painel.
+    private static func captionsScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let env = ProcessInfo.processInfo.environment
+        let generation = model.captionGeneration
+        model.libraryPanel = .captions
+        model.libraryVisible = true
+
+        if let speech = env["OPENFRAME_SNAPSHOT_SPEECH"] {
+            let url = URL(fileURLWithPath: speech)
+            model.importMedia([url])
+            for _ in 0..<50 where !model.project.materials.contains(where: { $0.path == url.path }) { await wait(0.1) }
+            if let m = model.project.materials.first(where: { $0.path == url.path }) { model.addToTimeline(m) }
+            log("fala na timeline: \(url.lastPathComponent), duração \(Time.format(model.project.duration))")
+        }
+        await wait(1)
+        capture("legendas-0-painel", to: dir)
+
+        // Janela sem modelo instalado.
+        model.presentAutoCaptions()
+        await wait(1.5)
+        capture("legendas-1-opcoes-sem-modelo", to: dir)
+        generation.preset = .highlight
+        generation.downloads[.turbo] = 0.37
+        await wait(1.5)
+        capture("legendas-2-destaque-baixando-modelo", to: dir)
+        generation.downloads = [:]
+        generation.preset = .punch
+        await wait(1.5)
+        capture("legendas-3-impacto", to: dir)
+        generation.includesDownload = true
+        generation.setPhase(.downloading(received: 182_000_000, total: WhisperModel.small.byteSize))
+        await wait(0.6)
+        capture("legendas-4-gerando-baixando", to: dir)
+        generation.setPhase(.failed(TranscriptionError.engineUnavailable.localizedDescription))
+        await wait(0.6)
+        capture("legendas-5-erro", to: dir)
+        generation.setPhase(.configuring)
+
+        // Um "modelo" do tamanho certo na pasta temporária conta como instalado (a transcrição é falsa).
+        if env["OPENFRAME_MODELS_DIR"] != nil, env["OPENFRAME_FAKE_TRANSCRIPTION"] == "1" {
+            let url = generation.store.url(for: .base)
+            try? FileManager.default.createDirectory(at: generation.store.directory, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let h = try? FileHandle(forWritingTo: url) {
+                try? h.truncate(atOffset: UInt64(WhisperModel.base.byteSize))
+                try? h.close()
+            }
+            generation.refreshInstalled()
+        }
+        generation.model = .base
+        generation.preset = .phrases
+        await wait(0.6)
+        capture("legendas-6-opcoes-modelo-instalado", to: dir)
+
+        // Geração de verdade (palavras falsas), com captura durante a transcrição.
+        var shotProgress = false
+        for (index, layout) in CaptionLayout.allCases.enumerated() {
+            if !model.showAutoCaptions { model.presentAutoCaptions() }
+            generation.preset = CaptionPreset(rawValue: layout.rawValue) ?? .phrases
+            generation.replacePrevious = true
+            await wait(0.5)
+            model.generateCaptions()
+            for _ in 0..<300 where generation.phase.isRunning {
+                if !shotProgress, case .transcribing(let overall) = generation.phase, overall > 0.3 {
+                    capture("legendas-7-gerando-transcrevendo", to: dir)
+                    shotProgress = true
+                }
+                await wait(0.02)
+            }
+            log("\(layout.rawValue): \(generation.phase)")
+            if index == 0 {
+                await wait(0.4)
+                capture("legendas-8-pronto", to: dir)
+            }
+            model.showAutoCaptions = false
+            generation.setPhase(.configuring)
+            await wait(0.8)
+
+            guard let track = model.project.tracks.first(where: { $0.isAutoCaptions }) else { continue }
+            log("\(layout.rawValue): \(model.project.tracks.filter(\.isAutoCaptions).count) faixa(s) automática(s), "
+                + "\(track.segments.count) legendas; desfazer disponível: \(model.canUndo)")
+            // Meio de uma frase: a palavra do meio da 3ª legenda (ou da última).
+            let seg = track.segments[min(2, track.segments.count - 1)]
+            if let words = seg.text?.words, !words.isEmpty {
+                let w = words[words.count / 2]
+                model.seek(to: seg.targetStart + (w.start + w.end) / 2)
+            }
+            model.selection = nil
+            await wait(1.2)
+            await captureComposite("legendas-9-preview-\(layout.rawValue)", model: model, to: dir)
+            if index == 0 {
+                capture("legendas-10-painel-automaticas", to: dir)
+                model.editingCaption = seg.id
+                await wait(0.8)
+                capture("legendas-11-painel-editando", to: dir)
+                model.editingCaption = nil
+            }
+            if layout == .highlight {
+                model.selection = seg.id
+                model.inspectorTab = .text
+                await wait(1)
+                await captureInspectorScrolled("legendas-12-inspetor-destaque", fractions: [0.35, 0.5], to: dir)
+                // Texto editado com outra contagem de palavras: o destaque é ignorado e o inspetor avisa.
+                model.setText(seg.id, (seg.text?.text ?? "") + " extra")
+                await wait(0.8)
+                await captureInspectorScrolled("legendas-13-inspetor-destaque-desligado", fractions: [0.35], to: dir)
+                model.undo()
+                // Aplicar estilo a todas: muda a cor da selecionada e copia.
+                model.mutate { TimelineEditor.update(&$0, segment: seg.id) { $0.text?.style.color = RGBA(0.4, 1, 0.9) } }
+                model.applyStyleToAutoCaptions()
+                let colors = Set(model.project.tracks.filter(\.isAutoCaptions).flatMap(\.segments).compactMap { $0.text?.style.color })
+                log("aplicar estilo a todas: \(colors.count) cor(es) nas legendas automáticas")
+                await wait(1)
+                capture("legendas-14-aplicar-estilo", to: dir)
+                model.undo()
+                model.undo()
+            }
+        }
+        // Um desfazer tira a geração inteira.
+        let before = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments.count ?? 0
+        model.undo()
+        let after = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments.count ?? 0
+        log("desfazer a última geração: \(before) → \(after) legendas automáticas")
+    }
+
+    /// Rodada 3 das legendas (estilos e largura da caixa): a janela com as predefinições agrupadas,
+    /// cada predefinição nova no preview no meio da fala, as alças laterais e a mesma legenda antes
+    /// e depois de alargar pela alça (o gesto passa pelas mesmas funções do mouse).
+    /// Mesmo ambiente do cenário `legendas` (fala, transcrição falsa, pasta de modelos temporária).
+    private static func captionStylesScenario(_ model: EditorModel, dir: URL) async {
+        func wait(_ s: Double) async { try? await Task.sleep(for: .seconds(s)) }
+        let env = ProcessInfo.processInfo.environment
+        let generation = model.captionGeneration
+        model.libraryPanel = .captions
+        model.libraryVisible = true
+        if let speech = env["OPENFRAME_SNAPSHOT_SPEECH"] {
+            let url = URL(fileURLWithPath: speech)
+            model.importMedia([url])
+            for _ in 0..<50 where !model.project.materials.contains(where: { $0.path == url.path }) { await wait(0.1) }
+            if let m = model.project.materials.first(where: { $0.path == url.path }) { model.addToTimeline(m) }
+        }
+        if env["OPENFRAME_MODELS_DIR"] != nil, env["OPENFRAME_FAKE_TRANSCRIPTION"] == "1" {
+            let url = generation.store.url(for: .base)
+            try? FileManager.default.createDirectory(at: generation.store.directory, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let h = try? FileHandle(forWritingTo: url) {
+                try? h.truncate(atOffset: UInt64(WhisperModel.base.byteSize))
+                try? h.close()
+            }
+            generation.refreshInstalled()
+        }
+        generation.model = .base
+        await wait(1)
+
+        // A janela: as prévias de todos os cartões precisam de alguns segundos.
+        model.presentAutoCaptions()
+        generation.preset = .phrases
+        await wait(6)
+        capture("estilos-1-janela", to: dir)
+        generation.preset = .rise
+        await wait(1.5)
+        capture("estilos-2-janela-surgir-cor", to: dir)
+        // Projeto 9:16: as prévias seguem a proporção (estilo e segmentação do núcleo).
+        model.mutate { $0.canvas.aspect = .r9x16 }
+        await wait(6)
+        capture("estilos-2b-janela-9x16", to: dir)
+        model.undo()
+        await wait(0.5)
+
+        /// Gera com a predefinição e devolve a faixa automática.
+        func generate(_ preset: CaptionPreset) async -> Track? {
+            if !model.showAutoCaptions { model.presentAutoCaptions() }
+            generation.preset = preset
+            generation.replacePrevious = true
+            await wait(0.3)
+            model.generateCaptions()
+            for _ in 0..<300 where generation.phase.isRunning { await wait(0.02) }
+            log("\(preset.rawValue): \(generation.phase)")
+            model.showAutoCaptions = false
+            generation.setPhase(.configuring)
+            await wait(0.8)
+            return model.project.tracks.first(where: { $0.isAutoCaptions })
+        }
+        /// Playhead no meio da palavra do meio da legenda.
+        func seekMid(_ seg: Segment) {
+            guard let words = seg.text?.words, !words.isEmpty else { return model.seek(to: seg.targetStart) }
+            let w = words[words.count / 2]
+            model.seek(to: seg.targetStart + (w.start + w.end) / 2)
+        }
+
+        for preset in CaptionPreset.allCases where preset.group != .classic {
+            guard let track = await generate(preset) else { continue }
+            seekMid(track.segments[min(2, track.segments.count - 1)])
+            model.selection = nil
+            await wait(1.2)
+            await captureComposite("estilos-preview-\(preset.rawValue)", model: model, to: dir)
+            let segs = track.segments
+            log("\(preset.rawValue): revelação \(segs.first?.text?.highlight?.reveal.rawValue ?? "-"), "
+                + "palavras-chave \(segs.map { $0.text?.emphasis?.words ?? [] }), "
+                + "\\n no texto: \(segs.contains { $0.text?.text.contains("\n") == true })")
+            guard preset == .guided || preset == .editorial else { continue }
+            let seg = segs[min(2, segs.count - 1)]
+            model.selection = seg.id
+            model.inspectorTab = .text
+            await wait(1)
+            await captureInspectorScrolled("estilos-7-inspetor-\(preset.rawValue)", fractions: [0.3, 0.45, 0.6], model: model, to: dir)
+            if preset == .editorial {
+                // Ficha: liga a primeira palavra; aplicar a todas copia fonte/escala/cor, não as palavras.
+                model.mutate { TimelineEditor.update(&$0, segment: seg.id) {
+                    $0.text?.emphasis?.words = [0]
+                    $0.text?.emphasis?.color = RGBA(0.4, 1, 0.9)
+                    $0.text?.emphasis?.scale = 1.5
+                } }
+                model.applyStyleToAutoCaptions()
+                let after = model.project.tracks.first(where: { $0.isAutoCaptions })?.segments ?? []
+                log("aplicar a todas (editorial): cores \(Set(after.compactMap { $0.text?.emphasis?.color }).count), "
+                    + "escalas \(Set(after.compactMap { $0.text?.emphasis?.scale })), "
+                    + "palavras \(after.map { $0.text?.emphasis?.words ?? [] })")
+                model.undo()
+                model.undo()
+            }
+            model.selection = nil
+        }
+
+        // Largura da caixa: Frases, a legenda de 2 linhas mais curta.
+        guard let track = await generate(.phrases), let player = playerView() else { return }
+        let boxes = Dictionary(uniqueKeysWithValues: track.segments.compactMap { seg in
+            CanvasLayout.boxes(in: model.project, at: seg.targetStart + 1).first { $0.id == seg.id }.map { (seg.id, $0) }
+        })
+        for seg in track.segments {
+            log(String(format: "largura: legenda de %d caracteres, caixa %.3f × %.3f", seg.text?.text.count ?? 0,
+                       boxes[seg.id]?.size.width ?? 0, boxes[seg.id]?.size.height ?? 0))
+        }
+        let twoLines = track.segments.filter { (boxes[$0.id]?.size.height ?? 0) > 0.2 }
+        guard let seg = twoLines.min(by: { ($0.text?.text.count ?? 0) < ($1.text?.text.count ?? 0) }) ?? track.segments.first
+        else { return }
+        seekMid(seg)
+        model.selection = seg.id
+        await wait(1.2)
+        let mapping = CanvasMapping(size: player.bounds.size)
+        func describe() -> String {
+            let p = model.project
+            let widths = Set(p.tracks.first(where: { $0.isAutoCaptions })?.segments.compactMap { $0.text?.style.maxWidth } ?? [])
+            let box = model.canvasBoxes().first { $0.id == seg.id }
+            return "maxWidth na faixa \(widths.sorted().map { String(format: "%.3f", $0) }), caixa "
+                + (box.map { String(format: "%.3f × %.3f", $0.size.width, $0.size.height) } ?? "?")
+                + "; outros textos: \(p.tracks.filter { !$0.isAutoCaptions }.flatMap(\.segments).compactMap { $0.text?.style.maxWidth })"
+        }
+        guard let frame = model.selectionFrame(mapping: mapping) else { return log("largura: sem moldura") }
+        let start = frame.edgeHandle(.right)
+        log("largura: alça sob o ponto da direita = \(String(describing: frame.handle(at: start))), "
+            + "da esquerda = \(String(describing: frame.handle(at: frame.edgeHandle(.left))))")
+        log("largura antes: \(describe())")
+        await captureComposite("estilos-3-alcas", model: model, to: dir)
+
+        model.canvasPointerDown(at: start, mapping: mapping)
+        // A alça não pode pular: depois de 2 pt, a da moldura fica a 2 pt de onde estava.
+        model.canvasPointerMoved(to: start + frame.right * 2, mapping: mapping)
+        if let moved = model.selectionFrame(mapping: mapping)?.edgeHandle(.right) {
+            log(String(format: "largura: alça depois de 2 pt andou %.2f pt", (moved - start).length))
+        }
+        let steps = 12
+        // Até 108% do quadro (uma legenda de ~42 caracteres em uma linha): a alça anda metade da
+        // diferença, na escala do texto.
+        let startWidth = seg.text?.style.maxWidth ?? 0.9
+        let scale = seg.text?.style.scale ?? 1
+        let travel = CGFloat(1.08 - startWidth) * CGFloat(scale) * mapping.size.width / 2 - 2
+        for step in 1...steps {
+            model.canvasPointerMoved(to: start + frame.right * (travel * CGFloat(step) / CGFloat(steps)), mapping: mapping)
+            await wait(0.05)
+        }
+        await wait(1)
+        log("largura arrastando: etiqueta \(model.canvasWidthDrag?.label ?? "-"), \(describe())")
+        await captureComposite("estilos-4-arrastando", model: model, to: dir)
+        model.canvasPointerUp()
+        await wait(1.2)
+        log("largura depois: \(describe())")
+        await captureComposite("estilos-5-depois-de-alargar", model: model, to: dir)
+        model.undo()
+        log("largura, um desfazer: \(describe())")
+        model.redo()
+        await wait(0.5)
+
+        model.inspectorTab = .text
+        await wait(1)
+        await captureInspectorScrolled("estilos-6-inspetor-largura", fractions: [1], model: model, to: dir)
+    }
+
     private static func logZoom(_ step: String, _ model: EditorModel) {
         let playheadX = model.playhead.seconds * model.zoom - model.timelineScrollX
         let projectWidth = model.duration.seconds * model.zoom
@@ -678,9 +981,11 @@ enum DebugSnapshot {
     }
 
     /// Rola o inspetor (a rolagem mais à direita da janela) até cada fração e captura.
-    /// Com `region`, salva só o inspetor com o título e as abas acima da rolagem.
+    /// Com `region`, salva só o inspetor com o título e as abas acima da rolagem. Com `model`,
+    /// a janela inteira leva o quadro do player (`captureComposite`), que o cacheDisplay deixa preto.
     private static func captureInspectorScrolled(_ name: String, fractions: [Double] = [0.5, 1],
-                                                 region: Bool = false, to dir: URL) async {
+                                                 region: Bool = false, model: EditorModel? = nil,
+                                                 to dir: URL) async {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.height > 150 }),
               let root = window.contentView else { return }
         func scrollViews(_ view: NSView) -> [NSScrollView] {
@@ -709,6 +1014,8 @@ enum DebugSnapshot {
                 guard let rep = root.bitmapImageRepForCachingDisplay(in: area) else { continue }
                 root.cacheDisplay(in: area, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("\(file).png"))
+            } else if let model {
+                await captureComposite(file, model: model, to: dir)
             } else {
                 capture(file, to: dir)
             }

@@ -119,6 +119,7 @@ enum Animations {
         }
         var scale = max(peak(seg.animationIn), peak(seg.animationOut))
         if let loop = seg.animationLoop, loop.kind == .pulse { scale *= 1 + 0.05 * clamp(loop.intensity) }
+        if let h = seg.text?.activeHighlight { scale *= max(1, h.style.scale) }
         return scale
     }
 
@@ -136,8 +137,9 @@ enum Animations {
 
     /// O texto usa o caminho por unidade no clipe inteiro (não só durante a animação),
     /// para não haver pulo entre os dois desenhos. Brilho e reflexo também precisam
-    /// das letras separadas da sombra.
+    /// das letras separadas da sombra, e o destaque da palavra falada, das palavras separadas.
     static func usesUnits(_ seg: Segment) -> Bool {
+        if seg.text?.activeHighlight != nil { return true }
         if let a = seg.animationIn, isPerUnit(a.kind) { return true }
         if let a = seg.animationOut, isPerUnit(a.kind) { return true }
         if let l = seg.animationLoop, l.kind == .glow || l.kind == .shine { return true }
@@ -146,7 +148,16 @@ enum Animations {
 
     /// Granularidade usada no instante: a da animação ativa; em repouso, a da entrada
     /// (ou da saída), para o desenho não mudar quando a animação termina.
+    /// Com o destaque da palavra, nunca mais grossa que a palavra (na digitação, letra).
     static func granularity(for seg: Segment, state: AnimationState) -> TextGranularity {
+        let g = baseGranularity(for: seg, state: state)
+        guard let h = seg.text?.activeHighlight else { return g }
+        // A digitação revela letra a letra.
+        if h.style.reveal == .type { return .letter }
+        return g == .line ? .word : g
+    }
+
+    private static func baseGranularity(for seg: Segment, state: AnimationState) -> TextGranularity {
         if let u = state.unit { return granularity(u.kind) ?? .line }
         if state.reveal < 1 { return .letter }
         if let a = seg.animationIn, isPerUnit(a.kind), let g = granularity(a.kind) { return g }

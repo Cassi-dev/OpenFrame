@@ -30,6 +30,11 @@ struct ContentView: View {
             ExportSheet()
                 .environment(model)
         }
+        .sheet(isPresented: $model.showAutoCaptions) {
+            AutoCaptionsSheet()
+                .environment(model)
+                .interactiveDismissDisabled(model.captionGeneration.phase.isRunning)
+        }
         .alert("OpenFrame", isPresented: Binding(get: { model.errorMessage != nil },
                                                set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") {}

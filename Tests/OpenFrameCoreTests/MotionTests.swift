@@ -284,7 +284,11 @@ struct MotionTests {
     }
 
     @Test("Desempenho: 40 letras em 1080p")
-    func performance() {
+    func performance() async throws {
+        try await HeavyWork.run { measurePerformance() }
+    }
+
+    private func measurePerformance() {
         var p = Project()
         p.canvas.aspect = .r16x9
         let text = "Quarenta letras animadas em cascata aqui"
@@ -307,11 +311,17 @@ struct MotionTests {
             let first = Date()
             frame(0, q) // monta os sprites
             let build = Date().timeIntervalSince(first)
-            let start = Date()
-            let frames = 30
-            for i in 0..<frames { frame(Micros(i) * 33_333, q) }
-            let perFrame = Date().timeIntervalSince(start) / Double(frames)
-            report.append("\(kind.rawValue): \(Int(build * 1000)) ms de montagem, \(String(format: "%.1f", perFrame * 1000)) ms/quadro")
+            // Aquecimento (caches do Core Image) e mediana por quadro: um quadro solto atrasado pela
+            // máquina ocupada não derruba a medição.
+            for i in 0..<3 { frame(Micros(i) * 33_333, q) }
+            var times: [Double] = []
+            for i in 0..<30 {
+                let start = Date()
+                frame(Micros(i) * 33_333, q)
+                times.append(Date().timeIntervalSince(start))
+            }
+            let perFrame = median(times)
+            report.append("\(kind.rawValue): \(Int(build * 1000)) ms de montagem, mediana \(String(format: "%.1f", perFrame * 1000)) ms/quadro, pior \(String(format: "%.1f", times.max()! * 1000)) ms")
             // Folga para a máquina ocupada com os outros testes em paralelo.
             #expect(perFrame < 0.1)
         }
