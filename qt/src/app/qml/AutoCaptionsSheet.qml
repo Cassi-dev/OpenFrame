@@ -12,7 +12,11 @@ T.Popup {
     modal: true
     padding: 0
     closePolicy: gen.running ? T.Popup.NoAutoClose : T.Popup.CloseOnEscape
-    visible: Editor.showAutoCaptions
+    // Abre e fecha pela mudança, não por `visible: Editor.showAutoCaptions`: o
+    // modalCount de onOpened/onClosed avisa pelo mesmo uiChanged e o vínculo
+    // entraria em laço (por isso também o callLater).
+    readonly property bool wanted: Editor.showAutoCaptions
+    onWantedChanged: Qt.callLater(() => wanted ? open() : close())
     onOpened: Editor.modalCount += 1
     onClosed: {
         Editor.modalCount -= 1

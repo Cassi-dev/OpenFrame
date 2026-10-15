@@ -96,7 +96,8 @@ QtObject {
         "lock": "\ue10b",
         "list-checks": "\ue1d0",
         "highlighter": "\ue0f4",
-        "hard-drive-download": "\ue4e5"
+        "hard-drive-download": "\ue4e5",
+        "paintbrush": "\ue2e7"
     })
 
     function glyph(name) { return glyphs[name] || "" }

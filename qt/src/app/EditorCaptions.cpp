@@ -2,6 +2,7 @@
 // `EditorModel` do Mac que trata das legendas).
 
 #include "EditorModel.h"
+#include "CanvasCore.h"
 #include "ProjectStore.h"
 #include "TimelineEditor.h"
 
@@ -240,6 +241,58 @@ qreal EditorModel::captionPreviewAspect() const
         if (const auto r = ratio(a); r && std::abs(std::log(*r / value)) < std::abs(std::log(best / value)))
             best = *r;
     return best;
+}
+
+void EditorModel::setTextWidth(qreal width)
+{
+    if (!m_selection)
+        return;
+    const QUuid id = *m_selection;
+    mutate([&](Project &p) { CanvasCore::setTextWidth(p, id, width); }, ProjectStore::uuidString(id) + "boxWidth");
+}
+
+QVariantList EditorModel::revealOptions() const
+{
+    QVariantList list;
+    for (auto r : allCases<WordReveal>())
+        list.append(QVariantMap{{"value", enumKey(r)}, {"title", displayName(r)}});
+    return list;
+}
+
+void EditorModel::toggleEmphasisWord(int index)
+{
+    if (!m_selection)
+        return;
+    const QUuid id = *m_selection;
+    mutate([&](Project &p) {
+        TimelineEditor::update(p, id, [&](Segment &s) {
+            if (!s.text || !s.text->emphasis)
+                return;
+            QList<int> &words = s.text->emphasis->words;
+            if (words.contains(index))
+                words.removeAll(index);
+            else
+                words.append(index);
+            std::sort(words.begin(), words.end());
+        });
+    });
+}
+
+void EditorModel::setEmphasisFont(const QString &family)
+{
+    if (!m_selection)
+        return;
+    const QUuid id = *m_selection;
+    const QStringList faces = fontFaces(family);
+    mutate([&](Project &p) {
+        TimelineEditor::update(p, id, [&](Segment &s) {
+            if (!s.text || !s.text->emphasis)
+                return;
+            s.text->emphasis->fontName = family;
+            if (!faces.contains(s.text->emphasis->fontFace))
+                s.text->emphasis->fontFace.clear();
+        });
+    });
 }
 
 } // namespace of

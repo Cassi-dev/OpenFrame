@@ -369,6 +369,14 @@ public:
     /// Edição em linha no painel: só apara as pontas e não grava se não mudou.
     Q_INVOKABLE void setCaptionText(const QString &id, const QString &text);
     Q_INVOKABLE void deleteCaption(const QString &id);
+    /// Largura da caixa do texto selecionado (como as alças: numa faixa automática, vale para todas).
+    Q_INVOKABLE void setTextWidth(qreal width);
+    /// Revelações das palavras: [{value, title}].
+    Q_INVOKABLE QVariantList revealOptions() const;
+    /// Liga ou desliga a ênfase de uma palavra (índice de `TextContent::wordsOf`).
+    Q_INVOKABLE void toggleEmphasisWord(int index);
+    /// Fonte da palavra-chave; o estilo volta ao padrão se a família nova não o tiver.
+    Q_INVOKABLE void setEmphasisFont(const QString &family);
     /// Fundo dos cartões de estilo: o primeiro quadro do vídeo da faixa principal (vazio sem vídeo).
     Q_INVOKABLE QString captionBackdrop() const;
     /// Proporção (largura/altura) mais próxima entre as do app, para as prévias dos cartões.

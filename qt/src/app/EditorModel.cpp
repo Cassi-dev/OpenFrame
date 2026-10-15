@@ -1,9 +1,9 @@
 #include "EditorModel.h"
-#include "MotionCore.h"
 
 #include "CoreBridge.h"
 #include "FontCatalog.h"
 #include "MediaCache.h"
+#include "MotionCore.h"
 #include "ProjectStore.h"
 #include "Subtitles.h"
 #include "TextPresets.h"
@@ -512,6 +512,11 @@ QVariantMap EditorModel::segmentMap(const Segment &seg) const
     if (seg.text) {
         const QColor color = seg.text->style.color.color();
         map["textColor"] = color;
+    }
+    if (seg.text) {
+        map["wordList"] = TextContent::wordsOf(seg.text->text);
+        map["highlightActive"] = seg.text->activeHighlight().has_value();
+        map["isAutoCaption"] = CaptionsCore::isAutoCaption(m_project, seg.id);
     }
     if (const auto loop = MotionCore::loop(m_project, seg.id))
         map["loop"] = QVariantMap{{"kind", loop->kind},

@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QQuickWindow>
+#include <algorithm>
 
 namespace of {
 
@@ -34,9 +35,10 @@ void drawGuide(QPainter *painter, const OverlayGuide &guide, QSizeF size)
         painter->drawLine(QPointF(0, guide.position), QPointF(size.width(), guide.position));
 }
 
-/// Etiqueta em cápsula centrada em `center`.
-void drawLabel(QPainter *painter, const QString &text, QPointF center, const QColor &fill, const QColor &textColor,
-               const QColor &border = Qt::transparent)
+/// Etiqueta em cápsula centrada em `center`, empurrada para dentro de `bounds` (o
+/// item recorta o que passa da borda; no Mac, o SwiftUI deixava vazar).
+void drawLabel(QPainter *painter, const QString &text, QPointF center, const QSizeF &bounds, const QColor &fill,
+               const QColor &textColor, const QColor &border = Qt::transparent)
 {
     QFont font(QStringLiteral("Inter"));
     font.setPixelSize(11);
@@ -44,6 +46,9 @@ void drawLabel(QPainter *painter, const QString &text, QPointF center, const QCo
     font.setFeature(QFont::Tag("tnum"), 1);
     const QFontMetricsF fm(font);
     const double w = fm.horizontalAdvance(text) + 16, h = 20;
+    const double margin = 2;
+    center.setX(std::clamp(center.x(), w / 2 + margin, std::max(w / 2 + margin, bounds.width() - w / 2 - margin)));
+    center.setY(std::clamp(center.y(), h / 2 + margin, std::max(h / 2 + margin, bounds.height() - h / 2 - margin)));
     const QRectF rect(center.x() - w / 2, center.y() - h / 2, w, h);
     painter->setPen(border.alpha() > 0 ? QPen(border, 1) : Qt::NoPen);
     painter->setBrush(fill);
@@ -121,12 +126,12 @@ void CanvasOverlay::draw(QPainter *painter, const EditorModel *model, const Canv
 
     if (const auto degrees = model->canvasRotationLabel())
         drawLabel(painter, QString::number(std::lround(*degrees)) + QStringLiteral("°"),
-                  frame->rotationHandle() + frame->up() * 22, accent, Qt::black);
+                  frame->rotationHandle() + frame->up() * 22, mapping.size, accent, Qt::black);
     if (const auto width = model->canvasWidthDrag()) {
         QColor border = accent;
         border.setAlphaF(0.7);
-        drawLabel(painter, width->label(), frame->bottomCenter() - frame->up() * 22, QColor(0, 0, 0, 166), Qt::white,
-                  border);
+        drawLabel(painter, width->label(), frame->bottomCenter() - frame->up() * 22, mapping.size,
+                  QColor(0, 0, 0, 166), Qt::white, border);
     }
 }
 

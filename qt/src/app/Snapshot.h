@@ -27,6 +27,9 @@ class EditorModel;
 /// - `OPENFRAME_SNAPSHOT_SCENARIO=arraste`: arrastes espelhados na timeline.
 /// - `OPENFRAME_SNAPSHOT_SCENARIO=motion` (com `OPENFRAME_SNAPSHOT_MEDIA`): seleção,
 ///   alças, giro, escala, largura e guias no preview, e a aba Animação.
+/// - `OPENFRAME_SNAPSHOT_SCENARIO=legendas` (com `OPENFRAME_SNAPSHOT_MEDIA` e
+///   `OPENFRAME_FAKE_TRANSCRIPTION=1`): janela das legendas automáticas, cada estilo
+///   no preview no meio da fala, painel e inspetor.
 class Snapshot : public QObject
 {
     Q_OBJECT
@@ -50,6 +53,7 @@ private:
     void editorScenario();
     void dragScenario();
     void motionScenario();
+    void captionsScenario();
     /// Arrasta no overlay do preview de `from` a `to` (pontos do item), em passos,
     /// pelas mesmas funções do mouse; com `release` falso, o gesto fica aberto.
     void canvasDrag(QPointF from, QPointF to, bool snapping = true, bool release = true);
@@ -59,6 +63,8 @@ private:
     /// Recorte do item `objectName` (com `above` px acima, para o título e as abas).
     void captureItem(const QString &objectName, const QString &name, int above = 0);
     void scrollInspector(double fraction);
+    /// Rola o inspetor até o item `objectName`, deixando `above` pt acima dele.
+    void scrollInspectorTo(const QString &objectName, qreal above = 0);
     QQuickWindow *window() const;
     QQuickItem *findItem(const QString &objectName) const;
     void log(const QString &message) const;
