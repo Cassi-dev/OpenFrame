@@ -1,5 +1,6 @@
 #include "MotionCore.h"
 
+#include "AnimationPreview.h"
 #include "CoreBridge.h"
 #include "ProjectStore.h"
 #include "TimelineEditor.h"
@@ -12,7 +13,7 @@ namespace of::MotionCore {
 
 namespace {
 
-/// Ícones (Lucide) enquanto a miniatura animada não fica pronta.
+/// Ícones (Lucide) enquanto os quadros da miniatura são gerados, como no Mac.
 const QHash<QString, QString> &icons()
 {
     static const QHash<QString, QString> map{
@@ -86,13 +87,33 @@ void setLoop(Project &p, const QUuid &id, const std::optional<Loop> &value)
 
 QList<QImage> frames(const Segment &seg, const QImage &mediaImage, const QString &part, QSize size, int count)
 {
-    // Ligado na etapa 2 do núcleo (`AnimationPreview::frames`).
-    Q_UNUSED(seg)
-    Q_UNUSED(mediaImage)
-    Q_UNUSED(part)
-    Q_UNUSED(size)
-    Q_UNUSED(count)
-    return {};
+    const QString kind = part.section(':', 0, 0);
+    const QString value = part.section(':', 1);
+    AnimationPreview::Part p;
+    if (kind == QLatin1String("loop")) {
+        const auto loop = enumFromKey<LoopKind>(value);
+        if (!loop)
+            return {};
+        p = AnimationPreview::Part::loopOf(*loop);
+    } else {
+        const auto animation = enumFromKey<AnimationKind>(value);
+        if (!animation || (kind != QLatin1String("entry") && kind != QLatin1String("exit")))
+            return {};
+        p = kind == QLatin1String("entry") ? AnimationPreview::Part::entry(*animation)
+                                           : AnimationPreview::Part::exit(*animation);
+    }
+    AnimationPreview::Subject subject;
+    if (seg.text) {
+        TextContent content;
+        content.text = shortText(seg.text->text);
+        content.style = seg.text->style;
+        subject = content;
+    } else if (!mediaImage.isNull()) {
+        subject = mediaImage;
+    } else {
+        return {};
+    }
+    return AnimationPreview::frames(subject, p, size, count);
 }
 
 QString subjectKey(const Segment &seg)

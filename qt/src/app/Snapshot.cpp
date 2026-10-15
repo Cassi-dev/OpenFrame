@@ -1,8 +1,11 @@
 #include "Snapshot.h"
 
+#include "AnimationThumbs.h"
 #include "CanvasOverlay.h"
 #include "CaptionsCore.h"
 #include "EditorModel.h"
+#include "MediaCache.h"
+#include "MotionCore.h"
 #include "ProjectStore.h"
 
 #include <QCoreApplication>
@@ -11,6 +14,7 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonDocument>
+#include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -76,9 +80,9 @@ void Snapshot::then(int ms, Step step)
     m_steps.push_back({ms, std::move(step), {}, 0});
 }
 
-void Snapshot::waitUntil(std::function<bool()> done, int timeoutMs)
+void Snapshot::waitUntil(std::function<bool()> done, int timeoutMs, const QString &what, bool required)
 {
-    m_steps.push_back({0, [] {}, std::move(done), timeoutMs});
+    m_steps.push_back({0, [] {}, std::move(done), timeoutMs, what, required});
 }
 
 void Snapshot::next()
@@ -101,10 +105,17 @@ void Snapshot::next()
             const bool done = pending.until();
             if (!done && clock->elapsed() < pending.timeoutMs)
                 return;
-            if (!done)
-                log(QStringLiteral("tempo esgotado esperando (%1 ms)").arg(pending.timeoutMs));
             poll->deleteLater();
             delete clock;
+            if (!done) {
+                const QString message = QStringLiteral("tempo esgotado esperando %1 (%2 ms)")
+                                            .arg(pending.what.isEmpty() ? QStringLiteral("um passo") : pending.what)
+                                            .arg(pending.timeoutMs);
+                if (pending.required)
+                    fail(message);
+                else
+                    log(message);
+            }
             next();
         });
         poll->start();
@@ -113,8 +124,21 @@ void Snapshot::next()
 
 void Snapshot::finish()
 {
+    if (m_failures > 0) {
+        log(QStringLiteral("fim, com %1 falha(s)").arg(m_failures));
+        QCoreApplication::exit(1);
+        return;
+    }
     log("fim");
     QCoreApplication::quit();
+}
+
+void Snapshot::fail(const QString &message)
+{
+    ++m_failures;
+    log("FALHOU: " + message);
+    m_steps.clear();
+    then(0, [this] { finish(); });
 }
 
 QQuickWindow *Snapshot::window() const
@@ -178,6 +202,38 @@ void Snapshot::captureItem(const QString &objectName, const QString &name, int a
     log(name);
 }
 
+void Snapshot::saveFrameSheet(const QString &name, const QList<std::pair<QString, QList<QImage>>> &rows, int columns)
+{
+    QSize cell(1, 1);
+    for (const auto &row : rows)
+        for (const QImage &f : row.second)
+            cell = cell.expandedTo(f.size());
+    const int label = 150, gap = 6;
+    QImage sheet(label + columns * (cell.width() + gap), int(rows.size()) * (cell.height() + gap),
+                 QImage::Format_ARGB32_Premultiplied);
+    sheet.fill(QColor(40, 40, 40));
+    QPainter painter(&sheet);
+    painter.setPen(Qt::white);
+    QFont font(QStringLiteral("Inter"));
+    font.setPixelSize(13);
+    painter.setFont(font);
+    for (qsizetype r = 0; r < rows.size(); ++r) {
+        const int y = int(r) * (cell.height() + gap);
+        const QList<QImage> &frames = rows[r].second;
+        painter.drawText(QRect(6, y, label - 12, cell.height()), Qt::AlignVCenter | Qt::TextWordWrap,
+                         rows[r].first + QStringLiteral(" (%1)").arg(frames.size()));
+        for (int c = 0; c < columns && !frames.isEmpty(); ++c) {
+            const QImage &f = frames[std::min<qsizetype>(qsizetype(c) * frames.size() / columns, frames.size() - 1)];
+            const QRect target(label + c * (cell.width() + gap), y, cell.width(), cell.height());
+            painter.fillRect(target, QColor(20, 20, 20));
+            painter.drawImage(target.topLeft() + QPoint((cell.width() - f.width()) / 2, (cell.height() - f.height()) / 2), f);
+        }
+    }
+    painter.end();
+    sheet.save(m_dir.filePath(name + ".png"));
+    log(name);
+}
+
 void Snapshot::scrollInspectorTo(const QString &objectName, qreal above)
 {
     QQuickItem *flick = findItem(QStringLiteral("inspectorScroll"));
@@ -219,7 +275,8 @@ void Snapshot::homeScenario()
 /// Projeto novo com as mídias de uma pasta (a CI gera vídeo, foto e áudio de teste).
 void Snapshot::mediaScenario(const QString &mediaDir)
 {
-    then(0, [this, mediaDir] {
+    auto expected = std::make_shared<int>(0);
+    then(0, [this, mediaDir, expected] {
         m_model->createProject("original");
         QList<QUrl> urls;
         QDirIterator it(mediaDir, QDir::Files);
@@ -227,9 +284,15 @@ void Snapshot::mediaScenario(const QString &mediaDir)
             urls << QUrl::fromLocalFile(it.next());
         std::sort(urls.begin(), urls.end());
         log(QStringLiteral("importando %1 arquivos de %2").arg(urls.size()).arg(mediaDir));
+        if (urls.isEmpty())
+            return fail("nenhuma mídia em " + mediaDir);
+        *expected = int(urls.size());
         m_model->importMedia(urls);
     });
-    then(4000, [this] {
+    waitUntil([this, expected] { return m_model->project().materials.size() >= *expected; }, 30'000,
+              QStringLiteral("a importação das mídias"));
+    // Folga para as miniaturas, que chegam depois dos materiais.
+    then(3000, [this] {
         // Visuais na faixa principal, áudio na faixa de áudio, e um texto.
         const Project p = m_model->project();
         for (const auto &m : p.materials)
@@ -433,9 +496,10 @@ void Snapshot::editorScenario()
         m_model->startExport(QUrl::fromLocalFile(path));
         log("exportando para " + path);
     });
-    waitUntil([this] { return m_model->exportProgress() > 0.3 || m_model->exportPhase() != "exporting"; }, 60'000);
+    waitUntil([this] { return m_model->exportProgress() > 0.3 || m_model->exportPhase() != "exporting"; }, 60'000,
+              QStringLiteral("30% da exportação"), false);
     then(0, [this] { capture("6b-exportando"); });
-    waitUntil([this] { return m_model->exportPhase() != "exporting"; }, 300'000);
+    waitUntil([this] { return m_model->exportPhase() != "exporting"; }, 300'000, QStringLiteral("o fim da exportação"));
     then(300, [this] {
         log(QStringLiteral("exportação: %1 %2%3")
                 .arg(m_model->exportPhase(), m_model->exportResult(), m_model->exportError()));
@@ -522,8 +586,7 @@ void Snapshot::canvasDrag(QPointF from, QPointF to, bool snapping, bool release)
 {
     auto *overlay = qobject_cast<CanvasOverlay *>(findItem(QStringLiteral("canvasOverlay")));
     if (!overlay) {
-        log("motion: overlay não encontrado");
-        return;
+        return fail("overlay do preview não encontrado");
     }
     const CanvasMapping mapping = overlay->mapping();
     m_model->canvasPointerDown(from, mapping);
@@ -606,7 +669,7 @@ void Snapshot::motionScenario()
         const int before = countUndo();
         const auto f = probe->frame();
         if (!f)
-            return log("motion: texto fora do playhead");
+            return fail("motion: texto fora do playhead");
         const QPointF knob = f->rotationHandle();
         const QPointF to = f->center + SelectionFrame::rotate(knob - f->center, 32);
         canvasDrag(knob, to, true, false);
@@ -711,14 +774,14 @@ void Snapshot::motionScenario()
                 .arg(m_model->isPlaying() ? "sim" : "não", m_model->playheadText()));
     });
     then(400, [this] { capture("motion-9-animacao-tocando"); });
-    waitUntil([this] { return !m_model->isPlaying(); }, 5000);
+    waitUntil([this] { return !m_model->isPlaying(); }, 5000, QStringLiteral("o fim do trecho da entrada"));
     then(300, [this] {
         log(QStringLiteral("motion: depois do trecho, playhead %1, entrada %2")
                 .arg(m_model->playheadText(),
                      m_model->selectedSegment().value("animationIn").toMap().value("kind").toString()));
         m_model->setLoop("pulse");
     });
-    waitUntil([this] { return !m_model->isPlaying(); }, 8000);
+    waitUntil([this] { return !m_model->isPlaying(); }, 8000, QStringLiteral("o fim do trecho do loop"));
     then(300, [this] { scrollInspector(1); });
     then(500, [this] {
         log("motion: loop " + QString::fromUtf8(QJsonDocument::fromVariant(m_model->selectedSegment().value("loop"))
@@ -731,6 +794,32 @@ void Snapshot::motionScenario()
         m_model->setInspectorTab("animation");
     });
     then(800, [this] { capture("motion-11-animacao-video"); });
+
+    // Quadros das miniaturas (os mesmos do AnimatedThumb), do texto e do vídeo.
+    then(0, [this] {
+        const Project p = m_model->project();
+        const auto text = p.segment(QUuid::fromString(firstOfKind(p, TrackKind::Text)));
+        const auto video = p.segment(QUuid::fromString(firstMainSegment(p)));
+        const QList<QImage> thumbs =
+            video && video->materialId ? MediaCache::instance()->thumbnails(idString(*video->materialId)) : QList<QImage>();
+        QList<std::pair<QString, QList<QImage>>> rows;
+        const QSize size = AnimatedThumb::pixelSize;
+        for (const QString part : {"entry:fade", "entry:zoomIn", "entry:typewriter", "entry:wordByWord", "entry:cascade",
+                                   "entry:decode", "exit:slideLeft", "loop:pulse", "loop:shine"})
+            if (text)
+                rows.append({"texto " + part, MotionCore::frames(*text, {}, part, size, part.startsWith("loop") ? 60 : 30)});
+        for (const QString part : {"entry:zoomIn", "entry:spin", "loop:float"})
+            if (video && !thumbs.isEmpty())
+                rows.append({"vídeo " + part, MotionCore::frames(*video, thumbs.first(), part, size,
+                                                                 part.startsWith("loop") ? 60 : 30)});
+        int empty = 0;
+        for (const auto &row : rows)
+            empty += row.second.isEmpty() ? 1 : 0;
+        log(QStringLiteral("motion: miniaturas, %1 tiras, %2 vazias").arg(rows.size()).arg(empty));
+        if (rows.isEmpty() || empty > 0)
+            return fail("motion: miniaturas sem quadros");
+        saveFrameSheet(QStringLiteral("motion-12-miniaturas-quadros"), rows, 6);
+    });
 
     // Na reprodução, o contorno some e o clique não responde.
     then(300, [this] { m_model->togglePlay(); });
@@ -758,7 +847,10 @@ void Snapshot::soundScenario()
                 .arg(m_model->playheadText())
                 .arg((m_model->playheadMicros() - *start) / 1000));
         capture("som-1-tocando");
+        const Micros moved = m_model->playheadMicros() - *start;
         m_model->togglePlay();
+        if (moved < 1'000'000)
+            fail(QStringLiteral("som: a reprodução não andou (%1 ms em 3 s)").arg(moved / 1000));
     });
 }
 
@@ -803,24 +895,48 @@ void Snapshot::captionsScenario()
     auto seekMidCaption = [this] {
         const auto seg = autoCaption(m_model->project(), 1);
         if (!seg)
-            return log("legendas: sem faixa automática");
+            return fail("legendas: sem faixa automática");
         m_model->seekMicros(seg->targetStart + seg->targetDuration() * 45 / 100);
     };
-    auto generate = [this, gen](const QString &preset) {
+    // Modelo instalado (gera sem baixar) e um ausente (para o estado de erro do download).
+    auto installed = std::make_shared<QString>();
+    auto missing = std::make_shared<QString>();
+    auto generate = [this, gen, installed](const QString &preset) {
+        gen->setModel(*installed);
         gen->setPreset(preset);
         gen->setReplacePrevious(m_model->hasAutoCaptions());
         m_model->generateCaptions();
     };
+    // A geração tem que terminar com legendas numa faixa automática; senão, as
+    // capturas seguintes sairiam vazias.
+    auto awaitGeneration = [this, gen](const QString &preset) {
+        waitUntil([gen] { return !gen->running(); }, 10'000, "a geração " + preset);
+        then(0, [this, gen, preset] {
+            if (gen->phase() != QLatin1String("finished") || !autoCaptionTrack(m_model->project()))
+                fail(QStringLiteral("legendas: a geração %1 falhou (fase %2, erro \"%3\")")
+                         .arg(preset, gen->phase(), gen->error()));
+        });
+    };
 
     // Janela: opções, modelos e os cartões dos estilos. Sem o texto padrão do projeto,
     // que ficaria por cima das legendas nas capturas.
-    then(0, [this, gen] {
+    then(0, [this, gen, installed, missing] {
+        for (const auto &m : CaptionsCore::models()) {
+            QString &slot = gen->engine()->isInstalled(m.id) ? *installed : *missing;
+            if (slot.isEmpty())
+                slot = m.id;
+        }
+        log(QStringLiteral("legendas: modelo instalado \"%1\", ausente \"%2\"").arg(*installed, *missing));
+        if (installed->isEmpty())
+            return fail(QStringLiteral("legendas: nenhum modelo instalado em %1; o cenário gera com um modelo "
+                                       "instalado (OPENFRAME_MODELS_DIR) e a transcrição falsa")
+                            .arg(qEnvironmentVariable("OPENFRAME_MODELS_DIR", QStringLiteral("(pasta padrão)"))));
         m_model->deleteCaption(firstOfKind(m_model->project(), TrackKind::Text));
         m_model->setSelection({});
         m_model->presentAutoCaptions();
         gen->setLanguage(QStringLiteral("pt"));
-        log(QStringLiteral("legendas: modelo sugerido %1, problema da fonte \"%2\"")
-                .arg(gen->model(), m_model->captionSourceProblem()));
+        log(QStringLiteral("legendas: modelo sugerido %1, problema da fonte \"%2\", fundo dos cartões \"%3\"")
+                .arg(gen->model(), m_model->captionSourceProblem(), m_model->captionBackdrop()));
     });
     then(1200, [this] { capture("legendas-1-janela"); });
     auto scrollForm = [this] {
@@ -848,27 +964,29 @@ void Snapshot::captionsScenario()
         gen->setPhase(QStringLiteral("downloading"), 0.42);
     });
     then(500, [this] { capture("legendas-4-baixando"); });
-    then(0, [this, gen] {
+    then(0, [this, gen, missing] {
         gen->backToOptions();
-        gen->setModel(QStringLiteral("small"));
-        log(QStringLiteral("legendas: small instalado = %1").arg(gen->engine()->isInstalled("small") ? "sim" : "não"));
+        if (missing->isEmpty())
+            return log("legendas: todos os modelos instalados, sem a captura do erro do download");
+        gen->setModel(*missing);
         m_model->generateCaptions();
     });
-    waitUntil([gen] { return gen->phase() == "failed"; }, 3000);
-    then(300, [this, gen] {
+    waitUntil([gen, missing] { return missing->isEmpty() || gen->phase() == "failed"; }, 3000,
+              QStringLiteral("o erro do download"));
+    then(300, [this, gen, missing] {
+        if (missing->isEmpty())
+            return;
         log("legendas: erro = " + gen->error());
         capture("legendas-5-erro");
         gen->backToOptions();
-        gen->setModel(QStringLiteral("base"));
-        log(QStringLiteral("legendas: base instalado = %1").arg(gen->engine()->isInstalled("base") ? "sim" : "não"));
     });
     then(0, [generate] { generate(QStringLiteral("highlight")); });
-    waitUntil([gen] { return gen->phase() == "transcribing"; }, 3000);
+    waitUntil([gen] { return gen->phase() == "transcribing"; }, 3000, QStringLiteral("a fase transcrevendo"));
     then(0, [this, gen] {
         log(QStringLiteral("legendas: %1, %2%").arg(gen->phase()).arg(qRound(gen->progress() * 100)));
         capture("legendas-6-transcrevendo");
     });
-    waitUntil([gen] { return !gen->running(); }, 5000);
+    awaitGeneration(QStringLiteral("highlight"));
     then(300, [this, gen] {
         log(QStringLiteral("legendas: fase %1, %2 legendas, erro \"%3\"")
                 .arg(gen->phase()).arg(gen->resultCount()).arg(gen->error()));
@@ -891,7 +1009,7 @@ void Snapshot::captionsScenario()
         const QString id = presets[i].id;
         const QString name = QStringLiteral("legendas-estilo-%1-%2").arg(i + 1, 2, 10, QLatin1Char('0')).arg(id);
         then(400, [generate, id] { generate(id); });
-        waitUntil([gen] { return !gen->running(); }, 5000);
+        awaitGeneration(id);
         then(0, [this, seekMidCaption] {
             m_model->closeAutoCaptions();
             m_model->setSelection({});
@@ -909,7 +1027,7 @@ void Snapshot::captionsScenario()
     }
     // Painel Legendas: lista, edição em linha (com o U+00A0, que o Frases usa) e a lixeira.
     then(400, [generate] { generate(QStringLiteral("phrases")); });
-    waitUntil([gen] { return !gen->running(); }, 5000);
+    awaitGeneration(QStringLiteral("phrases"));
     then(300, [this] {
         m_model->closeAutoCaptions();
         m_model->setLibraryPanel(QStringLiteral("captions"));
@@ -946,12 +1064,12 @@ void Snapshot::captionsScenario()
 
     // Inspetor da legenda: o destaque com a revelação (Leitura guiada), depois a
     // palavra-chave e a largura da caixa (Editorial).
-    auto inspectCaption = [this, gen, generate, seekMidCaption](const QString &preset) {
+    auto inspectCaption = [this, generate, awaitGeneration, seekMidCaption](const QString &preset) {
         then(0, [this, generate, preset] {
             m_model->presentAutoCaptions();
             generate(preset);
         });
-        waitUntil([gen] { return !gen->running(); }, 5000);
+        awaitGeneration(preset);
         then(0, [this, seekMidCaption] {
             m_model->closeAutoCaptions();
             m_model->setLibraryVisible(false);
@@ -996,7 +1114,7 @@ void Snapshot::captionsScenario()
         auto *o = qobject_cast<CanvasOverlay *>(findItem(QStringLiteral("canvasOverlay")));
         const auto f = o ? m_model->selectionFrame(o->mapping()) : std::nullopt;
         if (!f)
-            return log("legendas: sem contorno na legenda");
+            return fail("legendas: sem contorno na legenda");
         // Até 30%: o texto passa de 2 para 3 linhas e a quebra muda de verdade. A largura
         // anda 2 × deslocamento da alça ÷ (largura do quadro × escala), a partir da da faixa.
         const auto seg = m_model->project().segment(*m_model->selectionId());
@@ -1019,6 +1137,22 @@ void Snapshot::captionsScenario()
         log("legendas: larguras na faixa depois do gesto: " + widths.join(", "));
     });
     then(600, [this] { capture("legendas-14-depois-da-largura"); });
+
+    // Quadros das prévias dos cartões (as mesmas tiras da janela), na proporção do projeto.
+    then(0, [this, gen] {
+        const AspectRatio aspect = CaptionsCore::Preview::nearestAspect(m_model->project().aspectValue());
+        QList<std::pair<QString, QList<QImage>>> rows;
+        int empty = 0;
+        for (const auto &p : CaptionsCore::presets()) {
+            const auto accent = p.usesAccent ? std::optional<QColor>(gen->highlightColor()) : std::nullopt;
+            rows.append({p.name, CaptionsCore::Preview::frames(p.id, accent, aspect)});
+            empty += rows.last().second.isEmpty() ? 1 : 0;
+        }
+        log(QStringLiteral("legendas: prévias dos cartões, %1 tiras, %2 vazias").arg(rows.size()).arg(empty));
+        if (empty > 0)
+            return fail("legendas: prévias dos cartões sem quadros");
+        saveFrameSheet(QStringLiteral("legendas-15-cartoes-quadros"), rows, 6);
+    });
 
     // "Aplicar este estilo a todas": copia o destaque (reveal/dimOpacity) e o estilo da ênfase, sem os índices.
     then(0, [this] {

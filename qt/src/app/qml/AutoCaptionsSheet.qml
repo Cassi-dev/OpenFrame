@@ -128,6 +128,7 @@ T.Popup {
                                 StyleCard {
                                     required property var modelData
                                     width: (fields.width - 30) / 4
+                                    preset: modelData.id
                                     name: modelData.name
                                     detail: modelData.detail
                                     layout: modelData.layout
@@ -478,9 +479,10 @@ T.Popup {
     }
 
     // Cartão de uma predefinição: o quadro do vídeo na proporção do projeto com a
-    // amostra da legenda (a prévia animada do núcleo entra na etapa 2).
+    // prévia animada (o mesmo render da exportação), que toca no hover ou selecionado.
     component StyleCard: T.AbstractButton {
         id: card
+        property string preset
         property string name
         property string detail
         property string layout
@@ -514,13 +516,22 @@ T.Popup {
                     }
                     Image {
                         anchors.fill: parent
-                        source: Editor.thumbnailRevision >= 0 ? Editor.captionBackdrop() : ""
+                        source: Editor.captionBackdrop
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: false
                     }
                     Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.25) }
+                    CaptionPreviewStrip {
+                        id: strip
+                        anchors.fill: parent
+                        preset: card.preset
+                        accent: sheet.gen.highlightColor
+                        usesAccent: card.usesAccent
+                        playing: card.hovered || card.selected
+                    }
                     CaptionSample {
+                        visible: !strip.hasFrames
                         anchors.fill: parent
                         layout: card.layout
                         accent: card.usesAccent ? sheet.gen.highlightColor : "white"
@@ -563,7 +574,7 @@ T.Popup {
         Tip { target: card; text: card.detail }
     }
 
-    // Amostra de cada visual enquanto a prévia do núcleo não fica pronta.
+    // Amostra de cada visual enquanto os quadros da prévia são gerados.
     component CaptionSample: Item {
         id: sample
         property string layout

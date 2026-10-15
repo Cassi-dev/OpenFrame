@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
@@ -40,7 +41,8 @@ private:
 };
 
 /// Miniatura de uma animação do segmento: o repouso quando parada e o ciclo
-/// quando toca. Sem quadros (`hasFrames` falso), o QML mostra o ícone.
+/// quando toca. Enquanto os quadros são gerados (`hasFrames` falso), o QML mostra
+/// o ícone, como no Mac.
 class AnimatedThumb : public QQuickPaintedItem
 {
     Q_OBJECT
@@ -75,6 +77,42 @@ private:
     QString m_part;
     bool m_playing = false;
     QString m_subject;
+    QTimer m_tick;
+    QElapsedTimer m_clock;
+};
+
+/// Prévia animada de um cartão da janela das legendas: o quadro parado no meio da
+/// frase e o ciclo de 3,6 s quando toca (hover ou selecionado). Na proporção do
+/// projeto; a cor do destaque só entra quando a predefinição a usa. Enquanto os
+/// quadros são gerados (`hasFrames` falso), o QML mostra a amostra.
+class CaptionPreviewStrip : public QQuickPaintedItem
+{
+    Q_OBJECT
+    QML_ELEMENT
+    Q_PROPERTY(QString preset MEMBER m_preset NOTIFY sourceChanged)
+    Q_PROPERTY(QColor accent MEMBER m_accent NOTIFY sourceChanged)
+    Q_PROPERTY(bool usesAccent MEMBER m_usesAccent NOTIFY sourceChanged)
+    Q_PROPERTY(bool playing MEMBER m_playing NOTIFY playingChanged)
+    Q_PROPERTY(bool hasFrames READ hasFrames NOTIFY framesChanged)
+
+public:
+    explicit CaptionPreviewStrip(QQuickItem *parent = nullptr);
+    void paint(QPainter *painter) override;
+    bool hasFrames() const;
+
+signals:
+    void sourceChanged();
+    void playingChanged();
+    void framesChanged();
+
+private:
+    QString key() const;
+    void request();
+
+    QString m_preset;
+    QColor m_accent;
+    bool m_usesAccent = false;
+    bool m_playing = false;
     QTimer m_tick;
     QElapsedTimer m_clock;
 };

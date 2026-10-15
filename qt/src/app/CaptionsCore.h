@@ -3,6 +3,7 @@
 #include "Project.h"
 
 #include <QColor>
+#include <QImage>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -11,8 +12,8 @@
 
 // Única ligação das legendas automáticas com o núcleo: `WhisperModel`,
 // `ModelStore`, `Transcriber`, `CaptionBuilder`, `CaptionPreset` e
-// `Track::isAutoCaptions`. A transcrição real chega na etapa 3 do 04; até lá, use
-// `OPENFRAME_FAKE_TRANSCRIPTION=1`.
+// `Track::isAutoCaptions`, e o `Renderer` nas prévias dos cartões. A transcrição
+// real chega na etapa 3 do 04; até lá, use `OPENFRAME_FAKE_TRANSCRIPTION=1`.
 
 namespace of::CaptionsCore {
 
@@ -38,7 +39,7 @@ struct PresetInfo {
     QString detail;
     QString group;
     QString groupName;
-    /// Visual da amostra enquanto a prévia do núcleo não chega: phrases, highlight, punch, stacked.
+    /// Visual da amostra enquanto os quadros da prévia são gerados: phrases, highlight, punch, stacked.
     QString layout;
     bool usesAccent = false;
 };
@@ -52,6 +53,23 @@ bool isAutoCaption(const Project &p, const QUuid &id);
 /// Copia o estilo de `source` para todas as legendas automáticas: o destaque (com a
 /// revelação) e o visual da palavra-chave, sem as palavras escolhidas de cada uma.
 void applyStyleToAll(Project &p, const Segment &source);
+
+/// Prévia animada dos cartões da janela (o `CaptionPreviewFrames` do Mac): uma frase
+/// falsa com tempo por palavra, montada pelo `CaptionBuilder` com o estilo padrão
+/// da predefinição e desenhada pelo `Renderer` com fundo transparente.
+namespace Preview {
+/// Segundos de um ciclo, quadros por ciclo e o quadro parado (no meio da frase, com
+/// uma palavra destacada).
+inline constexpr double cycle = 3.6;
+inline constexpr int count = 72;
+inline constexpr int restIndex = 24;
+/// Proporção do app mais próxima (em escala logarítmica, para 9:16 e 16:9 ficarem simétricas).
+AspectRatio nearestAspect(double value);
+/// Pixels do quadro: cabe em 384×216 (o cartão 16:9 com escala 2).
+QSize pixelSize(AspectRatio aspect);
+/// `accent` só nas predefinições que usam a cor do destaque.
+QList<QImage> frames(const QString &preset, const std::optional<QColor> &accent, AspectRatio aspect);
+} // namespace Preview
 
 /// Download dos modelos e transcrição (`ModelStore` e `Transcriber`).
 class Engine : public QObject

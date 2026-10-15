@@ -99,6 +99,7 @@ class EditorModel : public QObject
     // Legendas automáticas (EditorCaptions.cpp)
     Q_PROPERTY(CaptionGeneration *captions READ captions CONSTANT)
     Q_PROPERTY(bool showAutoCaptions READ showAutoCaptions WRITE setShowAutoCaptions NOTIFY uiChanged)
+    Q_PROPERTY(QString captionBackdrop READ captionBackdrop NOTIFY captionStateChanged)
     /// Muda quando chegam miniaturas ao MediaCache: as ligações que dependem delas
     /// (como `filterPreview`) leem esta propriedade para se refazer.
     Q_PROPERTY(int thumbnailRevision READ thumbnailRevision NOTIFY thumbnailsChanged)
@@ -384,8 +385,9 @@ public:
     Q_INVOKABLE void toggleEmphasisWord(int index);
     /// Fonte da palavra-chave; o estilo volta ao padrão se a família nova não o tiver.
     Q_INVOKABLE void setEmphasisFont(const QString &family);
-    /// Fundo dos cartões de estilo: o primeiro quadro do vídeo da faixa principal (vazio sem vídeo).
-    Q_INVOKABLE QString captionBackdrop() const;
+    /// Fundo dos cartões de estilo: o primeiro quadro do vídeo da faixa principal (vazio sem vídeo
+    /// ou sem miniatura ainda).
+    QString captionBackdrop() const;
     /// Proporção (largura/altura) mais próxima entre as do app, para as prévias dos cartões.
     Q_INVOKABLE qreal captionPreviewAspect() const;
 
