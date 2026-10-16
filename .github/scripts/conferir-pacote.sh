@@ -52,12 +52,23 @@ else
         f="$app/usr/lib/openframe/libggml-cpu-$v.so"
         if [[ ! -f $f ]]; then
             falta "usr/lib/openframe/libggml-cpu-$v.so"
-        elif LD_LIBRARY_PATH="$app/usr/lib" ldd "$f" | grep -q 'not found'; then
-            echo "::error::Dependência não encontrada em libggml-cpu-$v.so:"
-            LD_LIBRARY_PATH="$app/usr/lib" ldd "$f" | grep 'not found'
-            falhas=1
+        else
+            # O ldd que falha (um ELF estragado, por exemplo) não escreve "not found": vale o código de saída.
+            saida=0
+            deps=$(LD_LIBRARY_PATH="$app/usr/lib" ldd "$f" 2>&1) || saida=$?
+            if [[ $saida -ne 0 ]] || grep -q 'not found' <<< "$deps"; then
+                echo "::error::Dependências de libggml-cpu-$v.so (ldd saiu com $saida):"
+                echo "$deps"
+                falhas=1
+            fi
         fi
     done
+    # Diagnóstico da carga das variantes (o ggml falha calado no Release).
+    echo "== ldd de libggml-cpu-haswell.so:"
+    LD_LIBRARY_PATH="$app/usr/lib" ldd "$app/usr/lib/openframe/libggml-cpu-haswell.so" 2>&1 || echo "(ldd saiu com $?)"
+    (cd "$app" && file usr/lib/openframe/libggml-cpu-haswell.so &&
+        readelf -d usr/lib/openframe/libggml-cpu-haswell.so usr/lib/libggml-base.so.0 usr/bin/OpenFrame |
+        grep -E 'NEEDED|RPATH|RUNPATH|SONAME|File:') || true
     sudo apt-get install -y --no-install-recommends xvfb xauth > /dev/null
     executar=(xvfb-run -a "$app/AppRun")
     esperado="squashfs-root/usr/lib/openframe/libggml-cpu-"
@@ -70,7 +81,7 @@ status=0
 env "${plataforma[@]}" OPENFRAME_SNAPSHOT_DIR="$out/capturas" OPENFRAME_LIBRARY_DIR="$work/biblioteca" \
     OPENFRAME_SNAPSHOT_MEDIA="$work/midia" OPENFRAME_SNAPSHOT_SCENARIO=pacote OPENFRAME_WHISPER_LOG=1 \
     timeout 400 "${executar[@]}" > "$out/pacote.log" 2>&1 || status=$?
-grep -E '^\[snapshot\]|load_backend' "$out/pacote.log" || true
+grep -E '^\[snapshot\]|^\[openframe\]|load_backend' "$out/pacote.log" || true
 if [[ $status -ne 0 ]] || ! grep -q '\[snapshot\] fim' "$out/pacote.log"; then
     echo "::error::O app do pacote não passou no cenário 'pacote' (saída $status)"
     falhas=1

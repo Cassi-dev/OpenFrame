@@ -240,6 +240,37 @@ private slots:
         QCOMPARE(threadsFor(std::nullopt, 1), 1);
     }
 
+    /// A pasta do build só entra para um executável dentro dela: num pacote, nunca.
+    void backendSearchPath()
+    {
+        using WhisperEngine::backendSearchPath;
+        QTemporaryDir tmp;
+        const QString root = tmp.filePath(QStringLiteral("build")), other = tmp.filePath(QStringLiteral("build2"));
+        for (const QString &d : {root + QStringLiteral("/src/app"), root + QStringLiteral("/ggml"),
+                                 other + QStringLiteral("/bin"), tmp.filePath(QStringLiteral("pkg/usr/bin"))})
+            QVERIFY(QDir().mkpath(d));
+        const QString ggml = root + QStringLiteral("/ggml");
+        const QString inside = root + QStringLiteral("/src/app");
+        QCOMPARE(backendSearchPath(inside, ggml, root),
+                 (QStringList{inside, root + QStringLiteral("/src/lib/openframe"), ggml}));
+        const QString package = tmp.filePath(QStringLiteral("pkg/usr/bin"));
+        QCOMPARE(backendSearchPath(package, ggml, root),
+                 (QStringList{package, tmp.filePath(QStringLiteral("pkg/usr/lib/openframe"))}));
+        // Mesmo começo de nome não é estar dentro.
+        QCOMPARE(backendSearchPath(other + QStringLiteral("/bin"), ggml, root).size(), 2);
+        QCOMPARE(backendSearchPath(root, ggml, root).last(), ggml);
+        QVERIFY(backendSearchPath(QString(), ggml, root).isEmpty());
+        QCOMPARE(backendSearchPath(inside, QString(), root).size(), 2);
+#ifndef Q_OS_WIN
+        // Um link para dentro do build conta como dentro (caminhos reais).
+        const QString link = tmp.filePath(QStringLiteral("atalho"));
+        QVERIFY(QFile::link(inside, link));
+        QCOMPARE(backendSearchPath(link, ggml, root).last(), ggml);
+#else
+        QCOMPARE(backendSearchPath(inside.toUpper(), ggml, root).last(), ggml);
+#endif
+    }
+
     /// A medida da CPU existe nos três sistemas e vê duas threads girando (com folga: a máquina pode estar cheia,
     /// e aí elas ganham menos que um núcleo cada, mas o total fica alto do mesmo jeito).
     void busyCores()
