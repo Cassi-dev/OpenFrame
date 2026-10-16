@@ -28,8 +28,9 @@ namespace TE = of::TimelineEditor;
 
 namespace {
 
-/// Servidor HTTP mínimo: serve `payload` com `Range`, e pode cortar a conexão (`dropAfter`), parar de mandar
-/// sem fechar (`stallAfter`) ou responder com outro código (`status`).
+/// Servidor HTTP mínimo: serve `payload` com `Range`, e pode fechar a conexão no meio (`dropAfter`), parar de
+/// mandar sem fechar (`stallAfter`) ou responder com outro código (`status`). Os bytes do meio sempre chegam
+/// inteiros ao cliente, em pedaços de qualquer tamanho.
 class TestServer : public QTcpServer
 {
 public:
@@ -86,9 +87,10 @@ private:
             return; // fica aberto, sem mandar o resto
         }
         if (dropAfter >= 0) {
+            // Fecha depois de mandar (FIN), antes do Content-Length. Com `abort()` (RST), o Windows pode jogar fora
+            // o que o cliente ainda não leu, e o parcial dependeria do ritmo.
             s->write(body.left(dropAfter));
-            s->flush();
-            s->abort();
+            s->disconnectFromHost();
             return;
         }
         s->write(body);
@@ -117,6 +119,19 @@ QString waitDownloads(QSignalSpy &finished, qsizetype n, const TestServer *serve
     do {                                                                                                               \
         const QString why = waitDownloads(spy, n, server);                                                             \
         QVERIFY2(why.isEmpty(), qPrintable(why));                                                                      \
+    } while (false)
+
+/// Espera o progresso chegar a `bytes` de `server.payload` (por até 60 s); na falha, o último valor, o parcial e os
+/// pedidos que chegaram ao servidor.
+#define QVERIFY_PROGRESS(spy, bytes, server)                                                                           \
+    do {                                                                                                               \
+        const double target = double(bytes) / double((server).payload.size());                                         \
+        QTRY_VERIFY2_WITH_TIMEOUT(!(spy).isEmpty() && (spy).last()[1].toDouble() == target,                          \
+                                  qPrintable(QStringLiteral("progresso %1 (esperado %2); pedidos no servidor: %3")    \
+                                                 .arg((spy).isEmpty() ? -1.0 : (spy).last()[1].toDouble())            \
+                                                 .arg(target)                                                          \
+                                                 .arg((server).ranges.size())),                                        \
+                                  60'000);                                                                             \
     } while (false)
 
 QByteArray payload(int size)
@@ -390,7 +405,7 @@ private slots:
         QCOMPARE(finished[0][1].toBool(), false);
         QVERIFY(!finished[0][2].toString().isEmpty());
         const qint64 kept = QFileInfo(store.partialPath(WhisperModel::Base)).size();
-        QVERIFY2(kept > 0 && kept <= 700'000, qPrintable(QString::number(kept)));
+        QCOMPARE(kept, 700'000);
 
         server.dropAfter = -1;
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
@@ -400,6 +415,31 @@ private slots:
         QFile installed(store.path(WhisperModel::Base));
         QVERIFY(installed.open(QIODevice::ReadOnly));
         QCOMPARE(installed.readAll(), server.payload);
+    }
+
+    /// Rajada e depois pausa: o progresso chega ao que veio, mesmo que os últimos pedaços caiam dentro dos 100 ms
+    /// entre dois avisos; nunca volta e não passa de um aviso a cada ~100 ms.
+    void progressAfterBurst()
+    {
+        TestServer server;
+        server.payload = payload(2'000'000);
+        server.stallAfter = 300'000;
+        QTemporaryDir dir;
+        ModelStore store(dir.path());
+        QSignalSpy progress(&store, &ModelStore::downloadProgress);
+        QElapsedTimer clock;
+        clock.start();
+        store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
+        QVERIFY_PROGRESS(progress, 300'000, server);
+        const qint64 elapsed = clock.elapsed();
+        // Parado: nada de aviso repetido.
+        QTest::qWait(300);
+        QCOMPARE(progress.last()[1].toDouble(), 300'000.0 / 2'000'000);
+        for (qsizetype k = 1; k < progress.size(); ++k)
+            QVERIFY(progress[k][1].toDouble() > progress[k - 1][1].toDouble());
+        QVERIFY2(progress.size() <= 2 + elapsed / 100 + 1, qPrintable(QStringLiteral("%1 avisos em %2 ms")
+                                                                         .arg(progress.size()).arg(elapsed)));
+        store.cancel(WhisperModel::Base);
     }
 
     /// Cancelar termina sem erro e guarda o parcial; erro HTTP vira mensagem.
@@ -413,9 +453,7 @@ private slots:
         QSignalSpy finished(&store, &ModelStore::downloadFinished);
         QSignalSpy progress(&store, &ModelStore::downloadProgress);
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        const auto requests = [&] { return QStringLiteral("pedidos no servidor: %1").arg(server.ranges.size()); };
-        QTRY_VERIFY2_WITH_TIMEOUT(!progress.isEmpty() && progress.last()[1].toDouble() > 0.1, qPrintable(requests()),
-                                  60'000);
+        QVERIFY_PROGRESS(progress, 300'000, server);
         store.cancel(WhisperModel::Base);
         // O `abort()` pode terminar na hora, dentro do `cancel`.
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5'000);
