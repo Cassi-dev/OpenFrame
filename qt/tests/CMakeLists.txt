@@ -9,10 +9,15 @@ function(openframe_add_test name)
     # do contexto da plataforma "windows" e derruba os testes que consultam fontes.
     if(NOT WIN32)
         set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    elseif(OPENFRAME_WHISPER_LIB_DIR AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-        # As DLLs do whisper/ggml ficam numa pasta própria do build.
-        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${OPENFRAME_WHISPER_LIB_DIR}")
+    else()
+        # Sem um console (o ctest da CI), o Qt Test no Windows escreve tudo no OutputDebugString, e o log do
+        # ctest fica vazio: assim a saída vai para o stdout.
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1")
+        if(OPENFRAME_WHISPER_LIB_DIR AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+            # As DLLs do whisper/ggml ficam numa pasta própria do build.
+            set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${OPENFRAME_WHISPER_LIB_DIR}")
+        endif()
     endif()
 endfunction()
 

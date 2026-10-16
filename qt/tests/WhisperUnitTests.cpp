@@ -9,6 +9,7 @@
 #include "WhisperModels.h"
 #include "WordAligner.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QCryptographicHash>
 #include <QDir>
@@ -94,6 +95,29 @@ private:
         s->disconnectFromHost();
     }
 };
+
+/// Espera o `n`-ésimo fim de download, por até 60 s (é tudo local: só pega um travamento). Vazio se chegou; senão,
+/// quanto esperou e quantos pedidos o servidor recebeu (0 = a conexão nem chegou: proxy ou firewall). Acima de 2 s,
+/// avisa mesmo passando.
+QString waitDownloads(QSignalSpy &finished, qsizetype n, const TestServer *server)
+{
+    QElapsedTimer clock;
+    clock.start();
+    while (finished.size() < n && clock.elapsed() < 60'000)
+        finished.wait(int(std::max<qint64>(1, 60'000 - clock.elapsed())));
+    const QString where = server ? QStringLiteral("; pedidos no servidor: %1").arg(server->ranges.size()) : QString();
+    if (clock.elapsed() > 2'000)
+        qWarning().noquote() << QStringLiteral("download do teste levou %1 ms%2").arg(clock.elapsed()).arg(where);
+    if (finished.size() >= n)
+        return {};
+    return QStringLiteral("o download não terminou em %1 ms%2").arg(clock.elapsed()).arg(where);
+}
+
+#define QVERIFY_DOWNLOADS(spy, n, server)                                                                              \
+    do {                                                                                                               \
+        const QString why = waitDownloads(spy, n, server);                                                             \
+        QVERIFY2(why.isEmpty(), qPrintable(why));                                                                      \
+    } while (false)
 
 QByteArray payload(int size)
 {
@@ -327,7 +351,7 @@ private slots:
         QSignalSpy progress(&store, &ModelStore::downloadProgress);
 
         store.download(WhisperModel::Base, url, data.size(), QString(64, u'0'));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 1, nullptr);
         QCOMPARE(finished[0][1].toBool(), false);
         QVERIFY(finished[0][2].toString().contains(QStringLiteral("sha256")));
         QVERIFY(!QFile::exists(store.path(WhisperModel::Base)));
@@ -335,7 +359,7 @@ private slots:
 
         store.download(WhisperModel::Base, url, data.size(), hexSha(data));
         QVERIFY(store.isDownloading(WhisperModel::Base));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, nullptr);
         QVERIFY2(finished[1][1].toBool(), qPrintable(finished[1][2].toString()));
         QFile installed(store.path(WhisperModel::Base));
         QVERIFY(installed.open(QIODevice::ReadOnly));
@@ -346,7 +370,7 @@ private slots:
 
         // Tamanho diferente do anunciado.
         store.download(WhisperModel::Small, url, 10, hexSha(data));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 3, nullptr);
         QCOMPARE(finished[2][1].toBool(), false);
         QVERIFY(finished[2][2].toString().contains(QStringLiteral("incompleto")));
         QVERIFY(!QFile::exists(store.path(WhisperModel::Small)));
@@ -362,7 +386,7 @@ private slots:
         ModelStore store(dir.path());
         QSignalSpy finished(&store, &ModelStore::downloadFinished);
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 1, &server);
         QCOMPARE(finished[0][1].toBool(), false);
         QVERIFY(!finished[0][2].toString().isEmpty());
         const qint64 kept = QFileInfo(store.partialPath(WhisperModel::Base)).size();
@@ -370,7 +394,7 @@ private slots:
 
         server.dropAfter = -1;
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, &server);
         QVERIFY2(finished[1][1].toBool(), qPrintable(finished[1][2].toString()));
         QCOMPARE(server.ranges.last(), QByteArray("bytes=") + QByteArray::number(kept) + '-');
         QFile installed(store.path(WhisperModel::Base));
@@ -389,8 +413,9 @@ private slots:
         QSignalSpy finished(&store, &ModelStore::downloadFinished);
         QSignalSpy progress(&store, &ModelStore::downloadProgress);
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo(store.partialPath(WhisperModel::Base)).size() > 0 || progress.size() > 1, 10'000);
-        QTRY_VERIFY_WITH_TIMEOUT(!progress.isEmpty() && progress.last()[1].toDouble() > 0.1, 10'000);
+        const auto requests = [&] { return QStringLiteral("pedidos no servidor: %1").arg(server.ranges.size()); };
+        QTRY_VERIFY2_WITH_TIMEOUT(!progress.isEmpty() && progress.last()[1].toDouble() > 0.1, qPrintable(requests()),
+                                  60'000);
         store.cancel(WhisperModel::Base);
         // O `abort()` pode terminar na hora, dentro do `cancel`.
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5'000);
@@ -403,9 +428,32 @@ private slots:
         server.stallAfter = -1;
         server.status = 404;
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, &server);
         QCOMPARE(finished[1][1].toBool(), false);
         QVERIFY2(finished[1][2].toString().contains(QStringLiteral("404")), qPrintable(finished[1][2].toString()));
+    }
+
+    /// Fora do computador, o proxy do sistema é consultado fora da thread da interface: cancelar durante a consulta
+    /// termina na hora; sem cancelar, um endereço que não existe termina em erro (sem travar).
+    void downloadQueriesProxyAside()
+    {
+        QTemporaryDir dir;
+        ModelStore store(dir.path());
+        QSignalSpy finished(&store, &ModelStore::downloadFinished);
+        const QUrl nowhere(QStringLiteral("http://openframe-teste.invalid/modelo.bin"));
+        store.download(WhisperModel::Base, nowhere, 1000, QString(64, u'0'));
+        QVERIFY(store.isDownloading(WhisperModel::Base));
+        store.cancel(WhisperModel::Base);
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(finished[0][1].toBool(), false);
+        QCOMPARE(finished[0][2].toString(), QString());
+        QVERIFY(!store.isDownloading(WhisperModel::Base));
+
+        store.download(WhisperModel::Base, nowhere, 1000, QString(64, u'0'));
+        QVERIFY_DOWNLOADS(finished, 2, nullptr);
+        QCOMPARE(finished.size(), 2); // a consulta cancelada não termina de novo
+        QCOMPARE(finished[1][1].toBool(), false);
+        QVERIFY2(!finished[1][2].toString().isEmpty(), "erro sem mensagem");
     }
 
     /// Instalado = tamanho certo; apagar tira o modelo e o parcial.

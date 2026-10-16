@@ -9,7 +9,10 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QHash>
+#include <QHostAddress>
+#include <QMutex>
 #include <QNetworkAccessManager>
+#include <QNetworkProxyFactory>
 #include <QNetworkReply>
 #include <QPointer>
 #include <QStandardPaths>
@@ -92,10 +95,52 @@ bool ModelStore::isInstalled(WhisperModel m) const
     return info.isFile() && info.size() == byteSize(m);
 }
 
+namespace {
+
+/// O proxy dos downloads, sem travar a interface. O Qt consulta o proxy do sistema na thread do pedido, e no Windows,
+/// com a detecção automática (WPAD) ligada, a consulta vem antes até de ver que o endereço é local e pode levar
+/// dezenas de segundos (provável causa do WhisperUnitTests de 34,7 s na CI do Windows). Aqui, endereço local vai
+/// direto, sem consultar nada; para os outros, o `ModelStore` consulta o sistema numa thread de trabalho antes do
+/// pedido e guarda o resultado, que vale também para os redirecionamentos (o CDN do Hugging Face).
+class DownloadProxies : public QNetworkProxyFactory
+{
+public:
+    static bool isLocal(const QUrl &url)
+    {
+        if (url.isLocalFile() || url.host().isEmpty() || url.host().compare(u"localhost", Qt::CaseInsensitive) == 0)
+            return true;
+        const QHostAddress address(url.host());
+        return !address.isNull() && address.isLoopback();
+    }
+    void set(const QList<QNetworkProxy> &proxies)
+    {
+        QMutexLocker locker(&m_mutex);
+        m_proxies = proxies.isEmpty() ? QList<QNetworkProxy>{QNetworkProxy::NoProxy} : proxies;
+    }
+    QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery &query) override
+    {
+        if (isLocal(query.url()))
+            return {QNetworkProxy::NoProxy};
+        QMutexLocker locker(&m_mutex);
+        if (m_proxies)
+            return *m_proxies;
+        locker.unlock();
+        return systemProxyForQuery(query);
+    }
+
+private:
+    QMutex m_mutex;
+    std::optional<QList<QNetworkProxy>> m_proxies;
+};
+
+} // namespace
+
 struct ModelStore::Impl {
     /// Um download em andamento.
     struct Job;
     QNetworkAccessManager *network = nullptr;
+    /// Do `network` (que é o dono).
+    DownloadProxies *proxies = nullptr;
     QHash<WhisperModel, std::shared_ptr<Job>> jobs;
 };
 
@@ -179,84 +224,107 @@ void ModelStore::download(WhisperModel m, const QUrl &source, qint64 size, const
         return;
     }
 
-    if (!m_jobs->network)
+    if (!m_jobs->network) {
         m_jobs->network = new QNetworkAccessManager(this);
-    QNetworkRequest request(source);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    if (job->have > 0)
-        request.setRawHeader("Range", QByteArrayLiteral("bytes=") + QByteArray::number(job->have) + '-');
-    QNetworkReply *reply = m_jobs->network->get(request);
-    job->reply = reply;
-    emit downloadProgress(m, double(job->have) / double(size));
-    // Antes do primeiro pedaço: o servidor aceitou o Range (206) ou mandou tudo de novo (200)?
-    const auto begin = [m, job, this, reply] {
-        if (job->started)
-            return true;
-        job->started = true;
-        const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-        if (status.isValid()) {
-            const int code = status.toInt();
-            if (code == 200) {
+        m_jobs->proxies = new DownloadProxies;
+        m_jobs->network->setProxyFactory(m_jobs->proxies);
+    }
+    const auto start = [this, m, source, job, verify] {
+        const qint64 size = job->size;
+        QNetworkRequest request(source);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        if (job->have > 0)
+            request.setRawHeader("Range", QByteArrayLiteral("bytes=") + QByteArray::number(job->have) + '-');
+        QNetworkReply *reply = m_jobs->network->get(request);
+        job->reply = reply;
+        emit downloadProgress(m, double(job->have) / double(size));
+        // Antes do primeiro pedaço: o servidor aceitou o Range (206) ou mandou tudo de novo (200)?
+        const auto begin = [m, job, this, reply] {
+            if (job->started)
+                return true;
+            job->started = true;
+            const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+            if (status.isValid()) {
+                const int code = status.toInt();
+                if (code == 200) {
+                    job->file.resize(0);
+                    job->file.seek(0);
+                    job->have = 0;
+                } else if (code != 206) {
+                    job->cancelled = true;
+                    reply->abort();
+                    finish(m, false, QStringLiteral("O servidor do modelo respondeu com o erro %1.").arg(code));
+                    return false;
+                }
+            } else if (job->have > 0) {
+                // file:// não tem Range: recomeça.
                 job->file.resize(0);
                 job->file.seek(0);
                 job->have = 0;
-            } else if (code != 206) {
+            }
+            return true;
+        };
+        connect(reply, &QNetworkReply::readyRead, this, [this, m, job, reply, begin] {
+            if (job->cancelled || !begin())
+                return;
+            const QByteArray chunk = reply->readAll();
+            if (job->file.write(chunk) != chunk.size()) {
                 job->cancelled = true;
                 reply->abort();
-                finish(m, false, QStringLiteral("O servidor do modelo respondeu com o erro %1.").arg(code));
-                return false;
+                finish(m, false, job->file.errorString());
+                return;
             }
-        } else if (job->have > 0) {
-            // file:// não tem Range: recomeça.
-            job->file.resize(0);
-            job->file.seek(0);
-            job->have = 0;
-        }
-        return true;
+            job->have += chunk.size();
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - job->lastReport > 100) {
+                job->lastReport = now;
+                emit downloadProgress(m, std::min(1.0, double(job->have) / double(job->size)));
+            }
+        });
+        connect(reply, &QNetworkReply::finished, this, [this, m, job, reply, begin, verify] {
+            reply->deleteLater();
+            if (!m_jobs->jobs.contains(m) || m_jobs->jobs.value(m) != job)
+                return; // já terminou (erro do servidor, falha de escrita)
+            if (job->cancelled) {
+                job->file.close();
+                finish(m, false, {});
+                return;
+            }
+            if (reply->error() != QNetworkReply::NoError) {
+                const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+                job->file.close();
+                if (status.isValid() && status.toInt() >= 400)
+                    finish(m, false, QStringLiteral("O servidor do modelo respondeu com o erro %1.").arg(status.toInt()));
+                else
+                    finish(m, false, QStringLiteral("Não foi possível baixar o modelo: %1").arg(reply->errorString()));
+                return;
+            }
+            if (!begin())
+                return;
+            const QByteArray rest = reply->readAll();
+            job->file.write(rest);
+            job->have += rest.size();
+            job->file.flush();
+            verify();
+        });
     };
-    connect(reply, &QNetworkReply::readyRead, this, [this, m, job, reply, begin] {
-        if (job->cancelled || !begin())
-            return;
-        const QByteArray chunk = reply->readAll();
-        if (job->file.write(chunk) != chunk.size()) {
-            job->cancelled = true;
-            reply->abort();
-            finish(m, false, job->file.errorString());
-            return;
-        }
-        job->have += chunk.size();
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        if (now - job->lastReport > 100) {
-            job->lastReport = now;
-            emit downloadProgress(m, std::min(1.0, double(job->have) / double(job->size)));
-        }
+    if (DownloadProxies::isLocal(source)) {
+        start();
+        return;
+    }
+    // O proxy do sistema fora da thread da interface (veja `DownloadProxies`); a cada download, para acompanhar uma
+    // troca de rede.
+    auto *watcher = new QFutureWatcher<QList<QNetworkProxy>>(this);
+    connect(watcher, &QFutureWatcher<QList<QNetworkProxy>>::finished, this, [this, m, job, start, watcher] {
+        watcher->deleteLater();
+        if (m_jobs->jobs.value(m) != job)
+            return; // cancelado enquanto consultava
+        m_jobs->proxies->set(watcher->result());
+        start();
     });
-    connect(reply, &QNetworkReply::finished, this, [this, m, job, reply, begin, verify] {
-        reply->deleteLater();
-        if (!m_jobs->jobs.contains(m) || m_jobs->jobs.value(m) != job)
-            return; // já terminou (erro do servidor, falha de escrita)
-        if (job->cancelled) {
-            job->file.close();
-            finish(m, false, {});
-            return;
-        }
-        if (reply->error() != QNetworkReply::NoError) {
-            const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-            job->file.close();
-            if (status.isValid() && status.toInt() >= 400)
-                finish(m, false, QStringLiteral("O servidor do modelo respondeu com o erro %1.").arg(status.toInt()));
-            else
-                finish(m, false, QStringLiteral("Não foi possível baixar o modelo: %1").arg(reply->errorString()));
-            return;
-        }
-        if (!begin())
-            return;
-        const QByteArray rest = reply->readAll();
-        job->file.write(rest);
-        job->have += rest.size();
-        job->file.flush();
-        verify();
-    });
+    watcher->setFuture(QtConcurrent::run(
+        [source] { return QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(source)); }));
+    emit downloadProgress(m, double(job->have) / double(size));
 }
 
 void ModelStore::finish(WhisperModel m, bool ok, const QString &error)
@@ -279,6 +347,8 @@ void ModelStore::cancel(WhisperModel m)
     job->file.close();
     if (job->reply)
         job->reply->abort(); // termina pelo `finished` da resposta
+    else
+        finish(m, false, {}); // ainda consultando o proxy
 }
 
 bool ModelStore::isDownloading(WhisperModel m) const { return m_jobs->jobs.contains(m); }
