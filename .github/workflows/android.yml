@@ -95,6 +95,13 @@ jobs:
           ls -la /home/runner/ffmpeg-android-output/include || true
           ls -la /home/runner/ffmpeg-android-output/lib || true
 
+      - name: Salvar Cache do FFmpeg Android
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/ffmpeg-android-output
+          key: ffmpeg-android-arm64-v8a-ndk26-7.1-v1
+
       - name: Configurar variável FFMPEG_ANDROID_ROOT
         run: echo "FFMPEG_ANDROID_ROOT=/home/runner/ffmpeg-android-output" >> "$GITHUB_ENV"
 
