@@ -903,9 +903,15 @@ void Snapshot::packageScenario()
     };
     auto head = std::make_shared<Head>();
     then(0, [this, head] {
-        log(QStringLiteral("pacote: TLS %1, backends [%2], ativo %3")
-                .arg(QSslSocket::supportsSsl() ? "sim" : "não", QSslSocket::availableBackends().join(", "),
-                     QSslSocket::activeBackend()));
+        // O padrão primeiro: o supportsSsl() fixa o backend, e depois dele não dá para trocar.
+        log(QStringLiteral("pacote: backends [%1], padrão %2")
+                .arg(QSslSocket::availableBackends().join(", "), QSslSocket::activeBackend()));
+        // OPENFRAME_TLS_BACKEND força um backend (a CI do Windows prova o HTTPS só com o schannel).
+        const QString forced = qEnvironmentVariable("OPENFRAME_TLS_BACKEND");
+        if (!forced.isEmpty() && !QSslSocket::setActiveBackend(forced))
+            return fail(QStringLiteral("pacote: o backend de TLS %1 não pôde ser ativado").arg(forced));
+        log(QStringLiteral("pacote: TLS %1, ativo %2")
+                .arg(QSslSocket::supportsSsl() ? "sim" : "não", QSslSocket::activeBackend()));
         // O mesmo endereço que o ModelStore baixa; HEAD, para não trazer o arquivo.
         auto *network = new QNetworkAccessManager(this);
         QNetworkRequest request(CaptionsCore::modelUrl(QStringLiteral("base")));
