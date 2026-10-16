@@ -77,7 +77,7 @@ Snapshot::Snapshot(QQmlApplicationEngine *engine, EditorModel *model, const QStr
 
 void Snapshot::then(int ms, Step step)
 {
-    m_steps.push_back({ms, std::move(step), {}, 0});
+    m_steps.push_back({ms, std::move(step), {}, 0, {}, true});
 }
 
 void Snapshot::waitUntil(std::function<bool()> done, int timeoutMs, const QString &what, bool required)

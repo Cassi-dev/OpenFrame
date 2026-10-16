@@ -69,6 +69,10 @@ target_link_libraries(OpenFrame PRIVATE
     Qt6::Concurrent
 )
 
+# DLLs do whisper/ggml (com as variantes de CPU) ao lado do executável no Windows:
+# sem elas, o OpenFrame.exe do build nem abre.
+openframe_deploy_whisper(OpenFrame)
+
 # Ícone e versão do executável no Windows.
 if(WIN32)
     get_filename_component(OPENFRAME_ICO "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/windows/OpenFrame.ico" ABSOLUTE)
