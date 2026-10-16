@@ -61,14 +61,32 @@ if(OPENFRAME_WHISPER AND NOT TARGET openframe::whisper)
             set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${upper} "${OPENFRAME_WHISPER_LIB_DIR}")
         endforeach()
 
-        FetchContent_Declare(whisper
+        # Fora do ALL (EXCLUDE_FROM_ALL): só compila o que o OpenFrame usa (o Parakeet, outro reconhecedor que vem
+        # nesta versão, fica de fora), e as regras de instalação do whisper/ggml (cabeçalhos, pkg-config, CMake,
+        # o Parakeet) não entram no `cmake --install`, que instala só o app. O pacote leva as bibliotecas e as
+        # variantes copiando OPENFRAME_WHISPER_LIB_DIR (API.md, "Arquivos que o pacote leva").
+        set(source
             URL https://github.com/ggml-org/whisper.cpp/archive/d1be6fde11ac6e0407606b4e42fe72d34add8037.tar.gz
             URL_HASH SHA256=645445da884df6dbd52b30f82d7be7c01d1767c938714e477e786b88d529e9f4
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_MakeAvailable(whisper)
-        # O Parakeet (outro reconhecedor que vem junto nesta versão) não é usado: fora do build e do pacote.
-        if(TARGET parakeet)
-            set_target_properties(parakeet PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+            FetchContent_Declare(whisper ${source} EXCLUDE_FROM_ALL)
+            FetchContent_MakeAvailable(whisper)
+        else()
+            FetchContent_Declare(whisper ${source})
+            FetchContent_GetProperties(whisper)
+            if(NOT whisper_POPULATED)
+                FetchContent_Populate(whisper)
+                add_subdirectory(${whisper_SOURCE_DIR} ${whisper_BINARY_DIR} EXCLUDE_FROM_ALL)
+            endif()
+        endif()
+        # As variantes de CPU são carregadas com dlopen (ninguém liga com elas): sem isto, fora do ALL, nem
+        # compilariam.
+        get_property(targets DIRECTORY ${whisper_SOURCE_DIR}/ggml/src PROPERTY BUILDSYSTEM_TARGETS)
+        list(FILTER targets INCLUDE REGEX "^ggml-cpu")
+        add_custom_target(openframe_ggml_cpu ALL)
+        if(targets)
+            add_dependencies(openframe_ggml_cpu ${targets})
         endif()
     endfunction()
     openframe_fetch_whisper()
@@ -76,6 +94,8 @@ if(OPENFRAME_WHISPER AND NOT TARGET openframe::whisper)
     add_library(openframe_whisper INTERFACE)
     add_library(openframe::whisper ALIAS openframe_whisper)
     target_link_libraries(openframe_whisper INTERFACE whisper ggml ggml-base)
+    # Quem liga com o whisper (o app, os testes) espera as variantes: elas são carregadas da pasta do build.
+    add_dependencies(openframe_whisper openframe_ggml_cpu)
     target_compile_definitions(openframe_whisper INTERFACE OPENFRAME_HAS_WHISPER
         "OPENFRAME_GGML_BUILD_DIR=\"${OPENFRAME_WHISPER_LIB_DIR}\"")
     if(OPENFRAME_WHISPER_VARIANTS)
