@@ -169,9 +169,12 @@ jobs:
                 status=0
                 exe=$(find build -name "$t.exe" | head -n 1)
                 rm -f diag.txt
-                "$exe" -platform "$qpa" -o diag.txt,txt -v2 || status=$?
+                # A plataforma vai pelo ambiente: as suítes sem interface
+                # (QTEST_GUILESS_MAIN) recusam a opção -platform.
+                QT_QPA_PLATFORM="$qpa" "$exe" -o diag.txt,txt -v2 || status=$?
                 echo "== $t ($qpa): saída $status"
-                tail -n 25 diag.txt 2>/dev/null || true
+                grep -E -A4 'FAIL!|QFATAL|QCRITICAL|QWARN' diag.txt 2>/dev/null | head -n 60 || true
+                tail -n 15 diag.txt 2>/dev/null || true
               done
             done
           fi
