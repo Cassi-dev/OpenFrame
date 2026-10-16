@@ -83,10 +83,7 @@ echo "Arquivos do whisper/ggml, do TLS e das licenças: $([[ $falhas -eq 0 ]] &&
 
 # O app do pacote: HTTPS e transcrição. OPENFRAME_WHISPER_LOG mostra de onde a variante veio.
 # Sem as variáveis do Qt da CI (install-qt-action) e das bibliotecas: o pacote se vira sozinho.
-limpo=(env)
-for v in $(compgen -e); do
-    if [[ $v =~ ^(QT_|QML|Qt[56]_|LD_LIBRARY_PATH$|PKG_CONFIG_PATH$|OPENSSL_|SSL_CERT_) ]]; then limpo+=(-u "$v"); fi
-done
+source "$root/.github/scripts/ambiente-limpo.sh"
 echo "Ambiente do app: PATH=$caminho; sem ${limpo[*]:1}"
 status=0
 timeout 400 "${limpo[@]}" PATH="$caminho" "${plataforma[@]}" OPENFRAME_SNAPSHOT_DIR="$out/capturas" OPENFRAME_LIBRARY_DIR="$work/biblioteca" \
