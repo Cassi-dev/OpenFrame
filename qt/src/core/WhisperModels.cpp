@@ -99,7 +99,7 @@ namespace {
 
 /// O proxy dos downloads, sem travar a interface. O Qt consulta o proxy do sistema na thread do pedido, e no Windows,
 /// com a detecção automática (WPAD) ligada, a consulta vem antes até de ver que o endereço é local e pode levar
-/// dezenas de segundos (provável causa do WhisperUnitTests de 34,7 s na CI do Windows). Aqui, endereço local vai
+/// dezenas de segundos (o runner da CI do Windows não tem WPAD: lá não acontece). Aqui, endereço local vai
 /// direto, sem consultar nada; para os outros, o `ModelStore` consulta o sistema numa thread de trabalho antes do
 /// pedido e guarda o resultado, que vale também para os redirecionamentos (o CDN do Hugging Face).
 class DownloadProxies : public QNetworkProxyFactory

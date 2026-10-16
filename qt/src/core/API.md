@@ -238,7 +238,11 @@ termina com "motor indisponível", sem travar.
 - em `usr/lib/openframe/` (o linuxdeploy **não** as conhece: são carregadas com `dlopen`): as 14 variantes
   `libggml-cpu-{x64,sse42,sandybridge,ivybridge,piledriver,haswell,skylakex,cannonlake,cascadelake,icelake,cooperlake,zen4,alderlake,sapphirerapids}.so`.
 
-É só copiar o conteúdo de `OPENFRAME_WHISPER_LIB_DIR` com essas regras. Tamanho: no Mac, cada variante tem
+É só copiar o conteúdo de `OPENFRAME_WHISPER_LIB_DIR` com essas regras. O `cmake --install` instala só o app: o
+whisper/ggml entra fora do ALL (`EXCLUDE_FROM_ALL`), sem as regras de instalação dele (cabeçalhos, pkg-config, CMake,
+o Parakeet). No Linux, o linuxdeploy traz as 3 de `usr/lib` como dependências do executável (com
+`OPENFRAME_WHISPER_LIB_DIR` no `LD_LIBRARY_PATH`), e as variantes são copiadas. As variantes compilam pelo alvo
+`openframe_ggml_cpu` (no ALL), e quem liga com o `openframe::whisper` espera por elas. Tamanho: no Mac, cada variante tem
 ~0,9 MB, o ggml-base 0,75 MB e o whisper 0,4 MB; no x86, falta medir (estimo 10–15 MB no total).
 
 **Rede:** o download usa HTTPS (huggingface.co): o pacote precisa do Qt Network e do plugin de TLS
@@ -247,9 +251,9 @@ testar um download de verdade no pacote. É o único acesso à rede do app, só 
 
 **Proxy:** o download usa o proxy do sistema, mas a consulta roda numa thread de trabalho, antes do pedido. No Windows,
 com a detecção automática (WPAD) ligada, o Qt chama o `WinHttpGetProxyForUrl` antes de ver que o endereço é local, e
-isso pode travar a thread do pedido por dezenas de segundos. É a causa provável da falha do WhisperUnitTests na CI do
-Windows (34,7 s, as esperas de 10 s estourando, e passava logo depois, já com a consulta em cache); só a próxima CI
-confirma. O resultado da consulta vale também para os redirecionamentos (o CDN do
+isso pode travar a thread do pedido por dezenas de segundos para quem tem a detecção ligada. (Na CI do Windows não
+era isso: o runner não tem proxy nem WPAD, e os 34,7 s do WhisperUnitTests eram o progresso que não passava do
+primeiro aviso, corrigido no `fb264c2`.) O resultado da consulta vale também para os redirecionamentos (o CDN do
 Hugging Face). Endereço local (loopback, `localhost`, `file://`) vai direto, sem consulta. Cancelar durante a consulta
 termina na hora.
 
