@@ -102,6 +102,18 @@ jobs:
           path: /home/runner/ffmpeg-android-output
           key: ffmpeg-android-arm64-v8a-ndk26-7.1-v1
 
+      - name: Criar Keystore para assinatura do APK
+        run: |
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/openframe-release.keystore" \
+            -alias openframe \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass openframe123 \
+            -keypass openframe123 \
+            -dname "CN=OpenFrame, OU=Mobile, O=OpenFrame, C=BR"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/openframe-release.keystore" >> "$GITHUB_ENV"
+
       - name: Configurar variável FFMPEG_ANDROID_ROOT
         run: echo "FFMPEG_ANDROID_ROOT=/home/runner/ffmpeg-android-output" >> "$GITHUB_ENV"
 
@@ -119,6 +131,11 @@ jobs:
             -DANDROID_PLATFORM=26 \
             -DFFMPEG_ROOT="/home/runner/ffmpeg-android-output" \
             -DCMAKE_FIND_ROOT_PATH="/home/runner/ffmpeg-android-output" \
+            -DQT_ANDROID_SIGN_APK=ON \
+            -DQT_ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH" \
+            -DQT_ANDROID_KEYSTORE_ALIAS=openframe \
+            -DQT_ANDROID_KEYSTORE_STORE_PASS=openframe123 \
+            -DQT_ANDROID_KEYSTORE_KEY_PASS=openframe123 \
             -DOPENFRAME_BUILD_TESTS=OFF \
             -DCMAKE_BUILD_TYPE=Release
 
