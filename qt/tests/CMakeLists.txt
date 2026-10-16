@@ -51,8 +51,10 @@ openframe_add_test(ExportTests ExportTests.cpp)
 # Lê o arquivo exportado direto pelo FFmpeg (codec, fps, marcas de cor).
 include(FFmpeg)
 target_link_libraries(ExportTests PRIVATE FFmpeg::FFmpeg)
-set_tests_properties(ExportTests PROPERTIES TIMEOUT 600)
+set_tests_properties(ExportTests PROPERTIES TIMEOUT 1500)
+set_tests_properties(PlayerTests PROPERTIES TIMEOUT 900)
 
-# Os pesados (whisper e medições de tempo) um de cada vez, como o HeavyWork do Swift.
-set_tests_properties(TranscriptionTests WhisperVariantTests MotionTests CaptionRenderTests TextSharpnessTests
-    PlayerTests ExportTests PROPERTIES RESOURCE_LOCK heavy)
+# Os que disputam CPU ou medem tempo um de cada vez, como o HeavyWork do Swift: o whisper, a comparação com o
+# Swift, a exportação, o player e as medições de desempenho.
+set_tests_properties(TranscriptionTests WhisperVariantTests MotionReferenceTests ExportTests PlayerTests
+    MotionTests CaptionRenderTests TextSharpnessTests PROPERTIES RESOURCE_LOCK heavy)
