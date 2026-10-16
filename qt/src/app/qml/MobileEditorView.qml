@@ -38,7 +38,7 @@ Item {
             OfText {
                 text: Editor.currentTimecode
                 color: Theme.textSecondary
-                family: Theme.monoFont
+                mono: true
                 size: 12
             }
 
@@ -228,7 +228,7 @@ Item {
                     text: Editor.currentTimecode + " / " + Editor.durationTimecode
                     color: Theme.textTertiary
                     size: 11
-                    family: Theme.monoFont
+                    mono: true
                 }
             }
         }

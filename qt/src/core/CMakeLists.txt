@@ -29,6 +29,9 @@ add_library(openframe_core STATIC
 )
 target_include_directories(openframe_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openframe_core PUBLIC Qt6::Core Qt6::Gui Qt6::Concurrent)
+if(ANDROID)
+    target_compile_definitions(openframe_core PUBLIC OPENFRAME_ANDROID)
+endif()
 
 # Saída de som do Player (QAudioSink).
 find_package(Qt6 REQUIRED COMPONENTS Multimedia)
