@@ -13,10 +13,12 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtEndian>
+#include <atomic>
 #include <cmath>
 
 using namespace of;
@@ -175,6 +177,56 @@ private slots:
         QVERIFY(std::abs(words[1].probability - 0.6) < 1e-9);
         QCOMPARE(words[2].text, QStringLiteral("fim."));
         QCOMPARE(words[2].end, 1.2); // fim antes do início: fica no início
+    }
+
+    // MARK: - Threads
+
+    /// Os núcleos livres, entre min(4, máximo) e o máximo (os núcleos menos 2, até 8).
+    void threadsFor()
+    {
+        using WhisperEngine::threadsFor;
+        QCOMPARE(threadsFor(std::nullopt, 10), 8);
+        QCOMPARE(threadsFor(0.3, 10), 8);
+        QCOMPARE(threadsFor(2.0, 10), 8);
+        QCOMPARE(threadsFor(4.2, 10), 6);
+        QCOMPARE(threadsFor(8.0, 10), 4);
+        QCOMPARE(threadsFor(10.0, 10), 4);
+        QCOMPARE(threadsFor(10.0, 16), 6);
+        QCOMPARE(threadsFor(0.0, 32), 8);
+        QCOMPARE(threadsFor(1.0, 8), 6);
+        QCOMPARE(threadsFor(5.0, 8), 4);
+        QCOMPARE(threadsFor(0.0, 4), 2);
+        QCOMPARE(threadsFor(4.0, 4), 2);
+        QCOMPARE(threadsFor(0.0, 2), 1);
+        QCOMPARE(threadsFor(std::nullopt, 1), 1);
+    }
+
+    /// A medida da CPU existe nos três sistemas e vê duas threads girando (com folga: a máquina pode estar cheia,
+    /// e aí elas ganham menos que um núcleo cada, mas o total fica alto do mesmo jeito).
+    void busyCores()
+    {
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(Q_OS_LINUX)
+        std::atomic<bool> stop{false};
+        const auto spin = [&] {
+            while (!stop.load(std::memory_order_relaxed)) {
+            }
+        };
+        QThread *a = QThread::create(spin), *b = QThread::create(spin);
+        a->start();
+        b->start();
+        const std::optional<double> busy = WhisperEngine::busyCores(std::chrono::milliseconds(300));
+        stop = true;
+        a->wait();
+        b->wait();
+        delete a;
+        delete b;
+        QVERIFY(busy);
+        qInfo().noquote() << QStringLiteral("%1 de %2 núcleos ocupados").arg(*busy, 0, 'f', 2).arg(QThread::idealThreadCount());
+        QVERIFY2(*busy >= std::min(1.0, QThread::idealThreadCount() / 2.0), qPrintable(QString::number(*busy)));
+        QVERIFY(*busy <= QThread::idealThreadCount() + 1e-9);
+#else
+        QSKIP("sem medida da CPU neste sistema");
+#endif
     }
 
     /// O ajuste pela energia leva as fronteiras para as pausas reais.

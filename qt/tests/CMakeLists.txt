@@ -37,6 +37,10 @@ openframe_add_test(WhisperUnitTests WhisperUnitTests.cpp)
 target_link_libraries(WhisperUnitTests PRIVATE Qt6::Network)
 openframe_add_test(TranscriptionTests TranscriptionTests.cpp)
 openframe_add_test(WhisperVariantTests WhisperVariantTests.cpp)
+# O whisper fica várias vezes mais lento com a CPU disputada: as esperas dos testes não têm prazo próprio. O
+# único limite é o TIMEOUT do ctest (pega um travamento); o vigia do Qt Test (5 min por função) e as esperas usam o
+# mesmo valor (OPENFRAME_TEST_TIMEOUT_MS).
+set(whisper_test_timeout 900)
 foreach(t TranscriptionTests WhisperVariantTests)
     # OPENFRAME_GGML_DL e OPENFRAME_GGML_BUILD_DIR (a pasta das variantes).
     if(TARGET openframe::whisper)
@@ -44,7 +48,9 @@ foreach(t TranscriptionTests WhisperVariantTests)
     else()
         target_compile_definitions(${t} PRIVATE "OPENFRAME_GGML_BUILD_DIR=\"\"")
     endif()
-    set_tests_properties(${t} PROPERTIES TIMEOUT 900)
+    target_compile_definitions(${t} PRIVATE OPENFRAME_TEST_TIMEOUT_MS=${whisper_test_timeout}000)
+    set_tests_properties(${t} PROPERTIES TIMEOUT ${whisper_test_timeout})
+    set_property(TEST ${t} APPEND PROPERTY ENVIRONMENT "QTEST_FUNCTION_TIMEOUT=${whisper_test_timeout}000")
 endforeach()
 openframe_add_test(PlayerTests PlayerTests.cpp)
 openframe_add_test(ExportTests ExportTests.cpp)

@@ -210,12 +210,17 @@ struct Run {
     QList<TranscriptionProgress> reports;
 };
 
+/// Espera sem prazo próprio: o limite é o TIMEOUT do ctest (um travamento), nunca a velocidade da máquina.
+constexpr int noDeadline = OPENFRAME_TEST_TIMEOUT_MS;
+
 Run transcribe(const Project &p, const TranscriptionSource &source = TranscriptionSource::timeline(),
                const QString &language = QStringLiteral("pt"), WhisperEngine::Timing timing = WhisperEngine::Timing::Dtw,
                bool refine = true, WhisperModel model = WhisperModel::Base, const std::atomic<bool> *cancel = nullptr,
-               const std::function<void(const TranscriptionProgress &)> &onProgress = {})
+               const std::function<void(const TranscriptionProgress &)> &onProgress = {},
+               int threads = 0)
 {
     WhisperEngine::Options options;
+    options.threads = threads;
     options.language = language;
     options.timing = timing;
     options.refine = refine;
@@ -396,11 +401,11 @@ private slots:
                                 });
         });
         worker->start();
-        QTRY_VERIFY_WITH_TIMEOUT(started.load(), 120'000);
+        QTRY_VERIFY_WITH_TIMEOUT(started.load(), noDeadline);
         QThread::msleep(300);
         clock.restart();
         cancel = true;
-        QVERIFY(worker->wait(300'000));
+        QVERIFY(worker->wait(noDeadline));
         const qint64 waited = clock.elapsed();
         delete worker;
         qInfo().noquote() << QStringLiteral("Cancelamento em %1 ms (a transcrição inteira levou %2 ms)").arg(waited).arg(fullMs, 0, 'f', 0);
@@ -421,7 +426,7 @@ private slots:
         QSignalSpy finished(&transcriber, &Transcriber::finished);
         transcriber.start(p, TranscriptionSource::timeline(), WhisperModel::Base, QStringLiteral("pt"));
         QVERIFY(transcriber.isRunning());
-        QVERIFY(finished.wait(120'000));
+        QVERIFY(finished.wait(noDeadline));
         QVERIFY2(finished[0][0].toBool(), qPrintable(finished[0][2].toString()));
         const auto words = finished[0][1].value<QList<TranscribedWord>>();
         QVERIFY(wer(QStringLiteral("Bom dia. Este teste roda sem a placa de vídeo."), joined(words)) <= 0.35);
@@ -429,7 +434,8 @@ private slots:
         QVERIFY(!transcriber.isRunning());
     }
 
-    /// Medição (só com OPENFRAME_BENCH=1): 1 min de fala por modelo, na CPU.
+    /// Medição (só com OPENFRAME_BENCH=1): 1 min de fala por modelo, na CPU. `OPENFRAME_BENCH_THREADS=8,4` mede
+    /// cada número de threads (padrão: 0, a escolha automática do app).
     void oneMinutePerModel()
     {
         if (qEnvironmentVariable("OPENFRAME_BENCH") != QStringLiteral("1"))
@@ -443,30 +449,37 @@ private slots:
             reference += sentence + u' ';
         }
         const auto [p, id] = project(writeWav(samples));
-        qInfo().noquote() << QStringLiteral("Áudio: %1 s, %2 threads, %3")
+        QList<int> threadCounts;
+        for (const QString &n : qEnvironmentVariable("OPENFRAME_BENCH_THREADS").split(u',', Qt::SkipEmptyParts))
+            threadCounts.append(n.toInt());
+        if (threadCounts.isEmpty())
+            threadCounts = {0};
+        qInfo().noquote() << QStringLiteral("Áudio: %1 s, %2")
                                  .arg(samples.size() / 16000.0, 0, 'f', 1)
-                                 .arg(WhisperEngine::Options::defaultThreads())
                                  .arg(WhisperEngine::backendDescription());
         const QString only = qEnvironmentVariable("OPENFRAME_TEST_MODEL");
         for (WhisperModel model : allCases<WhisperModel>()) {
             if (modelPath(model).isEmpty() || (!only.isEmpty() && only != enumKey(model)))
                 continue;
-            WhisperEngine::unload();
-            QElapsedTimer clock;
-            qint64 first = 0, second = 0;
-            Run run;
-            for (int i = 0; i < 2; ++i) {
-                clock.start();
-                run = transcribe(p, TranscriptionSource::timeline(), QStringLiteral("pt"), WhisperEngine::Timing::Dtw,
-                                 true, model);
-                (i == 0 ? first : second) = clock.elapsed();
-                QVERIFY2(run.words, qPrintable(run.error));
+            for (int threads : threadCounts) {
+                WhisperEngine::unload();
+                QElapsedTimer clock;
+                qint64 first = 0, second = 0;
+                Run run;
+                for (int i = 0; i < 2; ++i) {
+                    clock.start();
+                    run = transcribe(p, TranscriptionSource::timeline(), QStringLiteral("pt"),
+                                     WhisperEngine::Timing::Dtw, true, model, nullptr, {}, threads);
+                    (i == 0 ? first : second) = clock.elapsed();
+                    QVERIFY2(run.words, qPrintable(run.error));
+                }
+                qInfo().noquote() << QStringLiteral("MEDIÇÃO %1 CPU, %2 threads: 1ª %3 s (com o carregamento), 2ª %4 s, WER %5")
+                                         .arg(enumKey(model))
+                                         .arg(threads > 0 ? QString::number(threads) : QStringLiteral("auto"))
+                                         .arg(first / 1000.0, 0, 'f', 1)
+                                         .arg(second / 1000.0, 0, 'f', 1)
+                                         .arg(wer(reference, joined(*run.words)), 0, 'f', 3);
             }
-            qInfo().noquote() << QStringLiteral("MEDIÇÃO %1 CPU: 1ª %2 s (com o carregamento), 2ª %3 s, WER %4")
-                                     .arg(enumKey(model))
-                                     .arg(first / 1000.0, 0, 'f', 1)
-                                     .arg(second / 1000.0, 0, 'f', 1)
-                                     .arg(wer(reference, joined(*run.words)), 0, 'f', 3);
         }
     }
 };

@@ -12,15 +12,106 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 
 #ifdef OPENFRAME_HAS_WHISPER
 #include <ggml-backend.h>
 #include <whisper.h>
 #endif
 
+#if defined(Q_OS_WIN)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#elif defined(Q_OS_MACOS)
+#include <mach/mach.h>
+#endif
+
 namespace of {
 
-int WhisperEngine::Options::defaultThreads() { return std::clamp(QThread::idealThreadCount() - 2, 1, 8); }
+namespace {
+
+/// Tempo acumulado de todas as CPUs da máquina, ocupado e total, na unidade do sistema.
+struct CpuTimes {
+    quint64 busy = 0;
+    quint64 total = 0;
+};
+
+std::optional<CpuTimes> cpuTimes()
+{
+#if defined(Q_OS_WIN)
+    FILETIME idle, kernel, user;
+    if (!GetSystemTimes(&idle, &kernel, &user))
+        return std::nullopt;
+    const auto value = [](const FILETIME &f) { return (quint64(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+    // O tempo do kernel inclui o ocioso.
+    const quint64 total = value(kernel) + value(user);
+    return CpuTimes{total - value(idle), total};
+#elif defined(Q_OS_MACOS)
+    host_cpu_load_info_data_t info;
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    const mach_port_t host = mach_host_self();
+    const kern_return_t status = host_statistics(host, HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&info), &count);
+    mach_port_deallocate(mach_task_self(), host);
+    if (status != KERN_SUCCESS)
+        return std::nullopt;
+    const quint64 busy = quint64(info.cpu_ticks[CPU_STATE_USER]) + info.cpu_ticks[CPU_STATE_SYSTEM] +
+                         info.cpu_ticks[CPU_STATE_NICE];
+    return CpuTimes{busy, busy + info.cpu_ticks[CPU_STATE_IDLE]};
+#elif defined(Q_OS_LINUX)
+    // "cpu user nice system idle iowait irq softirq steal guest guest_nice"; guest já está somado em user.
+    QFile stat(QStringLiteral("/proc/stat"));
+    if (!stat.open(QIODevice::ReadOnly | QIODevice::Text))
+        return std::nullopt;
+    const QList<QByteArray> fields = stat.readLine().simplified().split(' ');
+    if (fields.size() < 5 || fields[0] != "cpu")
+        return std::nullopt;
+    CpuTimes times;
+    for (qsizetype i = 1; i < std::min<qsizetype>(fields.size(), 9); ++i) {
+        const quint64 v = fields[i].toULongLong();
+        times.total += v;
+        if (i != 4 && i != 5)
+            times.busy += v;
+    }
+    return times;
+#else
+    return std::nullopt;
+#endif
+}
+
+} // namespace
+
+std::optional<double> WhisperEngine::busyCores(std::chrono::milliseconds window)
+{
+    const auto before = cpuTimes();
+    if (!before)
+        return std::nullopt;
+    QThread::sleep(window);
+    // O Mac atualiza os contadores em lotes: às vezes eles ficam ~1 s parados e depois alcançam de uma vez
+    // (medido no M5, livre ou cheio). Sem esperar, uma em cada poucas medidas saía vazia (e usava o máximo).
+    std::optional<CpuTimes> after = cpuTimes();
+    for (int extra = 0; after && after->total == before->total && extra < 30; ++extra) {
+        QThread::sleep(std::chrono::milliseconds(50));
+        after = cpuTimes();
+    }
+    // Contadores que voltaram (os de 32 bits do Mac dão a volta depois de semanas ligado): sem medida.
+    if (!after || after->total <= before->total || after->busy < before->busy)
+        return std::nullopt;
+    const double fraction = double(after->busy - before->busy) / double(after->total - before->total);
+    return std::clamp(fraction, 0.0, 1.0) * QThread::idealThreadCount();
+}
+
+int WhisperEngine::threadsFor(std::optional<double> busy, int logical)
+{
+    const int most = std::clamp(logical - 2, 1, 8);
+    if (!busy)
+        return most;
+    return std::clamp(int(std::lround(logical - *busy)), std::min(4, most), most);
+}
 
 QList<EngineWord> WhisperEngine::joinTokens(const QList<QList<Token>> &segments)
 {
@@ -252,7 +343,12 @@ std::optional<QList<EngineWord>> WhisperEngine::transcribe(const std::vector<flo
 
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH);
     params.beam_search.beam_size = 5;
-    params.n_threads = options.threads;
+    // Medido depois de carregar o modelo: a janela só vê os outros processos.
+    params.n_threads = options.threads > 0
+                           ? options.threads
+                           : threadsFor(busyCores(std::chrono::milliseconds(200)), QThread::idealThreadCount());
+    if (cancelled)
+        return std::nullopt;
     params.print_progress = false;
     params.print_realtime = false;
     params.print_timestamps = false;
