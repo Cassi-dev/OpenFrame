@@ -78,8 +78,10 @@ if(ANDROID)
     endif()
 endif()
 
-include(GNUInstallDirs)
-install(TARGETS OpenFrame
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if(NOT ANDROID)
+    include(GNUInstallDirs)
+    install(TARGETS OpenFrame
+        BUNDLE DESTINATION .
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
