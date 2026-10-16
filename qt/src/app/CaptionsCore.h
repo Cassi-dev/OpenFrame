@@ -7,6 +7,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QUrl>
 #include <memory>
 #include <optional>
 
@@ -26,6 +27,8 @@ struct ModelInfo {
 QList<ModelInfo> models();
 /// Recomendado na janela (nesta versão, só CPU: o Equilibrado).
 QString recommendedModel();
+/// Endereço HTTPS do arquivo do modelo (vazio se o id for desconhecido).
+QUrl modelUrl(const QString &id);
 
 struct Language {
     QString code;

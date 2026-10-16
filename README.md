@@ -40,9 +40,11 @@ para **Windows e Linux** (C++, Qt e FFmpeg) tem a mesma interface e abre os
 mesmos projetos `.openframe`.
 
 - **Nativo e leve.** No Mac, usa AVFoundation e Core Image, os mesmos motores do macOS.
-  O instalador tem cerca de 3 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
-- **Seu material fica com você.** Não há conta, nuvem nem telemetria: o app não
-  faz nenhuma chamada de rede. Tudo roda localmente, inclusive sem internet.
+  O instalador do Mac tem cerca de 7 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
+- **Seu material fica com você.** Não há conta, nuvem nem telemetria. A edição, a
+  exportação e até a transcrição das legendas automáticas rodam no seu computador,
+  inclusive sem internet. A única conexão é opcional: baixar o modelo de
+  transcrição, quando você pede (o arquivo é conferido por sha256).
 - **Sem marca d'água e sem assinatura.** O que você exporta é só seu.
 - **Exportação sob controle.** Resolução, fps, codificador, bitrate ou tamanho
   de arquivo alvo, com estimativa ao vivo antes de exportar.
@@ -121,6 +123,11 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - 14 filtros com intensidade e miniaturas
 - 10 efeitos: desfoque, pixelizar, glitch RGB, espelho, tremor, flash, pulso de zoom, caleidoscópio, quadrinhos e contornos neon
 - Animações de entrada e saída: esmaecer, zooms, deslizar (4 direções), girar e máquina de escrever
+- Mover, escalar e girar qualquer elemento direto no preview, com guias de alinhamento e ímã (⌘ no Mac
+  ou Ctrl no Windows e no Linux desliga o ímã enquanto arrasta)
+- Animações de motion design para texto: por letra (cascata, elástico, onda), por palavra e
+  linha (palavra a palavra, revelar por máscara), cinematográficas (foco, espaçamento, decodificar) e
+  loops contínuos (flutuar, pulsar, respirar brilho, reflexo de luz), com prévia animada
 - 9 transições: dissolver, escurecer, clarear, cortinas, empurrar e zoom com desfoque
 
 **Texto e legendas**
@@ -129,6 +136,22 @@ Nos três sistemas, os projetos ficam na pasta de vídeos do usuário
 - Contorno por fora da letra, sombra (cor, distância, ângulo e desfoque) e fundo com cantos arredondados
 - Estilos prontos: clássico, contorno, destaque, neon, legenda, etiqueta, sombra dura e espaçado
 - Importar e exportar legendas SRT
+- Largura da caixa de texto ajustável no preview, com quebra de linha equilibrada
+
+**Legendas automáticas**
+- Transcrição da fala com o [whisper.cpp](https://github.com/ggml-org/whisper.cpp), feita no próprio computador:
+  no Mac, na GPU dos Macs com Apple Silicon; no Windows e no Linux, na CPU, com a variante certa para o
+  processador escolhida na hora (funciona em qualquer PC x86-64, mais rápido nos que têm AVX2 ou AVX-512)
+- Três modelos para baixar quando quiser: Rápido (148 MB), Equilibrado (488 MB, o recomendado) e Máxima
+  precisão (574 MB, bem mais lento na CPU)
+- Tempo de cada palavra, quebra das frases por pausas e pontuação, e um desfazer para tudo
+- 10 estilos: Frases, Destaque, Impacto, Surgir, Leitura guiada, Preenchimento, Digitação, Editorial
+  (palavra-chave em serifa itálica), Cinema e Empilhado
+- Edição das legendas no painel, cor do destaque, palavra-chave e "aplicar este estilo a todas"
+
+Os projetos vindos do Mac abrem no Windows e no Linux com as animações, as legendas e os estilos. As
+fontes do macOS que não existem lá (Helvetica Neue, Menlo, Didot, Avenir Next e outras) são trocadas por
+fontes livres parecidas, embutidas no app (Inter, JetBrains Mono, Playfair Display e Barlow Condensed).
 
 **Áudio**
 - Faixas de música, volume, fade de entrada e de saída, silenciar faixa
@@ -170,9 +193,11 @@ Com o app instalado, arquivos `.openframe` abrem com duplo clique.
 
 ### Compilar a versão Windows e Linux
 
-Fica em `qt/`: C++20, Qt 6.8 ou superior (Quick, Quick Controls, Multimedia) e
-FFmpeg 6.1 a 9 (bibliotecas de desenvolvimento). Também compila no Mac, para
-desenvolvimento.
+Fica em `qt/`: C++20, Qt 6.8 ou superior (Quick, Quick Controls, Multimedia, Network) e
+FFmpeg 6.1 a 9 (bibliotecas de desenvolvimento). O configure baixa o whisper.cpp
+(~10 MB, versão fixa conferida por sha256); sem rede, aponte
+`FETCHCONTENT_SOURCE_DIR_WHISPER` para uma cópia do mesmo commit. Também compila
+no Mac, para desenvolvimento.
 
 ```bash
 # Linux (com o Qt e o FFmpeg instalados; ou FFMPEG_ROOT apontando para um build "shared")
@@ -253,5 +278,9 @@ Logo, ícone, paleta e regras de uso em [assets/brand](assets/brand/README.md).
 
 O OpenFrame é software livre, sob a [GNU General Public License versão 3 ou
 posterior](LICENSE) (GPL-3.0-or-later). A versão Windows e Linux distribui o
-FFmpeg (com x264 e x265, GPL) e o Qt (LGPL-3.0); as licenças de terceiros estão
-em [qt/packaging/TERCEIROS.txt](qt/packaging/TERCEIROS.txt) e acompanham os pacotes.
+FFmpeg (com x264 e x265, GPL), o Qt (LGPL-3.0) e as fontes Inter, JetBrains Mono,
+Playfair Display e Barlow Condensed (SIL Open Font License 1.1); as licenças de
+terceiros estão em [qt/packaging/TERCEIROS.txt](qt/packaging/TERCEIROS.txt) e
+acompanham os pacotes. Os apps das três plataformas incluem o whisper.cpp e o ggml
+(MIT, [Sources/CWhisper/LICENSE](Sources/CWhisper/LICENSE)); os modelos Whisper
+baixados são da OpenAI, também sob MIT.

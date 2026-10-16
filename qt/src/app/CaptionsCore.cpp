@@ -43,6 +43,12 @@ QString recommendedModel()
     return enumKey(of::recommendedModel());
 }
 
+QUrl modelUrl(const QString &id)
+{
+    const auto m = enumFromKey<WhisperModel>(id);
+    return m ? downloadUrl(*m) : QUrl();
+}
+
 QList<Language> languages()
 {
     QList<Language> list;

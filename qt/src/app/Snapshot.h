@@ -33,6 +33,9 @@ class EditorModel;
 ///   no preview no meio da fala, painel e inspetor.
 /// - `OPENFRAME_SNAPSHOT_SCENARIO=som` (com `OPENFRAME_SNAPSHOT_MEDIA`): toca 3 s
 ///   do começo, para a CI gravar a saída de som do pacote.
+/// - `OPENFRAME_SNAPSHOT_SCENARIO=pacote` (com `OPENFRAME_SNAPSHOT_MEDIA` com uma fala e
+///   um modelo instalado): HTTPS até o servidor do modelo (plugin de TLS) e uma
+///   transcrição de verdade (bibliotecas e variantes do whisper/ggml), no pacote.
 class Snapshot : public QObject
 {
     Q_OBJECT
@@ -62,6 +65,7 @@ private:
     void motionScenario();
     void captionsScenario();
     void soundScenario();
+    void packageScenario();
     /// Arrasta no overlay do preview de `from` a `to` (pontos do item), em passos,
     /// pelas mesmas funções do mouse; com `release` falso, o gesto fica aberto.
     void canvasDrag(QPointF from, QPointF to, bool snapping = true, bool release = true);

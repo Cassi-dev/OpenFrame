@@ -203,6 +203,20 @@ jobs:
             .github/scripts/pacote-linux.sh build pacotes
           fi
 
+      # O pacote extraído leva o whisper/ggml com as variantes de CPU e o plugin de
+      # TLS, baixa por HTTPS e transcreve uma fala com uma variante de dentro dele.
+      - name: Conferir o pacote (whisper e TLS)
+        run: .github/scripts/conferir-pacote.sh pacotes conferencia
+
+      - name: Publicar a conferência do pacote
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: conferencia-${{ runner.os }}
+          path: conferencia
+          if-no-files-found: ignore
+          retention-days: 14
+
       # Tira a libva do sistema e toca o AppImage gravando a saída de som: prova que
       # o pacote, sem o plugin de mídia do Qt, não cai e o som sai.
       - name: AppImage sem libva, com som

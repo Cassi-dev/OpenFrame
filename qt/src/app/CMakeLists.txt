@@ -67,6 +67,7 @@ target_link_libraries(OpenFrame PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Concurrent
+    Qt6::Network
 )
 
 # DLLs do whisper/ggml (com as variantes de CPU) ao lado do executável no Windows:

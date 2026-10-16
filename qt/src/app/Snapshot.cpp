@@ -14,6 +14,9 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonDocument>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QSslSocket>
 #include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -310,6 +313,8 @@ void Snapshot::mediaScenario(const QString &mediaDir)
         captionsScenario();
     else if (scenario == "som")
         soundScenario();
+    else if (scenario == "pacote")
+        packageScenario();
     else
         editorScenario();
 }
@@ -854,8 +859,6 @@ void Snapshot::soundScenario()
     });
 }
 
-// MARK: - Legendas automáticas (janela, estilos no preview, painel e inspetor)
-
 namespace {
 
 /// Faixa automática de legendas, ou nada.
@@ -888,6 +891,77 @@ std::optional<Segment> captionWithGlue(const Project &p)
 
 } // namespace
 
+// MARK: - Pacote (TLS e whisper de verdade, para a CI conferir o pacote extraído)
+
+void Snapshot::packageScenario()
+{
+    CaptionGeneration *gen = m_model->captions();
+    struct Head {
+        bool done = false;
+        int status = 0;
+        QString error;
+    };
+    auto head = std::make_shared<Head>();
+    then(0, [this, head] {
+        log(QStringLiteral("pacote: TLS %1, backends [%2], ativo %3")
+                .arg(QSslSocket::supportsSsl() ? "sim" : "não", QSslSocket::availableBackends().join(", "),
+                     QSslSocket::activeBackend()));
+        // O mesmo endereço que o ModelStore baixa; HEAD, para não trazer o arquivo.
+        auto *network = new QNetworkAccessManager(this);
+        QNetworkRequest request(CaptionsCore::modelUrl(QStringLiteral("base")));
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = network->head(request);
+        connect(reply, &QNetworkReply::finished, this, [reply, head] {
+            head->status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            head->error = reply->error() == QNetworkReply::NoError ? QString() : reply->errorString();
+            head->done = true;
+            reply->deleteLater();
+        });
+    });
+    waitUntil([head] { return head->done; }, 60'000, QStringLiteral("a resposta HTTPS do servidor do modelo"));
+    then(0, [this, head] {
+        log(QStringLiteral("pacote: HTTPS do modelo, HTTP %1 %2").arg(head->status).arg(head->error));
+        if (!head->error.isEmpty() || head->status != 200)
+            fail(QStringLiteral("pacote: o HTTPS do modelo falhou (HTTP %1, %2)").arg(head->status).arg(head->error));
+    });
+
+    // Transcrição de verdade com o primeiro modelo instalado (a CI tem o base).
+    then(0, [this, gen] {
+        QString installed;
+        for (const auto &m : CaptionsCore::models())
+            if (installed.isEmpty() && gen->engine()->isInstalled(m.id))
+                installed = m.id;
+        if (installed.isEmpty())
+            return fail(QStringLiteral("pacote: nenhum modelo instalado em %1")
+                            .arg(qEnvironmentVariable("OPENFRAME_MODELS_DIR", QStringLiteral("(pasta padrão)"))));
+        m_model->setSelection({});
+        m_model->presentAutoCaptions();
+        gen->setLanguage(QStringLiteral("pt"));
+        gen->setModel(installed);
+        gen->setPreset(QStringLiteral("phrases"));
+        gen->setReplacePrevious(false);
+        log("pacote: transcrevendo com o modelo " + installed);
+        m_model->generateCaptions();
+    });
+    waitUntil([gen] { return !gen->running(); }, 300'000, QStringLiteral("a transcrição"));
+    then(300, [this, gen] {
+        const Track *track = autoCaptionTrack(m_model->project());
+        QStringList texts;
+        if (track)
+            for (const auto &s : track->segments)
+                if (s.text)
+                    texts << QString(s.text->text).replace(u'\n', u' ').replace(QChar(0xA0), u' ');
+        log(QStringLiteral("pacote: fase %1, %2 legendas: \"%3\"").arg(gen->phase()).arg(texts.size())
+                .arg(texts.join(QStringLiteral(" | "))));
+        capture("pacote-1-transcricao");
+        if (gen->phase() != QLatin1String("finished") || texts.isEmpty())
+            fail(QStringLiteral("pacote: a transcrição falhou (fase %1, erro \"%2\")").arg(gen->phase(), gen->error()));
+    });
+}
+
+// MARK: - Legendas automáticas (janela, estilos no preview, painel e inspetor)
+
+
 void Snapshot::captionsScenario()
 {
     CaptionGeneration *gen = m_model->captions();
@@ -898,9 +972,9 @@ void Snapshot::captionsScenario()
             return fail("legendas: sem faixa automática");
         m_model->seekMicros(seg->targetStart + seg->targetDuration() * 45 / 100);
     };
-    // Modelo instalado (gera sem baixar) e um ausente (para o estado de erro do download).
+    // Modelo instalado: gera sem baixar. O cenário nunca baixa nada (o download é de verdade
+    // desde a etapa 3); os estados do download são simulados.
     auto installed = std::make_shared<QString>();
-    auto missing = std::make_shared<QString>();
     auto generate = [this, gen, installed](const QString &preset) {
         gen->setModel(*installed);
         gen->setPreset(preset);
@@ -920,13 +994,11 @@ void Snapshot::captionsScenario()
 
     // Janela: opções, modelos e os cartões dos estilos. Sem o texto padrão do projeto,
     // que ficaria por cima das legendas nas capturas.
-    then(0, [this, gen, installed, missing] {
-        for (const auto &m : CaptionsCore::models()) {
-            QString &slot = gen->engine()->isInstalled(m.id) ? *installed : *missing;
-            if (slot.isEmpty())
-                slot = m.id;
-        }
-        log(QStringLiteral("legendas: modelo instalado \"%1\", ausente \"%2\"").arg(*installed, *missing));
+    then(0, [this, gen, installed] {
+        for (const auto &m : CaptionsCore::models())
+            if (installed->isEmpty() && gen->engine()->isInstalled(m.id))
+                *installed = m.id;
+        log(QStringLiteral("legendas: modelo instalado \"%1\"").arg(*installed));
         if (installed->isEmpty())
             return fail(QStringLiteral("legendas: nenhum modelo instalado em %1; o cenário gera com um modelo "
                                        "instalado (OPENFRAME_MODELS_DIR) e a transcrição falsa")
@@ -958,25 +1030,17 @@ void Snapshot::captionsScenario()
     });
     then(500, [this] { capture("legendas-3-estilo-sem-destaque"); });
 
-    // Estados: baixando (simulado, o download real chega com a etapa 3), erro do download, gerando, pronto.
+    // Estados: baixando e erro do download (simulados, sem rede), gerando, pronto.
     then(0, [gen] {
         gen->setIncludesDownload(true);
         gen->setPhase(QStringLiteral("downloading"), 0.42);
     });
     then(500, [this] { capture("legendas-4-baixando"); });
-    then(0, [this, gen, missing] {
-        gen->backToOptions();
-        if (missing->isEmpty())
-            return log("legendas: todos os modelos instalados, sem a captura do erro do download");
-        gen->setModel(*missing);
-        m_model->generateCaptions();
+    then(0, [gen] {
+        gen->setResult(0, QStringLiteral("O download veio incompleto (15 de 488 MB). Tente de novo."));
     });
-    waitUntil([gen, missing] { return missing->isEmpty() || gen->phase() == "failed"; }, 3000,
-              QStringLiteral("o erro do download"));
-    then(300, [this, gen, missing] {
-        if (missing->isEmpty())
-            return;
-        log("legendas: erro = " + gen->error());
+    then(500, [this, gen] {
+        log(QStringLiteral("legendas: fase %1, erro (simulado) = %2").arg(gen->phase(), gen->error()));
         capture("legendas-5-erro");
         gen->backToOptions();
     });
