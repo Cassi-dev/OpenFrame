@@ -191,7 +191,8 @@ O `Transcriber` e o `ModelStore` deixaram de ser provisórios. A API do app não
 | `WhisperModels.h` | `ModelStore::download` baixa por `QNetworkAccessManager` para `<arquivo>.partial`, retoma com `Range` (se o servidor responder 200, recomeça), confere o tamanho e o sha256 (fora da thread da interface) e só então move para o lugar. Cancelar guarda o parcial (o próximo download continua); `remove` também cancela e solta o modelo da memória. `downloadProgress` a cada ~100 ms. Mensagens: "O servidor do modelo respondeu com o erro N.", "O download veio incompleto (X de Y bytes). Tente de novo.", "O arquivo baixado está corrompido (o sha256 não confere). Tente de novo.", "Não foi possível baixar o modelo: …". Novos: `partialPath(model)`, `sha256Of(file)` e `download(model, url, size, sha256)` (testes) |
 
 Internos (não usar no app): `WhisperEngine.h` (contexto do modelo em cache, liberado depois de 3 min parado;
-`isAvailable`, `loadBackends`, `backendDescription`), `WordAligner.h` (ajuste das fronteiras pela energia do
+`isAvailable`, `loadBackends`, `backendDescription`; `Options::threads` = 0 escolhe as threads sozinho com
+`busyCores` e `threadsFor`, veja "Threads e CPU ocupada"), `WordAligner.h` (ajuste das fronteiras pela energia do
 áudio), `AudioMixdown.h`.
 
 Variáveis de ambiente:
@@ -200,7 +201,9 @@ Variáveis de ambiente:
 - `OPENFRAME_WHISPER_LOG=1`: mostra os logs do whisper/ggml no stderr;
 - nos testes: `OPENFRAME_TEST_MODELS_DIR` (única pasta do modelo), `OPENFRAME_REQUIRE_WHISPER_MODEL=1` (sem o
   modelo, falha em vez de pular; a CI usa) e `OPENFRAME_BENCH=1` (mede 1 min de fala com cada modelo; com
-  `OPENFRAME_TEST_MODEL=base` só um).
+  `OPENFRAME_TEST_MODEL=base` só um; `OPENFRAME_BENCH_THREADS=8,4` mede cada número de threads, e 0 é a escolha
+  automática do app). As esperas dos testes do whisper não têm prazo próprio: o limite é o TIMEOUT do ctest (900 s),
+  e o vigia do Qt Test (`QTEST_FUNCTION_TIMEOUT`) vai para o mesmo valor.
 
 ### Build
 
@@ -255,6 +258,47 @@ Apple M5, 8 threads, variante apple_m4 (sem o Accelerate, que só o Mac tem):
 No app do Mac (Swift, CPU com o Accelerate), o small leva 4,5 s e o turbo 10,4 s. No Windows/Linux, sem o BLAS
 da Apple, o turbo leva o tempo da própria fala num M5 e mais que isso num PC comum: por isso o recomendado é o
 small. Os tempos na CI dependem do push (`OPENFRAME_BENCH=1`).
+### Threads e CPU ocupada
+
+A barreira entre as operações do ggml (sem OpenMP, `ggml_barrier`) gira sem ceder a CPU. Com mais threads do whisper
+que núcleos livres, uma thread que fica sem vez segura todas as outras, que continuam girando. Com 8 threads fixas, a
+transcrição ficava de 2 a 25 vezes mais lenta num PC ocupado. Era o que fazia o `TranscriptionTests` levar 608 s com
+dois `ctest -j8` na mesma máquina.
+
+Agora, logo antes de transcrever (depois de carregar o modelo), o núcleo mede por 200 ms a CPU ocupada da máquina
+inteira (`busyCores`: `host_statistics` no Mac, `/proc/stat` no Linux, `GetSystemTimes` no Windows) e usa os
+núcleos livres, no mínimo min(4, máximo) e no máximo os núcleos menos 2, até 8 (`threadsFor`). Sem a medida, usa o
+máximo, como antes. No Mac, os contadores da CPU são atualizados em lotes: às vezes ficam ~1 s parados, com a
+máquina livre ou cheia (medido: 998 ms no máximo, em 20 s). Por isso, se nada andou na janela, a medida espera até
+1,5 s a mais.
+
+Medido no M5 (10 núcleos: 4 de desempenho e 6 de eficiência), modelo base, 65 s de fala, 2ª transcrição, duas
+rodadas. A máquina tinha outros agentes rodando (load 6–7 mesmo "sem carga"):
+
+| Carga em paralelo | Antes (8 threads) | Depois (automático → threads usadas) |
+|---|---|---|
+| nenhuma | 3,9–4,9 s | 4,0–4,3 s (8) |
+| 4 `yes` | 9,7–12,9 s | 6,3–7,3 s (4–5) |
+| 8 `yes` | 20,5–23 s | 8,9–9,3 s (4) |
+| outro whisper com 8 threads fixas | 73–206 s | 14–20 s (4) |
+| outro whisper automático | 19–24 s | 12,1–12,5 s (5–6) |
+
+O cenário do `ctest` (dois `TranscriptionTests` inteiros ao mesmo tempo, com 4 `yes` no papel de outra
+compilação, duas rodadas): antes, 170–201 s cada um (a transcrição longa do `silenceAndCancel` em 69–105 s); depois,
+39–43 s (11–13 s). Os testes do whisper também deixaram de ter prazo próprio (veja "Variáveis de ambiente").
+
+O que ficou de fora, medido:
+- **Número fixo menor** (por exemplo, os 4 núcleos de desempenho): sem carga, 4 threads levam 35% a mais que 8
+  (2,9 × 2,1 s numa rodada limpa) e 6 levam 15% a mais. Com carga, o melhor é sempre o número de núcleos livres.
+  Nenhum número fixo acerta os dois casos.
+- **Ceder a vez na barreira** (`sched_yield` depois de 16 mil voltas, ggml modificado): sem carga não muda nada
+  (4,2 × 4,3 s), mas contra outro whisper sem a mudança ficou pior (167–197 s × 52–78 s). Quem cede perde a CPU
+  para quem continua girando. Além disso, seria um remendo no código de terceiros.
+- **Menos de 4 threads** com a CPU cheia: mais lento (8 `yes`: 4 threads 8,5–9 s, 2 threads 11,5 s, 1 thread
+  19–20 s). O sistema divide o tempo entre todos os processos, e mais threads ganham mais fatias.
+- **OpenMP** (a barreira dele gira um pouco e depois dorme): desligado de propósito, para não levar a
+  libgomp/vcomp140 no pacote; o clang da Apple nem tem.
+
 Tempos das palavras na fala com pausas conhecidas (modelo base): erro médio de 14 ms no início e no fim, com o
 ajuste pela energia (sem ele, 0,31 s no DTW e 0,35 s nos tokens), como no Swift.
 
