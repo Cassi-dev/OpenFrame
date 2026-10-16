@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Confere o pacote extraído: o whisper/ggml com as variantes de CPU e o plugin de
-# TLS no lugar, e o app do pacote baixando por HTTPS (HEAD no servidor do modelo)
+# Confere o pacote extraído: o whisper/ggml com as variantes de CPU, o plugin de
+# TLS e as licenças novas no lugar, e o app do pacote baixando por HTTPS (HEAD no servidor do modelo)
 # e transcrevendo uma fala de verdade com uma variante carregada de dentro do
 # pacote (cenário "pacote"). Usado pela CI depois dos pacotes.
 #
@@ -25,7 +25,8 @@ falta() {
 
 if [[ "${RUNNER_OS:-$(uname -s)}" == Windows* || "$(uname -s)" == MINGW* ]]; then
     app="$pacotes/OpenFrame"
-    for f in whisper.dll ggml.dll ggml-base.dll tls/qschannelbackend.dll; do
+    for f in whisper.dll ggml.dll ggml-base.dll tls/qschannelbackend.dll licencas/whisper.cpp-LICENSE.txt \
+        licencas/OFL-JetBrainsMono.txt licencas/OFL-PlayfairDisplay.txt licencas/OFL-BarlowCondensed.txt; do
         [[ -f "$app/$f" ]] || falta "$f"
     done
     variantes=(x64 sse42 sandybridge haswell skylakex cannonlake cascadelake icelake alderlake)
@@ -40,7 +41,9 @@ else
     (cd "$work" && "$appimage" --appimage-extract > /dev/null)
     app="$work/squashfs-root"
     for f in usr/lib/libwhisper.so.1 usr/lib/libggml.so.0 usr/lib/libggml-base.so.0 \
-        usr/plugins/tls/libqopensslbackend.so; do
+        usr/plugins/tls/libqopensslbackend.so usr/share/doc/openframe/licencas/whisper.cpp-LICENSE.txt \
+        usr/share/doc/openframe/licencas/OFL-JetBrainsMono.txt usr/share/doc/openframe/licencas/OFL-PlayfairDisplay.txt \
+        usr/share/doc/openframe/licencas/OFL-BarlowCondensed.txt; do
         [[ -f "$app/$f" ]] || falta "$f"
     done
     variantes=(x64 sse42 sandybridge ivybridge piledriver haswell skylakex cannonlake cascadelake icelake cooperlake
@@ -60,7 +63,7 @@ else
     esperado="squashfs-root/usr/lib/openframe/libggml-cpu-"
     plataforma=(QT_QPA_PLATFORM=xcb OPENFRAME_SOFTWARE=1)
 fi
-echo "Arquivos do whisper/ggml e do TLS: $([[ $falhas -eq 0 ]] && echo completos || echo incompletos)."
+echo "Arquivos do whisper/ggml, do TLS e das licenças: $([[ $falhas -eq 0 ]] && echo completos || echo incompletos)."
 
 # O app do pacote: HTTPS e transcrição. OPENFRAME_WHISPER_LOG mostra de onde a variante veio.
 status=0

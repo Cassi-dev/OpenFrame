@@ -38,6 +38,11 @@ install -Dm644 "$root/qt/packaging/TERCEIROS.txt" "$doc/TERCEIROS.txt"
 install -Dm644 "$root/qt/packaging/licenses/LGPL-3.0.txt" "$doc/licencas/LGPL-3.0.txt"
 install -Dm644 "$root/qt/src/app/fonts/OFL-Inter.txt" "$doc/licencas/OFL-Inter.txt"
 install -Dm644 "$root/qt/src/app/fonts/LICENSE-Lucide.txt" "$doc/licencas/LICENSE-Lucide.txt"
+for f in "$root"/qt/src/core/fonts/OFL-*.txt; do
+    install -Dm644 "$f" "$doc/licencas/${f##*/}"
+done
+install -Dm644 "${FETCHCONTENT_SOURCE_DIR_WHISPER:-$build/_deps/whisper-src}/LICENSE" \
+    "$doc/licencas/whisper.cpp-LICENSE.txt"
 if [[ -f "$FFMPEG_ROOT/LICENSE.txt" ]]; then
     install -Dm644 "$FFMPEG_ROOT/LICENSE.txt" "$doc/licencas/FFmpeg-LICENSE.txt"
 fi

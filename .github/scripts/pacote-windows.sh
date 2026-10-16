@@ -45,7 +45,9 @@ cp "$crt"/*.dll "$app/"
 cp "$root/LICENSE" "$app/LICENSE.txt"
 cp "$root/qt/packaging/TERCEIROS.txt" "$app/"
 cp "$root/qt/packaging/licenses/LGPL-3.0.txt" "$root/qt/src/app/fonts/OFL-Inter.txt" \
-    "$root/qt/src/app/fonts/LICENSE-Lucide.txt" "$app/licencas/"
+    "$root/qt/src/app/fonts/LICENSE-Lucide.txt" "$root"/qt/src/core/fonts/OFL-*.txt "$app/licencas/"
+whisper_src=${FETCHCONTENT_SOURCE_DIR_WHISPER:-$build/_deps/whisper-src}
+cp "$whisper_src/LICENSE" "$app/licencas/whisper.cpp-LICENSE.txt"
 [[ -f "$ffmpeg/LICENSE.txt" ]] && cp "$ffmpeg/LICENSE.txt" "$app/licencas/FFmpeg-LICENSE.txt"
 
 # Zip portátil.
