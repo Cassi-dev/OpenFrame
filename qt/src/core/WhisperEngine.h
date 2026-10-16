@@ -4,6 +4,7 @@
 #include "WordAligner.h"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -34,10 +35,22 @@ struct Options {
     Timing timing = Timing::Dtw;
     /// Ajusta as fronteiras pela energia do áudio (`WordAligner`).
     bool refine = true;
-    /// Entre 1 e 8: os núcleos menos 2.
-    int threads = defaultThreads();
-    static int defaultThreads();
+    /// 0 = automático: `threadsFor` com a CPU medida logo antes de transcrever. Senão, o número de threads.
+    int threads = 0;
 };
+
+/// Núcleos ocupados na máquina inteira (o uso somado de todas as CPUs, em núcleos), medidos ao longo de `window`
+/// (bloqueia esse tempo; até 1,5 s a mais se os contadores do sistema estiverem parados). Vazio se o sistema não
+/// informa.
+std::optional<double> busyCores(std::chrono::milliseconds window);
+/// Threads para transcrever com `busy` dos `logical` núcleos ocupados: os livres, entre min(4, máximo) e o
+/// máximo (os núcleos menos 2, até 8); o máximo quando `busy` é vazio.
+///
+/// A barreira entre as operações do ggml gira sem ceder a CPU: com mais threads que núcleos livres, uma thread
+/// sem vez segura as outras, e a transcrição fica de 2 a 25 vezes mais lenta (medido no API.md). Ceder a vez na
+/// barreira foi pior: quem cede perde a CPU para quem continua girando. Abaixo de 4, mesmo numa CPU cheia, fica
+/// mais lento: o sistema divide o tempo entre todos, e mais threads ganham mais fatias.
+int threadsFor(std::optional<double> busy, int logical);
 
 /// O whisper foi compilado e há um backend de CPU (carrega das pastas padrão na primeira chamada).
 bool isAvailable();

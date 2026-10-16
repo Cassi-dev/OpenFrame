@@ -144,7 +144,7 @@ do Swift. Nada muda na chamada do app: `Renderer::shared().render(project, t, si
 |---|---|
 | `AnimationPreview.h` | `AnimationPreview::frames(subject, part, size, count) -> QList<QImage>`: miniaturas animadas da aba Animação e dos cartões da janela das legendas, pelo mesmo `Renderer` (prévia = resultado). `Subject` = `TextContent` ou `QImage` (foto ou quadro do vídeo); `Part::entry(kind)`, `Part::exit(kind)`, `Part::loopOf(loopKind)`. Entrada: 600 ms de animação e 600 ms parado; saída: parado e depois a saída; loop: dois períodos na intensidade máxima. Texto centralizado e com a fonte ajustada para caber (nítido); imagem encaixada. Fundo transparente (`Format_ARGB32_Premultiplied`). Vazio com texto vazio, imagem nula ou `count` ≤ 0. Precisa de `QGuiApplication`; pode rodar fora da thread da interface |
 | `Renderer.h` | `RenderOptions{stills, transparent}` e `render(project, t, size, options)`: fotos em memória por material e fundo transparente (é o que o `AnimationPreview` usa; o app não precisa) |
-| `FontCatalog.h` | `registerBundled()` (chamada sozinha pelo `TextRenderer` e por `families()`) e `resolve(family, face) -> ResolvedFont{family, face}`: a família pedida, se existir; senão a equivalente distribuída (abaixo). `families()` passa a listar também as fontes do núcleo |
+| `FontCatalog.h` | `registerBundled()` (chamada sozinha pelo `TextRenderer` e por `families()`) e `resolve(family, face) -> ResolvedFont{family, face}`: a família pedida, se existir; senão a equivalente distribuída (abaixo). `families()` passa a listar também as fontes do núcleo. `OPENFRAME_BUNDLED_FONTS_ONLY=1` (testes): só as distribuídas contam como existentes, e o Mac resolve como o Windows e o Linux; no Mac, o ctest roda o CaptionTests, o CaptionRenderTests e o TextLayoutTests de novo assim (`*BundledFonts`) |
 | `TextRenderer.h` | `imageSize(content, canvas)`, `rasterScale(content, canvas, peak)`: o texto é rasterizado na escala efetiva (estilo × pico da animação, passos de 1/8, mínimo 1, lado de até 8192 px) e só reduzido depois |
 
 Fontes embutidas no núcleo (recurso `:/openframe/fonts`, 2,6 MB; todas SIL Open Font License 1.1, com o texto da
@@ -188,10 +188,11 @@ O `Transcriber` e o `ModelStore` deixaram de ser provisórios. A API do app não
 | Cabeçalho | O que mudou |
 |---|---|
 | `Transcriber.h` | `start` mistura o áudio como a exportação ouve (`AudioMixdown`: o `AudioMixer` em 48 kHz, somado para mono e levado a 16 kHz), transcreve com o whisper e devolve as palavras com os tempos da timeline. Erros: "modelo não instalado", "sem áudio" (silêncio ou nenhum som no trecho), "motor indisponível" (nenhuma variante de CPU encontrada), "A transcrição falhou: …". `cancel()` interrompe o whisper de verdade (~0,3 s medido). Novo: `Transcriber::run(...)`, a mesma coisa síncrona (testes e medições). `OPENFRAME_FAKE_TRANSCRIPTION=1` continua valendo |
-| `WhisperModels.h` | `ModelStore::download` baixa por `QNetworkAccessManager` para `<arquivo>.partial`, retoma com `Range` (se o servidor responder 200, recomeça), confere o tamanho e o sha256 (fora da thread da interface) e só então move para o lugar. Cancelar guarda o parcial (o próximo download continua); `remove` também cancela e solta o modelo da memória. `downloadProgress` a cada ~100 ms. Mensagens: "O servidor do modelo respondeu com o erro N.", "O download veio incompleto (X de Y bytes). Tente de novo.", "O arquivo baixado está corrompido (o sha256 não confere). Tente de novo.", "Não foi possível baixar o modelo: …". Novos: `partialPath(model)`, `sha256Of(file)` e `download(model, url, size, sha256)` (testes) |
+| `WhisperModels.h` | `ModelStore::download` baixa por `QNetworkAccessManager` para `<arquivo>.partial`, retoma com `Range` (se o servidor responder 200, recomeça), confere o tamanho e o sha256 (fora da thread da interface) e só então move para o lugar. Cancelar guarda o parcial (o próximo download continua); `remove` também cancela e solta o modelo da memória. `downloadProgress` no máximo a cada ~100 ms; o aviso que cair antes é adiado, não descartado (o último valor antes de uma pausa da rede sempre chega). Mensagens: "O servidor do modelo respondeu com o erro N.", "O download veio incompleto (X de Y bytes). Tente de novo.", "O arquivo baixado está corrompido (o sha256 não confere). Tente de novo.", "Não foi possível baixar o modelo: …". Novos: `partialPath(model)`, `sha256Of(file)` e `download(model, url, size, sha256)` (testes) |
 
 Internos (não usar no app): `WhisperEngine.h` (contexto do modelo em cache, liberado depois de 3 min parado;
-`isAvailable`, `loadBackends`, `backendDescription`), `WordAligner.h` (ajuste das fronteiras pela energia do
+`isAvailable`, `loadBackends`, `backendDescription`; `Options::threads` = 0 escolhe as threads sozinho com
+`busyCores` e `threadsFor`, veja "Threads e CPU ocupada"), `WordAligner.h` (ajuste das fronteiras pela energia do
 áudio), `AudioMixdown.h`.
 
 Variáveis de ambiente:
@@ -200,7 +201,9 @@ Variáveis de ambiente:
 - `OPENFRAME_WHISPER_LOG=1`: mostra os logs do whisper/ggml no stderr;
 - nos testes: `OPENFRAME_TEST_MODELS_DIR` (única pasta do modelo), `OPENFRAME_REQUIRE_WHISPER_MODEL=1` (sem o
   modelo, falha em vez de pular; a CI usa) e `OPENFRAME_BENCH=1` (mede 1 min de fala com cada modelo; com
-  `OPENFRAME_TEST_MODEL=base` só um).
+  `OPENFRAME_TEST_MODEL=base` só um; `OPENFRAME_BENCH_THREADS=8,4` mede cada número de threads, e 0 é a escolha
+  automática do app). As esperas dos testes do whisper não têm prazo próprio: o limite é o TIMEOUT do ctest (900 s),
+  e o vigia do Qt Test (`QTEST_FUNCTION_TIMEOUT`) vai para o mesmo valor.
 
 ### Build
 
@@ -235,12 +238,27 @@ termina com "motor indisponível", sem travar.
 - em `usr/lib/openframe/` (o linuxdeploy **não** as conhece: são carregadas com `dlopen`): as 14 variantes
   `libggml-cpu-{x64,sse42,sandybridge,ivybridge,piledriver,haswell,skylakex,cannonlake,cascadelake,icelake,cooperlake,zen4,alderlake,sapphirerapids}.so`.
 
-É só copiar o conteúdo de `OPENFRAME_WHISPER_LIB_DIR` com essas regras. Tamanho: no Mac, cada variante tem
+É só copiar o conteúdo de `OPENFRAME_WHISPER_LIB_DIR` com essas regras. O `cmake --install` instala só o app: o
+whisper/ggml entra fora do ALL (`EXCLUDE_FROM_ALL`), sem as regras de instalação dele (cabeçalhos, pkg-config, CMake,
+o Parakeet). No Linux, o linuxdeploy traz as 3 de `usr/lib` como dependências do executável (com
+`OPENFRAME_WHISPER_LIB_DIR` no `LD_LIBRARY_PATH`), e as variantes são copiadas. As variantes compilam pelo alvo
+`openframe_ggml_cpu` (no ALL), e quem liga com o `openframe::whisper` espera por elas. Tamanho: no Mac, cada variante tem
 ~0,9 MB, o ggml-base 0,75 MB e o whisper 0,4 MB; no x86, falta medir (estimo 10–15 MB no total).
 
 **Rede:** o download usa HTTPS (huggingface.co): o pacote precisa do Qt Network e do plugin de TLS
 (`plugins/tls`: `qschannelbackend` no Windows; `qopensslbackend` no Linux, que usa a OpenSSL do sistema). Vale
 testar um download de verdade no pacote. É o único acesso à rede do app, só quando o usuário pede.
+
+**Proxy:** o download usa o proxy do sistema, mas a consulta roda numa thread de trabalho, antes do pedido. No Windows,
+com a detecção automática (WPAD) ligada, o Qt chama o `WinHttpGetProxyForUrl` antes de ver que o endereço é local, e
+isso pode travar a thread do pedido por dezenas de segundos para quem tem a detecção ligada. (Na CI do Windows não
+era isso: o runner não tem proxy nem WPAD, e os 34,7 s do WhisperUnitTests eram o progresso que não passava do
+primeiro aviso, corrigido no `fb264c2`.) O resultado da consulta vale também para os redirecionamentos (o CDN do
+Hugging Face). Endereço local (loopback, `localhost`, `file://`) vai direto, sem consulta. Cancelar durante a consulta
+termina na hora.
+
+**Testes no Windows:** sem um console (o ctest da CI), o Qt Test escreve no `OutputDebugString`, e o log do ctest fica
+vazio. Por isso todos os testes recebem `QT_FORCE_STDERR_LOGGING=1` e escrevem no stdout.
 
 ### Medições (CPU, 65 s de fala do `say`, build Release)
 
@@ -255,6 +273,47 @@ Apple M5, 8 threads, variante apple_m4 (sem o Accelerate, que só o Mac tem):
 No app do Mac (Swift, CPU com o Accelerate), o small leva 4,5 s e o turbo 10,4 s. No Windows/Linux, sem o BLAS
 da Apple, o turbo leva o tempo da própria fala num M5 e mais que isso num PC comum: por isso o recomendado é o
 small. Os tempos na CI dependem do push (`OPENFRAME_BENCH=1`).
+### Threads e CPU ocupada
+
+A barreira entre as operações do ggml (sem OpenMP, `ggml_barrier`) gira sem ceder a CPU. Com mais threads do whisper
+que núcleos livres, uma thread que fica sem vez segura todas as outras, que continuam girando. Com 8 threads fixas, a
+transcrição ficava de 2 a 25 vezes mais lenta num PC ocupado. Era o que fazia o `TranscriptionTests` levar 608 s com
+dois `ctest -j8` na mesma máquina.
+
+Agora, logo antes de transcrever (depois de carregar o modelo), o núcleo mede por 200 ms a CPU ocupada da máquina
+inteira (`busyCores`: `host_statistics` no Mac, `/proc/stat` no Linux, `GetSystemTimes` no Windows) e usa os
+núcleos livres, no mínimo min(4, máximo) e no máximo os núcleos menos 2, até 8 (`threadsFor`). Sem a medida, usa o
+máximo, como antes. No Mac, os contadores da CPU são atualizados em lotes: às vezes ficam ~1 s parados, com a
+máquina livre ou cheia (medido: 998 ms no máximo, em 20 s). Por isso, se nada andou na janela, a medida espera até
+1,5 s a mais.
+
+Medido no M5 (10 núcleos: 4 de desempenho e 6 de eficiência), modelo base, 65 s de fala, 2ª transcrição, duas
+rodadas. A máquina tinha outros agentes rodando (load 6–7 mesmo "sem carga"):
+
+| Carga em paralelo | Antes (8 threads) | Depois (automático → threads usadas) |
+|---|---|---|
+| nenhuma | 3,9–4,9 s | 4,0–4,3 s (8) |
+| 4 `yes` | 9,7–12,9 s | 6,3–7,3 s (4–5) |
+| 8 `yes` | 20,5–23 s | 8,9–9,3 s (4) |
+| outro whisper com 8 threads fixas | 73–206 s | 14–20 s (4) |
+| outro whisper automático | 19–24 s | 12,1–12,5 s (5–6) |
+
+O cenário do `ctest` (dois `TranscriptionTests` inteiros ao mesmo tempo, com 4 `yes` no papel de outra
+compilação, duas rodadas): antes, 170–201 s cada um (a transcrição longa do `silenceAndCancel` em 69–105 s); depois,
+39–43 s (11–13 s). Os testes do whisper também deixaram de ter prazo próprio (veja "Variáveis de ambiente").
+
+O que ficou de fora, medido:
+- **Número fixo menor** (por exemplo, os 4 núcleos de desempenho): sem carga, 4 threads levam 35% a mais que 8
+  (2,9 × 2,1 s numa rodada limpa) e 6 levam 15% a mais. Com carga, o melhor é sempre o número de núcleos livres.
+  Nenhum número fixo acerta os dois casos.
+- **Ceder a vez na barreira** (`sched_yield` depois de 16 mil voltas, ggml modificado): sem carga não muda nada
+  (4,2 × 4,3 s), mas contra outro whisper sem a mudança ficou pior (167–197 s × 52–78 s). Quem cede perde a CPU
+  para quem continua girando. Além disso, seria um remendo no código de terceiros.
+- **Menos de 4 threads** com a CPU cheia: mais lento (8 `yes`: 4 threads 8,5–9 s, 2 threads 11,5 s, 1 thread
+  19–20 s). O sistema divide o tempo entre todos os processos, e mais threads ganham mais fatias.
+- **OpenMP** (a barreira dele gira um pouco e depois dorme): desligado de propósito, para não levar a
+  libgomp/vcomp140 no pacote; o clang da Apple nem tem.
+
 Tempos das palavras na fala com pausas conhecidas (modelo base): erro médio de 14 ms no início e no fim, com o
 ajuste pela energia (sem ele, 0,31 s no DTW e 0,35 s nos tokens), como no Swift.
 

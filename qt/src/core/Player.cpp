@@ -366,4 +366,6 @@ Micros Player::duration() const { return d->project.duration(); }
 
 bool Player::isPlaying() const { return d->playing; }
 
+bool Player::isRendering() const { return d->rendering || d->pending.has_value(); }
+
 } // namespace of

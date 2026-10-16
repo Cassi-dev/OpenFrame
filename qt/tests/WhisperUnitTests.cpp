@@ -9,14 +9,17 @@
 #include "WhisperModels.h"
 #include "WordAligner.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtEndian>
+#include <atomic>
 #include <cmath>
 
 using namespace of;
@@ -25,8 +28,9 @@ namespace TE = of::TimelineEditor;
 
 namespace {
 
-/// Servidor HTTP mínimo: serve `payload` com `Range`, e pode cortar a conexão (`dropAfter`), parar de mandar
-/// sem fechar (`stallAfter`) ou responder com outro código (`status`).
+/// Servidor HTTP mínimo: serve `payload` com `Range`, e pode fechar a conexão no meio (`dropAfter`), parar de
+/// mandar sem fechar (`stallAfter`) ou responder com outro código (`status`). Os bytes do meio sempre chegam
+/// inteiros ao cliente, em pedaços de qualquer tamanho.
 class TestServer : public QTcpServer
 {
 public:
@@ -83,15 +87,52 @@ private:
             return; // fica aberto, sem mandar o resto
         }
         if (dropAfter >= 0) {
+            // Fecha depois de mandar (FIN), antes do Content-Length. Com `abort()` (RST), o Windows pode jogar fora
+            // o que o cliente ainda não leu, e o parcial dependeria do ritmo.
             s->write(body.left(dropAfter));
-            s->flush();
-            s->abort();
+            s->disconnectFromHost();
             return;
         }
         s->write(body);
         s->disconnectFromHost();
     }
 };
+
+/// Espera o `n`-ésimo fim de download, por até 60 s (é tudo local: só pega um travamento). Vazio se chegou; senão,
+/// quanto esperou e quantos pedidos o servidor recebeu (0 = a conexão nem chegou: proxy ou firewall). Acima de 2 s,
+/// avisa mesmo passando.
+QString waitDownloads(QSignalSpy &finished, qsizetype n, const TestServer *server)
+{
+    QElapsedTimer clock;
+    clock.start();
+    while (finished.size() < n && clock.elapsed() < 60'000)
+        finished.wait(int(std::max<qint64>(1, 60'000 - clock.elapsed())));
+    const QString where = server ? QStringLiteral("; pedidos no servidor: %1").arg(server->ranges.size()) : QString();
+    if (clock.elapsed() > 2'000)
+        qWarning().noquote() << QStringLiteral("download do teste levou %1 ms%2").arg(clock.elapsed()).arg(where);
+    if (finished.size() >= n)
+        return {};
+    return QStringLiteral("o download não terminou em %1 ms%2").arg(clock.elapsed()).arg(where);
+}
+
+#define QVERIFY_DOWNLOADS(spy, n, server)                                                                              \
+    do {                                                                                                               \
+        const QString why = waitDownloads(spy, n, server);                                                             \
+        QVERIFY2(why.isEmpty(), qPrintable(why));                                                                      \
+    } while (false)
+
+/// Espera o progresso chegar a `bytes` de `server.payload` (por até 60 s); na falha, o último valor, o parcial e os
+/// pedidos que chegaram ao servidor.
+#define QVERIFY_PROGRESS(spy, bytes, server)                                                                           \
+    do {                                                                                                               \
+        const double target = double(bytes) / double((server).payload.size());                                         \
+        QTRY_VERIFY2_WITH_TIMEOUT(!(spy).isEmpty() && (spy).last()[1].toDouble() == target,                          \
+                                  qPrintable(QStringLiteral("progresso %1 (esperado %2); pedidos no servidor: %3")    \
+                                                 .arg((spy).isEmpty() ? -1.0 : (spy).last()[1].toDouble())            \
+                                                 .arg(target)                                                          \
+                                                 .arg((server).ranges.size())),                                        \
+                                  60'000);                                                                             \
+    } while (false)
 
 QByteArray payload(int size)
 {
@@ -175,6 +216,56 @@ private slots:
         QVERIFY(std::abs(words[1].probability - 0.6) < 1e-9);
         QCOMPARE(words[2].text, QStringLiteral("fim."));
         QCOMPARE(words[2].end, 1.2); // fim antes do início: fica no início
+    }
+
+    // MARK: - Threads
+
+    /// Os núcleos livres, entre min(4, máximo) e o máximo (os núcleos menos 2, até 8).
+    void threadsFor()
+    {
+        using WhisperEngine::threadsFor;
+        QCOMPARE(threadsFor(std::nullopt, 10), 8);
+        QCOMPARE(threadsFor(0.3, 10), 8);
+        QCOMPARE(threadsFor(2.0, 10), 8);
+        QCOMPARE(threadsFor(4.2, 10), 6);
+        QCOMPARE(threadsFor(8.0, 10), 4);
+        QCOMPARE(threadsFor(10.0, 10), 4);
+        QCOMPARE(threadsFor(10.0, 16), 6);
+        QCOMPARE(threadsFor(0.0, 32), 8);
+        QCOMPARE(threadsFor(1.0, 8), 6);
+        QCOMPARE(threadsFor(5.0, 8), 4);
+        QCOMPARE(threadsFor(0.0, 4), 2);
+        QCOMPARE(threadsFor(4.0, 4), 2);
+        QCOMPARE(threadsFor(0.0, 2), 1);
+        QCOMPARE(threadsFor(std::nullopt, 1), 1);
+    }
+
+    /// A medida da CPU existe nos três sistemas e vê duas threads girando (com folga: a máquina pode estar cheia,
+    /// e aí elas ganham menos que um núcleo cada, mas o total fica alto do mesmo jeito).
+    void busyCores()
+    {
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(Q_OS_LINUX)
+        std::atomic<bool> stop{false};
+        const auto spin = [&] {
+            while (!stop.load(std::memory_order_relaxed)) {
+            }
+        };
+        QThread *a = QThread::create(spin), *b = QThread::create(spin);
+        a->start();
+        b->start();
+        const std::optional<double> busy = WhisperEngine::busyCores(std::chrono::milliseconds(300));
+        stop = true;
+        a->wait();
+        b->wait();
+        delete a;
+        delete b;
+        QVERIFY(busy);
+        qInfo().noquote() << QStringLiteral("%1 de %2 núcleos ocupados").arg(*busy, 0, 'f', 2).arg(QThread::idealThreadCount());
+        QVERIFY2(*busy >= std::min(1.0, QThread::idealThreadCount() / 2.0), qPrintable(QString::number(*busy)));
+        QVERIFY(*busy <= QThread::idealThreadCount() + 1e-9);
+#else
+        QSKIP("sem medida da CPU neste sistema");
+#endif
     }
 
     /// O ajuste pela energia leva as fronteiras para as pausas reais.
@@ -275,7 +366,7 @@ private slots:
         QSignalSpy progress(&store, &ModelStore::downloadProgress);
 
         store.download(WhisperModel::Base, url, data.size(), QString(64, u'0'));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 1, nullptr);
         QCOMPARE(finished[0][1].toBool(), false);
         QVERIFY(finished[0][2].toString().contains(QStringLiteral("sha256")));
         QVERIFY(!QFile::exists(store.path(WhisperModel::Base)));
@@ -283,7 +374,7 @@ private slots:
 
         store.download(WhisperModel::Base, url, data.size(), hexSha(data));
         QVERIFY(store.isDownloading(WhisperModel::Base));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, nullptr);
         QVERIFY2(finished[1][1].toBool(), qPrintable(finished[1][2].toString()));
         QFile installed(store.path(WhisperModel::Base));
         QVERIFY(installed.open(QIODevice::ReadOnly));
@@ -294,7 +385,7 @@ private slots:
 
         // Tamanho diferente do anunciado.
         store.download(WhisperModel::Small, url, 10, hexSha(data));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 3, nullptr);
         QCOMPARE(finished[2][1].toBool(), false);
         QVERIFY(finished[2][2].toString().contains(QStringLiteral("incompleto")));
         QVERIFY(!QFile::exists(store.path(WhisperModel::Small)));
@@ -310,20 +401,45 @@ private slots:
         ModelStore store(dir.path());
         QSignalSpy finished(&store, &ModelStore::downloadFinished);
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 1, &server);
         QCOMPARE(finished[0][1].toBool(), false);
         QVERIFY(!finished[0][2].toString().isEmpty());
         const qint64 kept = QFileInfo(store.partialPath(WhisperModel::Base)).size();
-        QVERIFY2(kept > 0 && kept <= 700'000, qPrintable(QString::number(kept)));
+        QCOMPARE(kept, 700'000);
 
         server.dropAfter = -1;
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, &server);
         QVERIFY2(finished[1][1].toBool(), qPrintable(finished[1][2].toString()));
         QCOMPARE(server.ranges.last(), QByteArray("bytes=") + QByteArray::number(kept) + '-');
         QFile installed(store.path(WhisperModel::Base));
         QVERIFY(installed.open(QIODevice::ReadOnly));
         QCOMPARE(installed.readAll(), server.payload);
+    }
+
+    /// Rajada e depois pausa: o progresso chega ao que veio, mesmo que os últimos pedaços caiam dentro dos 100 ms
+    /// entre dois avisos; nunca volta e não passa de um aviso a cada ~100 ms.
+    void progressAfterBurst()
+    {
+        TestServer server;
+        server.payload = payload(2'000'000);
+        server.stallAfter = 300'000;
+        QTemporaryDir dir;
+        ModelStore store(dir.path());
+        QSignalSpy progress(&store, &ModelStore::downloadProgress);
+        QElapsedTimer clock;
+        clock.start();
+        store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
+        QVERIFY_PROGRESS(progress, 300'000, server);
+        const qint64 elapsed = clock.elapsed();
+        // Parado: nada de aviso repetido.
+        QTest::qWait(300);
+        QCOMPARE(progress.last()[1].toDouble(), 300'000.0 / 2'000'000);
+        for (qsizetype k = 1; k < progress.size(); ++k)
+            QVERIFY(progress[k][1].toDouble() > progress[k - 1][1].toDouble());
+        QVERIFY2(progress.size() <= 2 + elapsed / 100 + 1, qPrintable(QStringLiteral("%1 avisos em %2 ms")
+                                                                         .arg(progress.size()).arg(elapsed)));
+        store.cancel(WhisperModel::Base);
     }
 
     /// Cancelar termina sem erro e guarda o parcial; erro HTTP vira mensagem.
@@ -337,8 +453,7 @@ private slots:
         QSignalSpy finished(&store, &ModelStore::downloadFinished);
         QSignalSpy progress(&store, &ModelStore::downloadProgress);
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo(store.partialPath(WhisperModel::Base)).size() > 0 || progress.size() > 1, 10'000);
-        QTRY_VERIFY_WITH_TIMEOUT(!progress.isEmpty() && progress.last()[1].toDouble() > 0.1, 10'000);
+        QVERIFY_PROGRESS(progress, 300'000, server);
         store.cancel(WhisperModel::Base);
         // O `abort()` pode terminar na hora, dentro do `cancel`.
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5'000);
@@ -351,9 +466,32 @@ private slots:
         server.stallAfter = -1;
         server.status = 404;
         store.download(WhisperModel::Base, server.url(), server.payload.size(), hexSha(server.payload));
-        QVERIFY(finished.wait(10'000));
+        QVERIFY_DOWNLOADS(finished, 2, &server);
         QCOMPARE(finished[1][1].toBool(), false);
         QVERIFY2(finished[1][2].toString().contains(QStringLiteral("404")), qPrintable(finished[1][2].toString()));
+    }
+
+    /// Fora do computador, o proxy do sistema é consultado fora da thread da interface: cancelar durante a consulta
+    /// termina na hora; sem cancelar, um endereço que não existe termina em erro (sem travar).
+    void downloadQueriesProxyAside()
+    {
+        QTemporaryDir dir;
+        ModelStore store(dir.path());
+        QSignalSpy finished(&store, &ModelStore::downloadFinished);
+        const QUrl nowhere(QStringLiteral("http://openframe-teste.invalid/modelo.bin"));
+        store.download(WhisperModel::Base, nowhere, 1000, QString(64, u'0'));
+        QVERIFY(store.isDownloading(WhisperModel::Base));
+        store.cancel(WhisperModel::Base);
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(finished[0][1].toBool(), false);
+        QCOMPARE(finished[0][2].toString(), QString());
+        QVERIFY(!store.isDownloading(WhisperModel::Base));
+
+        store.download(WhisperModel::Base, nowhere, 1000, QString(64, u'0'));
+        QVERIFY_DOWNLOADS(finished, 2, nullptr);
+        QCOMPARE(finished.size(), 2); // a consulta cancelada não termina de novo
+        QCOMPARE(finished[1][1].toBool(), false);
+        QVERIFY2(!finished[1][2].toString().isEmpty(), "erro sem mensagem");
     }
 
     /// Instalado = tamanho certo; apagar tira o modelo e o parcial.
