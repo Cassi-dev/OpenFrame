@@ -40,7 +40,8 @@ para **Windows e Linux** (C++, Qt e FFmpeg) tem a mesma interface e abre os
 mesmos projetos `.openframe`.
 
 - **Nativo e leve.** No Mac, usa AVFoundation e Core Image, os mesmos motores do macOS.
-  O instalador do Mac tem cerca de 7 MB; o app de referência que inspirou o projeto passa de 2,6 GB.
+  O instalador do Mac tem cerca de 7 MB. No Windows (cerca de 100 MB) e no Linux (cerca de 126 MB), o
+  pacote leva junto o Qt, o FFmpeg e o whisper.cpp. O app de referência que inspirou o projeto passa de 2,6 GB.
 - **Seu material fica com você.** Não há conta, nuvem nem telemetria. A edição, a
   exportação e até a transcrição das legendas automáticas rodam no seu computador,
   inclusive sem internet. A única conexão é opcional: baixar o modelo de
@@ -73,11 +74,11 @@ Mac com Apple Silicon ou Intel.
 
 ### Windows
 
-- **Instalador:** baixe o `OpenFrame-<versão>-windows-x64-instalador.exe` e
-  execute. Sem permissão de administrador, ele instala só para o seu usuário. Os
+- **Instalador:** baixe o `OpenFrame-<versão>-windows-x64-instalador.exe` (cerca de
+  100 MB) e execute. Sem permissão de administrador, ele instala só para o seu usuário. Os
   projetos `.openframe` passam a abrir com duplo clique.
-- **Portátil:** baixe o `OpenFrame-<versão>-windows-x64-portatil.zip`, extraia
-  e abra o `OpenFrame.exe` de dentro da pasta.
+- **Portátil:** baixe o `OpenFrame-<versão>-windows-x64-portatil.zip` (cerca de
+  135 MB), extraia e abra o `OpenFrame.exe` de dentro da pasta.
 
 **Na primeira abertura**, o Windows SmartScreen pode avisar que o app não é
 reconhecido, porque ele ainda não é assinado. Clique em **Mais informações →
@@ -85,7 +86,7 @@ Executar assim mesmo**. Requer Windows 10 ou 11 de 64 bits.
 
 ### Linux
 
-Baixe o `OpenFrame-<versão>-x86_64.AppImage`, dê permissão de execução e abra:
+Baixe o `OpenFrame-<versão>-x86_64.AppImage` (cerca de 126 MB), dê permissão de execução e abra:
 
 ```bash
 chmod +x OpenFrame-*-x86_64.AppImage
