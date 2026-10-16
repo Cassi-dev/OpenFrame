@@ -107,12 +107,32 @@ std::optional<double> WhisperEngine::busyCores(std::chrono::milliseconds window)
     return std::clamp(fraction, 0.0, 1.0) * QThread::idealThreadCount();
 }
 
-QStringList WhisperEngine::backendSearchPath(const QString &appDir, const QString &buildDir, const QString &buildRoot)
+QString WhisperEngine::executableDirectory()
+{
+    if (!QCoreApplication::instance())
+        return {};
+#ifdef Q_OS_LINUX
+    const QString self = QFileInfo(QStringLiteral("/proc/self/exe")).canonicalFilePath();
+    if (!self.isEmpty())
+        return QFileInfo(self).absolutePath();
+#endif
+    // `canonicalPath()` só resolveria a pasta: o link é o próprio arquivo.
+    const QString real = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    return real.isEmpty() ? QCoreApplication::applicationDirPath() : QFileInfo(real).absolutePath();
+}
+
+QStringList WhisperEngine::backendSearchPath(const QString &appDir, const QString &buildDir, const QString &buildRoot,
+                                             const QString &appImageDir)
 {
     QStringList dirs;
     if (appDir.isEmpty())
         return dirs;
     dirs << appDir << QDir::cleanPath(appDir + QStringLiteral("/../lib/openframe"));
+    if (!appImageDir.isEmpty()) {
+        const QString packaged = QDir::cleanPath(appImageDir + QStringLiteral("/usr/lib/openframe"));
+        if (!dirs.contains(packaged))
+            dirs << packaged;
+    }
     if (buildDir.isEmpty() || buildRoot.isEmpty())
         return dirs;
     // Pelos caminhos reais (links resolvidos), com a barra no fim: /x/build2 não está dentro de /x/build.
@@ -264,8 +284,9 @@ struct Engine {
         if (const QString env = qEnvironmentVariable("OPENFRAME_GGML_DIR"); !env.isEmpty())
             return loadFrom(env);
         const QStringList dirs =
-            WhisperEngine::backendSearchPath(QCoreApplication::instance() ? QCoreApplication::applicationDirPath() : QString(),
-                                             QStringLiteral(OPENFRAME_GGML_BUILD_DIR), QStringLiteral(OPENFRAME_BUILD_ROOT));
+            WhisperEngine::backendSearchPath(WhisperEngine::executableDirectory(),
+                                             QStringLiteral(OPENFRAME_GGML_BUILD_DIR), QStringLiteral(OPENFRAME_BUILD_ROOT),
+                                             qEnvironmentVariable("APPDIR"));
         for (const QString &dir : dirs)
             if (loadFrom(dir))
                 return true;

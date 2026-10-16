@@ -222,8 +222,11 @@ Variáveis de ambiente:
 
 ### Arquivos que o pacote leva (05)
 
-O núcleo carrega a variante na primeira transcrição (nunca ao abrir o app) e procura nesta ordem: a pasta do
-executável, `<pasta do executável>/../lib/openframe` e, só para um executável dentro da árvore do build
+O núcleo carrega a variante na primeira transcrição (nunca ao abrir o app) e procura nesta ordem: a pasta real do
+executável (`WhisperEngine::executableDirectory`: links resolvidos; no Linux, o `/proc/self/exe`, porque o AppImage
+abre pelo `AppRun`, um link na raiz do AppDir, e o `applicationDirPath()` do Qt dava essa raiz),
+`<pasta do executável>/../lib/openframe`, `$APPDIR/usr/lib/openframe` (se `APPDIR` existir) e, só para um executável
+dentro da árvore do build
 (`OPENFRAME_BUILD_ROOT`, nunca num pacote), a pasta do build (`WhisperEngine::backendSearchPath`). Sem nenhuma variante,
 a transcrição termina com "motor indisponível", sem travar. Com `OPENFRAME_WHISPER_LOG=1`, o núcleo mostra no stderr
 (`[openframe] …`) cada pasta tentada e, para cada variante, se ela abre (com a nota) ou o erro do sistema

@@ -9,9 +9,12 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <cstdio>
 
 using namespace of;
 
@@ -69,10 +72,42 @@ private slots:
         qputenv("OPENFRAME_GGML_DIR", QByteArray("/nenhuma/pasta"));
     }
 
+    /// Aberto por um link em outra pasta (como o AppRun do AppImage), a pasta é a do executável de verdade. Roda
+    /// este mesmo teste pelo link, num processo filho, que só imprime a pasta.
+    void executableDirectoryFollowsLinks()
+    {
+        if (qEnvironmentVariableIsSet("OPENFRAME_PRINT_EXE_DIR")) {
+            printf("PASTA=%s\n", qPrintable(WhisperEngine::executableDirectory()));
+            fflush(stdout);
+            return;
+        }
+        const QString real = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+        QCOMPARE(WhisperEngine::executableDirectory(), QFileInfo(real).absolutePath());
+#ifdef Q_OS_WIN
+        QSKIP("no Windows o QFile::link cria um atalho .lnk, não um link");
+#else
+        QTemporaryDir dir;
+        const QString link = dir.filePath(QStringLiteral("AppRun"));
+        QVERIFY(QFile::link(real, link));
+        QProcess child;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("OPENFRAME_PRINT_EXE_DIR"), QStringLiteral("1"));
+        child.setProcessEnvironment(env);
+        child.start(link, {QStringLiteral("executableDirectoryFollowsLinks")});
+        QVERIFY(child.waitForFinished(120'000));
+        const QString out = QString::fromUtf8(child.readAllStandardOutput());
+        const qsizetype at = out.indexOf(QStringLiteral("PASTA="));
+        QVERIFY2(at >= 0, qPrintable(out));
+        const QString printed = out.mid(at + 6).section(u'\n', 0, 0).trimmed();
+        QCOMPARE(printed, QFileInfo(real).absolutePath());
+        QVERIFY(printed != QFileInfo(dir.path()).canonicalFilePath());
+#endif
+    }
+
     /// O executável do teste está no build: a pasta do build entra na busca (num pacote, não entraria).
     void buildTreeIncludesBuildDir()
     {
-        const QStringList dirs = WhisperEngine::backendSearchPath(QCoreApplication::applicationDirPath(),
+        const QStringList dirs = WhisperEngine::backendSearchPath(WhisperEngine::executableDirectory(),
                                                                   QStringLiteral(OPENFRAME_GGML_BUILD_DIR),
                                                                   QStringLiteral(OPENFRAME_BUILD_ROOT));
         QCOMPARE(dirs.size(), 3);
