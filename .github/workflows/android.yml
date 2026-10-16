@@ -112,7 +112,10 @@ jobs:
             -storepass openframe123 \
             -keypass openframe123 \
             -dname "CN=OpenFrame, OU=Mobile, O=OpenFrame, C=BR"
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/openframe-release.keystore" >> "$GITHUB_ENV"
+          echo "QT_ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/openframe-release.keystore" >> "$GITHUB_ENV"
+          echo "QT_ANDROID_KEYSTORE_ALIAS=openframe" >> "$GITHUB_ENV"
+          echo "QT_ANDROID_KEYSTORE_STORE_PASS=openframe123" >> "$GITHUB_ENV"
+          echo "QT_ANDROID_KEYSTORE_KEY_PASS=openframe123" >> "$GITHUB_ENV"
 
       - name: Configurar variável FFMPEG_ANDROID_ROOT
         run: echo "FFMPEG_ANDROID_ROOT=/home/runner/ffmpeg-android-output" >> "$GITHUB_ENV"
@@ -132,14 +135,19 @@ jobs:
             -DFFMPEG_ROOT="/home/runner/ffmpeg-android-output" \
             -DCMAKE_FIND_ROOT_PATH="/home/runner/ffmpeg-android-output" \
             -DQT_ANDROID_SIGN_APK=ON \
-            -DQT_ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH" \
-            -DQT_ANDROID_KEYSTORE_ALIAS=openframe \
-            -DQT_ANDROID_KEYSTORE_STORE_PASS=openframe123 \
-            -DQT_ANDROID_KEYSTORE_KEY_PASS=openframe123 \
+            -DQT_ANDROID_KEYSTORE_PATH="$QT_ANDROID_KEYSTORE_PATH" \
+            -DQT_ANDROID_KEYSTORE_ALIAS="$QT_ANDROID_KEYSTORE_ALIAS" \
+            -DQT_ANDROID_KEYSTORE_STORE_PASS="$QT_ANDROID_KEYSTORE_STORE_PASS" \
+            -DQT_ANDROID_KEYSTORE_KEY_PASS="$QT_ANDROID_KEYSTORE_KEY_PASS" \
             -DOPENFRAME_BUILD_TESTS=OFF \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Compilar APK
+        env:
+          QT_ANDROID_KEYSTORE_PATH: ${{ env.QT_ANDROID_KEYSTORE_PATH }}
+          QT_ANDROID_KEYSTORE_ALIAS: ${{ env.QT_ANDROID_KEYSTORE_ALIAS }}
+          QT_ANDROID_KEYSTORE_STORE_PASS: ${{ env.QT_ANDROID_KEYSTORE_STORE_PASS }}
+          QT_ANDROID_KEYSTORE_KEY_PASS: ${{ env.QT_ANDROID_KEYSTORE_KEY_PASS }}
         run: |
           cmake --build build-android --target OpenFrame --parallel
           find build-android -type d -name "android-build" -exec cp qt/packaging/android/gradle.properties {}/gradle.properties \; || true
