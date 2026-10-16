@@ -125,6 +125,7 @@ jobs:
       - name: Compilar APK
         run: |
           cmake --build build-android --target OpenFrame --parallel
+          find build-android -type d -name "android-build" -exec cp qt/packaging/android/gradle.properties {}/gradle.properties \; || true
           cmake --build build-android --target OpenFrame_make_apk --parallel || cmake --build build-android --target apk --parallel
 
       - name: Localizar APK gerado
