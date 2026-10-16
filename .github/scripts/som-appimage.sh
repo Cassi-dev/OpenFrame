@@ -2,18 +2,22 @@
 # Prova do AppImage num Linux sem a libva: o pacote não leva o plugin de mídia do
 # Qt (nem nada que dependa da libva), abre, toca e o som sai. Tira a libva do
 # sistema, toca 3 s (cenário "som") num servidor PulseAudio com uma saída nula e
-# mede o que chegou ao monitor dela. Usado pela CI do Linux depois dos pacotes.
+# mede o que chegou ao monitor dela. O app roda no ambiente limpo da conferência
+# (sem o Qt da CI) e não pode carregar nenhum backend de mídia do Qt. Depois, toca
+# de novo com o Qt da CI no QT_PLUGIN_PATH, como na máquina de quem desenvolve com
+# Qt: o pacote tem de ignorá-lo. Usado pela CI do Linux depois dos pacotes.
 #
 # uso: som-appimage.sh <OpenFrame.AppImage> <pasta de saída>
 # Precisa do ffmpeg no PATH (gera a mídia e mede o volume) e de sudo/apt.
 set -euo pipefail
 
 appimage=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+root=$(cd "$(dirname "$0")/../.." && pwd)
 rm -rf "$2"
 mkdir -p "$2"
 out=$(cd "$2" && pwd)
 work="$out/.trabalho"
-mkdir -p "$work/midia" "$work/biblioteca"
+mkdir -p "$work/midia"
 
 # 1. O pacote: sem plugins/multimedia e sem nada que peça a libva.
 (cd "$work" && "$appimage" --appimage-extract > /dev/null)
@@ -69,18 +73,32 @@ ffmpeg -v error -f lavfi -i testsrc2=size=640x360:rate=30 -f lavfi -i sine=frequ
 # 4. Toca gravando o monitor da saída nula.
 parec -d captura.monitor --format=s16le --rate=48000 --channels=2 > "$work/som.raw" &
 gravador=$!
+# O qt.multimedia.plugin mostra se algum backend de mídia do Qt carrega.
+source "$root/.github/scripts/ambiente-limpo.sh"
+tocar() { # tocar <log> <capturas> [VAR=valor...]
+    local log=$1 capturas=$2 status=0
+    shift 2
+    mkdir -p "$work/biblioteca-${capturas##*/}"
+    timeout 180 "${limpo[@]}" PATH=/usr/bin:/bin "$@" OPENFRAME_SNAPSHOT_DIR="$capturas" \
+        OPENFRAME_LIBRARY_DIR="$work/biblioteca-${capturas##*/}" OPENFRAME_SNAPSHOT_MEDIA="$work/midia" OPENFRAME_SNAPSHOT_SCENARIO=som \
+        OPENFRAME_SOFTWARE=1 QT_QPA_PLATFORM=xcb QT_LOGGING_RULES="qt.multimedia.plugin=true" \
+        xvfb-run -a "$app/AppRun" > "$log" 2>&1 || status=$?
+    cat "$log"
+    if [[ $status -ne 0 ]] || ! grep -q '\[snapshot\] fim' "$log"; then
+        echo "::error::O AppImage não chegou ao fim do cenário de som (saída $status, $log)"
+        return 1
+    fi
+    if grep -q 'Loading media backend' "$log"; then
+        echo "::error::O AppImage carregou um backend de mídia do Qt ($log): $(grep -m 1 'Loading media backend' "$log")"
+        return 1
+    fi
+}
+echo "Ambiente do app: PATH=/usr/bin:/bin; sem ${limpo[*]:1}"
 status=0
-env OPENFRAME_SNAPSHOT_DIR="$out/capturas" OPENFRAME_LIBRARY_DIR="$work/biblioteca" \
-    OPENFRAME_SNAPSHOT_MEDIA="$work/midia" OPENFRAME_SNAPSHOT_SCENARIO=som OPENFRAME_SOFTWARE=1 \
-    QT_QPA_PLATFORM=xcb QT_LOGGING_RULES="qt.multimedia.plugin=true" \
-    timeout 180 xvfb-run -a "$app/AppRun" > "$out/som.log" 2>&1 || status=$?
+tocar "$out/som.log" "$out/capturas" || status=1
 kill "$gravador" 2> /dev/null || true
 wait "$gravador" 2> /dev/null || true
-cat "$out/som.log"
-if [[ $status -ne 0 ]] || ! grep -q '\[snapshot\] fim' "$out/som.log"; then
-    echo "::error::O AppImage não chegou ao fim do cenário de som (saída $status)"
-    exit 1
-fi
+[[ $status -eq 0 ]] || exit 1
 
 # 5. O som: o tom tem pico perto de -18 dBFS; silêncio fica em -91 dB.
 if [[ ! -s $work/som.raw ]]; then
@@ -96,4 +114,15 @@ if [[ -z $pico ]] || ! awk -v p="$pico" 'BEGIN { exit !(p > -40) }'; then
     exit 1
 fi
 echo "Som do AppImage: pico $pico dB."
+
+# 6. Com o Qt da CI no ambiente (plugins e QML de outro Qt, com o plugin FFmpeg de
+# mídia que pede a libva): o pacote usa só os dele e não cai.
+if [[ -n ${QT_ROOT_DIR:-} && -d $QT_ROOT_DIR/plugins/multimedia ]]; then
+    echo "De novo, com QT_PLUGIN_PATH=$QT_ROOT_DIR/plugins e QML2_IMPORT_PATH=$QT_ROOT_DIR/qml:"
+    tocar "$out/som-qt-de-fora.log" "$out/capturas-qt-de-fora" QT_PLUGIN_PATH="$QT_ROOT_DIR/plugins" \
+        QML2_IMPORT_PATH="$QT_ROOT_DIR/qml" QML_IMPORT_PATH="$QT_ROOT_DIR/qml"
+    echo "Com o Qt da CI no ambiente: o pacote não carregou nenhum backend de mídia."
+else
+    echo "::warning::Sem o Qt da CI (QT_ROOT_DIR) com plugins de mídia: o teste com o Qt de fora não rodou"
+fi
 rm -rf "$work"
