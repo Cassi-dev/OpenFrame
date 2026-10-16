@@ -158,6 +158,15 @@ jobs:
       - name: Compilar
         run: cmake --build build --parallel
 
+      # Diagnóstico do WhisperUnitTests: a detecção automática de proxy (WPAD) pode
+      # atrasar a primeira conexão do Qt, mesmo para 127.0.0.1.
+      - name: Proxy do sistema (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          netsh winhttp show proxy
+          reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" || true
+
       - name: Testes do núcleo
         run: |
           ctest --test-dir build --output-on-failure --timeout 600 && exit 0
