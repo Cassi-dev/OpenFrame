@@ -15,13 +15,19 @@ if(NOT TARGET FFmpeg::FFmpeg)
             set(FFMPEG_ROOT "$ENV{FFMPEG_ANDROID_ROOT}")
         endif()
 
+        if(FFMPEG_ROOT)
+            list(APPEND CMAKE_FIND_ROOT_PATH "${FFMPEG_ROOT}")
+        endif()
+
         # Procura os headers em múltiplos locais possíveis (layout padrão, ffmpeg-android-maker ou plano)
         find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
             PATHS
                 "${FFMPEG_ROOT}/include"
                 "${FFMPEG_ROOT}/include/${ANDROID_ABI}"
                 "${FFMPEG_ROOT}/${ANDROID_ABI}/include"
-            NO_DEFAULT_PATH REQUIRED
+            NO_DEFAULT_PATH
+            NO_CMAKE_FIND_ROOT_PATH
+            REQUIRED
         )
         add_library(FFmpeg::FFmpeg INTERFACE IMPORTED)
         target_include_directories(FFmpeg::FFmpeg INTERFACE "${FFMPEG_INCLUDE_DIR}")
@@ -33,7 +39,9 @@ if(NOT TARGET FFmpeg::FFmpeg)
                     "${FFMPEG_ROOT}/lib"
                     "${FFMPEG_ROOT}/lib/${ANDROID_ABI}"
                     "${FFMPEG_ROOT}/${ANDROID_ABI}/lib"
-                NO_DEFAULT_PATH REQUIRED
+                NO_DEFAULT_PATH
+                NO_CMAKE_FIND_ROOT_PATH
+                REQUIRED
             )
             target_link_libraries(FFmpeg::FFmpeg INTERFACE "${FFMPEG_${lib}_LIBRARY}")
             list(APPEND _of_android_libs "${FFMPEG_${lib}_LIBRARY}")
