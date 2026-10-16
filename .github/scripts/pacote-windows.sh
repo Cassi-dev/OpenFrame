@@ -25,6 +25,17 @@ cp "$build/OpenFrame.exe" "$app/"
 windeployqt --release --no-translations --skip-plugin-types multimedia \
     --qmldir "$root/qt/src/app/qml" "$app/OpenFrame.exe"
 
+# Plugin de TLS (download do modelo por HTTPS): o windeployqt o leva com o Qt
+# Network; se faltar, vai à mão.
+if [[ ! -f "$app/tls/qschannelbackend.dll" ]]; then
+    mkdir -p "$app/tls"
+    cp "$(cygpath -u "$QT_ROOT_DIR")/plugins/tls/qschannelbackend.dll" "$app/tls/"
+fi
+
+# whisper/ggml e as 9 variantes de CPU ao lado do executável (o windeployqt não
+# os conhece; o núcleo carrega as variantes com LoadLibrary).
+cp "$build"/ggml/whisper.dll "$build"/ggml/ggml.dll "$build"/ggml/ggml-base.dll "$build"/ggml/ggml-cpu-*.dll "$app/"
+
 # FFmpeg e o runtime do Visual C++ ao lado do executável.
 cp "$ffmpeg"/bin/*.dll "$app/"
 crt=$(ls -d "$(cygpath -u "$VCToolsRedistDir")"/x64/Microsoft.VC14*.CRT | head -n 1)

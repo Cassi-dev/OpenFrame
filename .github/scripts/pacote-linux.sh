@@ -45,14 +45,24 @@ if command -v desktop-file-validate > /dev/null; then
     desktop-file-validate "$appdir/usr/share/applications/openframe.desktop"
 fi
 
+# Variantes de CPU do ggml (o núcleo as carrega com dlopen, então o linuxdeploy
+# não as conhece) em usr/lib/openframe, e o plugin de TLS do Qt (download do
+# modelo por HTTPS, com a OpenSSL do sistema). O libwhisper/libggml/libggml-base
+# vêm como dependências do executável.
+mkdir -p "$appdir/usr/lib/openframe" "$appdir/usr/plugins/tls"
+cp "$build"/ggml/libggml-cpu-*.so "$appdir/usr/lib/openframe/"
+cp "$QT_ROOT_DIR"/plugins/tls/libqopensslbackend.so "$QT_ROOT_DIR"/plugins/tls/libqcertonlybackend.so \
+    "$appdir/usr/plugins/tls/"
+
 # Qt e dependências (o FFmpeg vem do LD_LIBRARY_PATH). Primeiro só o AppDir,
 # para tirar os plugins de mídia do Qt: o som usa só o QAudioSink, e o plugin
 # FFmpeg do Qt traria uma segunda cópia do FFmpeg, que pede a libva-drm e cai
 # num Linux sem ela. O som-appimage.sh prova que o pacote toca sem o plugin.
 export QMAKE="$QT_ROOT_DIR/bin/qmake"
 export QML_SOURCES_PATHS="$root/qt/src/app/qml"
-export LD_LIBRARY_PATH="$FFMPEG_ROOT/lib:$QT_ROOT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-linuxdeploy --appdir "$appdir" --plugin qt
+export LD_LIBRARY_PATH="$FFMPEG_ROOT/lib:$QT_ROOT_DIR/lib:$build/ggml${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+linuxdeploy --appdir "$appdir" --plugin qt \
+    --deploy-deps-only "$appdir/usr/lib/openframe" --deploy-deps-only "$appdir/usr/plugins/tls"
 rm -rf "$appdir/usr/plugins/multimedia"
 for lib in "$QT_ROOT_DIR"/lib/lib{avcodec,avformat,avutil,avfilter,swresample,swscale}.so.*; do
     [[ -e $lib ]] || continue
