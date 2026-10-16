@@ -7,12 +7,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLibrary>
 #include <QMutex>
 #include <QScopeGuard>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #ifdef OPENFRAME_HAS_WHISPER
 #include <ggml-backend.h>
@@ -105,6 +107,29 @@ std::optional<double> WhisperEngine::busyCores(std::chrono::milliseconds window)
     return std::clamp(fraction, 0.0, 1.0) * QThread::idealThreadCount();
 }
 
+QStringList WhisperEngine::backendSearchPath(const QString &appDir, const QString &buildDir, const QString &buildRoot)
+{
+    QStringList dirs;
+    if (appDir.isEmpty())
+        return dirs;
+    dirs << appDir << QDir::cleanPath(appDir + QStringLiteral("/../lib/openframe"));
+    if (buildDir.isEmpty() || buildRoot.isEmpty())
+        return dirs;
+    // Pelos caminhos reais (links resolvidos), com a barra no fim: /x/build2 não está dentro de /x/build.
+    const auto real = [](const QString &path) {
+        const QString canonical = QFileInfo(path).canonicalFilePath();
+        return QDir::cleanPath(canonical.isEmpty() ? path : canonical) + u'/';
+    };
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    if (real(appDir).startsWith(real(buildRoot), cs))
+        dirs << buildDir;
+    return dirs;
+}
+
 int WhisperEngine::threadsFor(std::optional<double> busy, int logical)
 {
     const int most = std::clamp(logical - 2, 1, 8);
@@ -184,11 +209,43 @@ struct Engine {
 
     static bool hasCpu() { return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU) != nullptr; }
 
+    static bool logging() { return qEnvironmentVariable("OPENFRAME_WHISPER_LOG") == QStringLiteral("1"); }
+
+    /// Com OPENFRAME_WHISPER_LOG=1: carrega cada variante de `dir` como o ggml (todos os símbolos já) e mostra o
+    /// erro do sistema ou a nota. O ggml, num build com otimização, falha calado (`silent` com NDEBUG).
+    static void diagnose(const QString &dir)
+    {
+#ifdef OPENFRAME_GGML_DL
+        const QStringList files = QDir(dir).entryList({QStringLiteral("*ggml-cpu*")}, QDir::Files, QDir::Name);
+        fprintf(stderr, "[openframe] variantes em %s: %lld\n", qPrintable(QDir::toNativeSeparators(dir)),
+                qint64(files.size()));
+        for (const QString &file : files) {
+            QLibrary library(QDir(dir).filePath(file));
+            library.setLoadHints(QLibrary::ResolveAllSymbolsHint);
+            if (!library.load()) {
+                fprintf(stderr, "[openframe]   %s: falhou: %s\n", qPrintable(file), qPrintable(library.errorString()));
+                continue;
+            }
+            using Score = int (*)();
+            const auto score = reinterpret_cast<Score>(library.resolve("ggml_backend_score"));
+            fprintf(stderr, "[openframe]   %s: abriu, nota %d\n", qPrintable(file), score ? score() : -1);
+            library.unload();
+        }
+#else
+        Q_UNUSED(dir)
+#endif
+    }
+
     bool loadFrom(const QString &dir)
     {
 #ifdef OPENFRAME_GGML_DL
-        if (!hasCpu() && !dir.isEmpty() && QDir(dir).exists())
+        if (!hasCpu() && !dir.isEmpty() && QDir(dir).exists()) {
+            if (logging())
+                diagnose(dir);
             ggml_backend_load_all_from_path(QDir::toNativeSeparators(dir).toUtf8().constData());
+        } else if (!hasCpu() && logging()) {
+            fprintf(stderr, "[openframe] variantes: %s não existe\n", qPrintable(QDir::toNativeSeparators(dir)));
+        }
 #else
         Q_UNUSED(dir)
 #endif
@@ -206,15 +263,15 @@ struct Engine {
         // OPENFRAME_GGML_DIR, quando definida, é a única pasta procurada.
         if (const QString env = qEnvironmentVariable("OPENFRAME_GGML_DIR"); !env.isEmpty())
             return loadFrom(env);
-        QStringList dirs;
-        if (QCoreApplication::instance()) {
-            const QString app = QCoreApplication::applicationDirPath();
-            dirs << app << QDir(app).filePath(QStringLiteral("../lib/openframe"));
-        }
-        dirs << QStringLiteral(OPENFRAME_GGML_BUILD_DIR);
+        const QStringList dirs =
+            WhisperEngine::backendSearchPath(QCoreApplication::instance() ? QCoreApplication::applicationDirPath() : QString(),
+                                             QStringLiteral(OPENFRAME_GGML_BUILD_DIR), QStringLiteral(OPENFRAME_BUILD_ROOT));
         for (const QString &dir : dirs)
             if (loadFrom(dir))
                 return true;
+        if (logging())
+            fprintf(stderr, "[openframe] nenhum backend de CPU em: %s\n",
+                    qPrintable(QDir::toNativeSeparators(dirs.join(QStringLiteral(" | ")))));
         return false;
     }
 
