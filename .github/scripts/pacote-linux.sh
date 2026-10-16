@@ -36,10 +36,16 @@ doc="$appdir/usr/share/doc/openframe"
 install -Dm644 "$root/LICENSE" "$doc/LICENSE.txt"
 install -Dm644 "$root/qt/packaging/TERCEIROS.txt" "$doc/TERCEIROS.txt"
 install -Dm644 "$root/qt/packaging/licenses/LGPL-3.0.txt" "$doc/licencas/LGPL-3.0.txt"
-install -Dm644 "$root/qt/src/app/fonts/OFL-Inter.txt" "$doc/licencas/OFL-Inter.txt"
 install -Dm644 "$root/qt/src/app/fonts/LICENSE-Lucide.txt" "$doc/licencas/LICENSE-Lucide.txt"
-for f in "$root"/qt/src/core/fonts/OFL-*.txt; do
-    install -Dm644 "$f" "$doc/licencas/${f##*/}"
+# A Inter está no app e no núcleo, com a mesma OFL-Inter.txt: vai uma cópia só,
+# e o pacote falha se as duas um dia forem diferentes.
+for f in "$root/qt/src/app/fonts/OFL-Inter.txt" "$root"/qt/src/core/fonts/OFL-*.txt; do
+    dest="$doc/licencas/${f##*/}"
+    if [[ -e $dest ]]; then
+        cmp -s "$f" "$dest" || { echo "licenças diferentes com o mesmo nome: $f" >&2; exit 1; }
+    else
+        install -Dm644 "$f" "$dest"
+    fi
 done
 install -Dm644 "${FETCHCONTENT_SOURCE_DIR_WHISPER:-$build/_deps/whisper-src}/LICENSE" \
     "$doc/licencas/whisper.cpp-LICENSE.txt"
