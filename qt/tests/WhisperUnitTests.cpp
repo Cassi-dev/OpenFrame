@@ -260,6 +260,12 @@ private slots:
         QCOMPARE(backendSearchPath(other + QStringLiteral("/bin"), ggml, root).size(), 2);
         QCOMPARE(backendSearchPath(root, ggml, root).last(), ggml);
         QVERIFY(backendSearchPath(QString(), ggml, root).isEmpty());
+        // AppImage: $APPDIR/usr/lib/openframe depois das da pasta do executável, sem repetir.
+        const QString appImage = tmp.filePath(QStringLiteral("pkg"));
+        QCOMPARE(backendSearchPath(appImage, ggml, root, appImage),
+                 (QStringList{appImage, tmp.filePath(QStringLiteral("lib/openframe")),
+                              appImage + QStringLiteral("/usr/lib/openframe")}));
+        QCOMPARE(backendSearchPath(package, ggml, root, appImage).size(), 2);
         QCOMPARE(backendSearchPath(inside, QString(), root).size(), 2);
 #ifndef Q_OS_WIN
         // Um link para dentro do build conta como dentro (caminhos reais).
