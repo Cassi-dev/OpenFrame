@@ -69,6 +69,16 @@ private slots:
         qputenv("OPENFRAME_GGML_DIR", QByteArray("/nenhuma/pasta"));
     }
 
+    /// O executável do teste está no build: a pasta do build entra na busca (num pacote, não entraria).
+    void buildTreeIncludesBuildDir()
+    {
+        const QStringList dirs = WhisperEngine::backendSearchPath(QCoreApplication::applicationDirPath(),
+                                                                  QStringLiteral(OPENFRAME_GGML_BUILD_DIR),
+                                                                  QStringLiteral(OPENFRAME_BUILD_ROOT));
+        QCOMPARE(dirs.size(), 3);
+        QCOMPARE(dirs.last(), QStringLiteral(OPENFRAME_GGML_BUILD_DIR));
+    }
+
     /// Pasta sem variantes: nenhum backend, e a transcrição diz "motor indisponível".
     void noVariantMeansUnavailable()
     {

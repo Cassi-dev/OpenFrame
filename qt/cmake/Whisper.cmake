@@ -97,7 +97,9 @@ if(OPENFRAME_WHISPER AND NOT TARGET openframe::whisper)
     # Quem liga com o whisper (o app, os testes) espera as variantes: elas são carregadas da pasta do build.
     add_dependencies(openframe_whisper openframe_ggml_cpu)
     target_compile_definitions(openframe_whisper INTERFACE OPENFRAME_HAS_WHISPER
-        "OPENFRAME_GGML_BUILD_DIR=\"${OPENFRAME_WHISPER_LIB_DIR}\"")
+        "OPENFRAME_GGML_BUILD_DIR=\"${OPENFRAME_WHISPER_LIB_DIR}\""
+        # A pasta do build só vale para um executável dentro desta árvore (nunca num pacote).
+        "OPENFRAME_BUILD_ROOT=\"${CMAKE_BINARY_DIR}\"")
     if(OPENFRAME_WHISPER_VARIANTS)
         target_compile_definitions(openframe_whisper INTERFACE OPENFRAME_GGML_DL)
     endif()

@@ -223,8 +223,11 @@ Variáveis de ambiente:
 ### Arquivos que o pacote leva (05)
 
 O núcleo carrega a variante na primeira transcrição (nunca ao abrir o app) e procura nesta ordem: a pasta do
-executável, `<pasta do executável>/../lib/openframe` e a pasta do build. Sem nenhuma variante, a transcrição
-termina com "motor indisponível", sem travar.
+executável, `<pasta do executável>/../lib/openframe` e, só para um executável dentro da árvore do build
+(`OPENFRAME_BUILD_ROOT`, nunca num pacote), a pasta do build (`WhisperEngine::backendSearchPath`). Sem nenhuma variante,
+a transcrição termina com "motor indisponível", sem travar. Com `OPENFRAME_WHISPER_LOG=1`, o núcleo mostra no stderr
+(`[openframe] …`) cada pasta tentada e, para cada variante, se ela abre (com a nota) ou o erro do sistema
+(`dlerror`/`LoadLibrary`): num build com otimização, o ggml não mostra por que uma variante falhou.
 
 **Windows (MSVC):** tudo ao lado do `OpenFrame.exe` (o windeployqt não conhece estes arquivos):
 - `whisper.dll`, `ggml.dll`, `ggml-base.dll`;
