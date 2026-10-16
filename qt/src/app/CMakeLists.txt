@@ -70,6 +70,9 @@ endif()
 if(ANDROID)
     set_target_properties(OpenFrame PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/android"
+        QT_ANDROID_PACKAGE_NAME "app.openframe.mobile"
+        QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
+        QT_ANDROID_VERSION_CODE 1
     )
     if(OPENFRAME_ANDROID_FFMPEG_LIBS)
         set_target_properties(OpenFrame PROPERTIES

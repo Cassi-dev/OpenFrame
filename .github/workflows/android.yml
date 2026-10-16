@@ -156,6 +156,7 @@ jobs:
       - name: Localizar APK gerado
         run: |
           mkdir -p dist-apk
+          find build-android -name "*release-signed.apk" -exec cp {} dist-apk/OpenFrame-Android-arm64.apk \; || \
           find build-android -name "*.apk" -exec cp {} dist-apk/OpenFrame-Android-arm64.apk \;
           ls -la dist-apk/
 

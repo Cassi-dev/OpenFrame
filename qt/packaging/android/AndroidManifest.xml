@@ -19,7 +19,14 @@
     <uses-feature android:name="android.hardware.touchscreen.multitouch" android:required="true" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
+    <supports-screens
+        android:anyDensity="true"
+        android:largeScreens="true"
+        android:normalScreens="true"
+        android:smallScreens="true" />
+
     <application
+        android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:label="OpenFrame"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -57,7 +64,10 @@
 
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="OpenFrame" />
+                android:value="-- %%INSERT_APP_LIB_NAME%% --" />
+            <meta-data
+                android:name="android.app.arguments"
+                android:value="-- %%INSERT_APP_ARGUMENTS%% --" />
             <meta-data
                 android:name="android.app.extract_android_style"
                 android:value="minimal" />

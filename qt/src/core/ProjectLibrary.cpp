@@ -78,7 +78,11 @@ QString ProjectEntry::thumbnailPath() const { return folder + u'/' + ProjectLibr
 
 QString ProjectLibrary::defaultRoot()
 {
+#if defined(Q_OS_ANDROID)
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/Projetos");
+#else
     return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + QStringLiteral("/OpenFrame/Projetos");
+#endif
 }
 
 ProjectLibrary::ProjectLibrary(QString root, bool usesTrash) : m_root(std::move(root)), m_usesTrash(usesTrash) {}

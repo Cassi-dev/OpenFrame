@@ -144,8 +144,13 @@ private slots:
     // A raiz padrão fica na pasta de vídeos do usuário
     void defaultRoot()
     {
+#if defined(Q_OS_ANDROID)
+        QCOMPARE(ProjectLibrary::defaultRoot(),
+                 QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + u"/Projetos");
+#else
         QCOMPARE(ProjectLibrary::defaultRoot(),
                  QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + u"/OpenFrame/Projetos");
+#endif
     }
 };
 
