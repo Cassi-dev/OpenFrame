@@ -2,7 +2,9 @@
 # Confere o pacote extraído: o whisper/ggml com as variantes de CPU, o plugin de
 # TLS e as licenças novas no lugar, e o app do pacote baixando por HTTPS (HEAD no servidor do modelo)
 # e transcrevendo uma fala de verdade com uma variante carregada de dentro do
-# pacote (cenário "pacote"). Usado pela CI depois dos pacotes.
+# pacote (cenário "pacote"). Usado pela CI depois dos pacotes. O app roda sem o
+# ambiente do Qt da CI e com um PATH mínimo, como no computador do usuário; no
+# Windows, o HTTPS vai só pelo schannel (sem o OpenSSL que o Git traz).
 #
 # uso: conferir-pacote.sh <pasta dos pacotes> <pasta de saída>
 # Precisa de OPENFRAME_MODELS_DIR com um modelo (a CI tem o base). No Linux,
@@ -35,7 +37,9 @@ if [[ "${RUNNER_OS:-$(uname -s)}" == Windows* || "$(uname -s)" == MINGW* ]]; the
     done
     executar=("$app/OpenFrame.exe")
     esperado="${pacotes##*/}/OpenFrame/ggml-cpu-"
-    plataforma=(QT_QPA_PLATFORM=windows OPENFRAME_SOFTWARE=1)
+    plataforma=(QT_QPA_PLATFORM=windows OPENFRAME_SOFTWARE=1 OPENFRAME_TLS_BACKEND=schannel)
+    sistema=$(cygpath -u "$SYSTEMROOT")
+    caminho="$sistema/System32:$sistema:$sistema/System32/Wbem"
 else
     appimage=$(ls "$pacotes"/*.AppImage | head -n 1)
     (cd "$work" && "$appimage" --appimage-extract > /dev/null)
@@ -73,15 +77,26 @@ else
     executar=(xvfb-run -a "$app/AppRun")
     esperado="squashfs-root/usr/lib/openframe/libggml-cpu-"
     plataforma=(QT_QPA_PLATFORM=xcb OPENFRAME_SOFTWARE=1)
+    caminho=/usr/bin:/bin
 fi
 echo "Arquivos do whisper/ggml, do TLS e das licenças: $([[ $falhas -eq 0 ]] && echo completos || echo incompletos)."
 
 # O app do pacote: HTTPS e transcrição. OPENFRAME_WHISPER_LOG mostra de onde a variante veio.
+# Sem as variáveis do Qt da CI (install-qt-action) e das bibliotecas: o pacote se vira sozinho.
+limpo=(env)
+for v in $(compgen -e); do
+    if [[ $v =~ ^(QT_|QML|Qt[56]_|LD_LIBRARY_PATH$|PKG_CONFIG_PATH$|OPENSSL_|SSL_CERT_) ]]; then limpo+=(-u "$v"); fi
+done
+echo "Ambiente do app: PATH=$caminho; sem ${limpo[*]:1}"
 status=0
-env "${plataforma[@]}" OPENFRAME_SNAPSHOT_DIR="$out/capturas" OPENFRAME_LIBRARY_DIR="$work/biblioteca" \
+timeout 400 "${limpo[@]}" PATH="$caminho" "${plataforma[@]}" OPENFRAME_SNAPSHOT_DIR="$out/capturas" OPENFRAME_LIBRARY_DIR="$work/biblioteca" \
     OPENFRAME_SNAPSHOT_MEDIA="$work/midia" OPENFRAME_SNAPSHOT_SCENARIO=pacote OPENFRAME_WHISPER_LOG=1 \
-    timeout 400 "${executar[@]}" > "$out/pacote.log" 2>&1 || status=$?
+    "${executar[@]}" > "$out/pacote.log" 2>&1 || status=$?
 grep -E '^\[snapshot\]|^\[openframe\]|load_backend' "$out/pacote.log" || true
+if ! grep -q '\[snapshot\] pacote: TLS sim' "$out/pacote.log"; then
+    echo "::error::O app do pacote ficou sem TLS"
+    falhas=1
+fi
 if [[ $status -ne 0 ]] || ! grep -q '\[snapshot\] fim' "$out/pacote.log"; then
     echo "::error::O app do pacote não passou no cenário 'pacote' (saída $status)"
     falhas=1
