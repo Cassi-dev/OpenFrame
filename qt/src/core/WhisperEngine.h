@@ -61,9 +61,15 @@ bool isAvailable();
 bool loadBackends(const QString &directory);
 /// Backend de CPU carregado, a descrição da CPU e os recursos que a variante usa; vazio sem backend.
 QString backendDescription();
-/// Pastas onde procurar as variantes, em ordem: a do executável, `../lib/openframe` a partir dela e, só se o
-/// executável estiver dentro de `buildRoot` (o build, nunca um pacote), `buildDir`. Vazios ficam de fora.
-QStringList backendSearchPath(const QString &appDir, const QString &buildDir, const QString &buildRoot);
+/// Pasta real do executável, com os links resolvidos (vazio sem QCoreApplication). O AppImage abre pelo
+/// `$APPDIR/AppRun`, um link para `usr/bin/OpenFrame`, e no Linux o `applicationDirPath()` do Qt dá a pasta do link
+/// (a raiz do AppDir): no Linux vem do `/proc/self/exe`.
+QString executableDirectory();
+/// Pastas onde procurar as variantes, em ordem: a do executável, `../lib/openframe` a partir dela,
+/// `<appImageDir>/usr/lib/openframe` (o `$APPDIR` do AppImage) e, só se o executável estiver dentro de `buildRoot` (o
+/// build, nunca um pacote), `buildDir`. Vazios e repetidos ficam de fora.
+QStringList backendSearchPath(const QString &appDir, const QString &buildDir, const QString &buildRoot,
+                              const QString &appImageDir = {});
 
 /// Transcreve áudio mono de 16 kHz. Bloqueia a thread. Vazio com `cancelled` (sem erro) ou com `error`.
 std::optional<QList<EngineWord>> transcribe(const std::vector<float> &samples, const QString &modelPath,
