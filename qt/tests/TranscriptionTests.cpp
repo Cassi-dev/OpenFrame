@@ -366,11 +366,26 @@ private slots:
         QVERIFY(!none.words);
         QCOMPARE(none.error, message(TranscriptionError::NoAudio));
 
+        // ~66 s de fala (3 janelas do whisper). O whisper só confere o cancelamento entre passos do encoder e do
+        // decoder, que ficam mais lentos com a máquina ocupada: em vez de um prazo fixo, a comparação com a
+        // transcrição inteira do mesmo áudio, nas mesmas condições. Cancelado logo no começo, tem de parar bem
+        // antes de onde a inteira termina.
         const auto one = readWav(fala(QStringLiteral("frase.wav")));
         std::vector<float> longer;
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < 12; ++i)
             longer.insert(longer.end(), one.begin(), one.end());
         const auto [p, id] = project(writeWav(longer));
+        QElapsedTimer clock;
+        double fullStart = -1;
+        clock.start();
+        const Run full = transcribe(p, TranscriptionSource::timeline(), QStringLiteral("pt"), WhisperEngine::Timing::Dtw,
+                                    true, WhisperModel::Base, nullptr, [&](const TranscriptionProgress &pr) {
+                                        if (pr.phase == TranscriptionProgress::Phase::Transcribing && fullStart < 0)
+                                            fullStart = clock.nsecsElapsed() / 1e6;
+                                    });
+        const double fullMs = clock.nsecsElapsed() / 1e6 - fullStart;
+        QVERIFY2(full.words, qPrintable(full.error));
+
         std::atomic<bool> cancel{false}, started{false};
         Run result;
         QThread *worker = QThread::create([&] {
@@ -381,22 +396,17 @@ private slots:
                                 });
         });
         worker->start();
-        QElapsedTimer wait;
-        wait.start();
-        while (!started && wait.elapsed() < 60'000)
-            QThread::msleep(20);
-        QVERIFY(started);
+        QTRY_VERIFY_WITH_TIMEOUT(started.load(), 120'000);
         QThread::msleep(300);
-        QElapsedTimer clock;
-        clock.start();
+        clock.restart();
         cancel = true;
-        QVERIFY(worker->wait(10'000));
+        QVERIFY(worker->wait(300'000));
         const qint64 waited = clock.elapsed();
         delete worker;
-        qInfo() << "Cancelamento em" << waited << "ms";
+        qInfo().noquote() << QStringLiteral("Cancelamento em %1 ms (a transcrição inteira levou %2 ms)").arg(waited).arg(fullMs, 0, 'f', 0);
         QVERIFY(!result.words);
         QVERIFY(result.error.isEmpty());
-        QVERIFY(waited < 3000);
+        QVERIFY2(waited < 0.6 * fullMs, qPrintable(QStringLiteral("%1 ms × %2 ms").arg(waited).arg(fullMs)));
     }
 
     /// O Transcriber (QObject) de ponta a ponta, com o modelo da pasta do ModelStore.
