@@ -186,9 +186,11 @@ private slots:
     void editsKeepWordTimes()
     {
         Project p;
-        const auto words = spokenWords(QStringLiteral("primeira segunda terceira quarta"), 1'000'000);
-        const auto cues = CB::cues(words, CaptionLayout::Highlight);
-        QCOMPARE(cues.size(), 1);
+        const QString spoken = QStringLiteral("primeira segunda terceira quarta");
+        const auto words = spokenWords(spoken, 1'000'000);
+        // Uma legenda só, montada aqui: pela segmentação, caber numa linha depende da fonte (no Mac a Helvetica
+        // Neue usa 99% da linha; a Inter, fora dele, 101,5%, e viram duas).
+        const QList<CaptionCue> cues{{spoken, words.first().start, words.last().end, words}};
         CB::apply(cues, CaptionLayout::Highlight, std::nullopt, p, false);
         const QUuid id = p.tracks.last().segments[0].id;
         const auto absolute = [](const Segment &seg) {

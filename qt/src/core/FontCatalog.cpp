@@ -21,7 +21,10 @@ void registerBundled()
 ResolvedFont resolve(const QString &family, const QString &face)
 {
     registerBundled();
-    if (QFontDatabase::hasFamily(family))
+    // Testes: o Mac age como o Windows e o Linux, onde as fontes do Mac não existem.
+    static const bool bundledOnly = qEnvironmentVariableIntValue("OPENFRAME_BUNDLED_FONTS_ONLY") == 1;
+    static const QSet<QString> bundled{"inter", "jetbrains mono", "playfair display", "barlow condensed"};
+    if (QFontDatabase::hasFamily(family) && (!bundledOnly || bundled.contains(family.toLower())))
         return {family, face};
     const QString inter = QStringLiteral("Inter");
     const QString name = family.toLower();
