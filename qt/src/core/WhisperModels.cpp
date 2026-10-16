@@ -152,7 +152,10 @@ struct ModelStore::Impl::Job {
     QString sha256;
     bool cancelled = false;
     bool started = false;
+    /// Último aviso de progresso (ms) e o valor dele; um aviso adiado já marcado.
     qint64 lastReport = 0;
+    double reported = -1;
+    bool reportPending = false;
 };
 
 ModelStore::~ModelStore()
@@ -237,7 +240,9 @@ void ModelStore::download(WhisperModel m, const QUrl &source, qint64 size, const
             request.setRawHeader("Range", QByteArrayLiteral("bytes=") + QByteArray::number(job->have) + '-');
         QNetworkReply *reply = m_jobs->network->get(request);
         job->reply = reply;
-        emit downloadProgress(m, double(job->have) / double(size));
+        job->lastReport = QDateTime::currentMSecsSinceEpoch();
+        job->reported = double(job->have) / double(size);
+        emit downloadProgress(m, job->reported);
         // Antes do primeiro pedaço: o servidor aceitou o Range (206) ou mandou tudo de novo (200)?
         const auto begin = [m, job, this, reply] {
             if (job->started)
@@ -264,7 +269,30 @@ void ModelStore::download(WhisperModel m, const QUrl &source, qint64 size, const
             }
             return true;
         };
-        connect(reply, &QNetworkReply::readyRead, this, [this, m, job, reply, begin] {
+        // No máximo um aviso a cada 100 ms. O que cair antes disso é adiado, não descartado: quando os dados param
+        // (rede travada, servidor lento), o último valor chega mesmo assim.
+        const auto report = [this, m, job] {
+            const auto send = [this, m, job] {
+                const double fraction = std::min(1.0, double(job->have) / double(job->size));
+                job->lastReport = QDateTime::currentMSecsSinceEpoch();
+                if (fraction != job->reported) {
+                    job->reported = fraction;
+                    emit downloadProgress(m, fraction);
+                }
+            };
+            const qint64 since = QDateTime::currentMSecsSinceEpoch() - job->lastReport;
+            if (since >= 100) {
+                send();
+            } else if (!job->reportPending) {
+                job->reportPending = true;
+                QTimer::singleShot(int(100 - since), this, [this, m, job, send] {
+                    job->reportPending = false;
+                    if (m_jobs->jobs.value(m) == job && !job->cancelled)
+                        send();
+                });
+            }
+        };
+        connect(reply, &QNetworkReply::readyRead, this, [this, m, job, reply, begin, report] {
             if (job->cancelled || !begin())
                 return;
             const QByteArray chunk = reply->readAll();
@@ -275,11 +303,7 @@ void ModelStore::download(WhisperModel m, const QUrl &source, qint64 size, const
                 return;
             }
             job->have += chunk.size();
-            const qint64 now = QDateTime::currentMSecsSinceEpoch();
-            if (now - job->lastReport > 100) {
-                job->lastReport = now;
-                emit downloadProgress(m, std::min(1.0, double(job->have) / double(job->size)));
-            }
+            report();
         });
         connect(reply, &QNetworkReply::finished, this, [this, m, job, reply, begin, verify] {
             reply->deleteLater();
@@ -324,7 +348,9 @@ void ModelStore::download(WhisperModel m, const QUrl &source, qint64 size, const
     });
     watcher->setFuture(QtConcurrent::run(
         [source] { return QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(source)); }));
-    emit downloadProgress(m, double(job->have) / double(size));
+    job->lastReport = QDateTime::currentMSecsSinceEpoch();
+    job->reported = double(job->have) / double(size);
+    emit downloadProgress(m, job->reported);
 }
 
 void ModelStore::finish(WhisperModel m, bool ok, const QString &error)
