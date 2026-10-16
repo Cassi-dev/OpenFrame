@@ -380,17 +380,17 @@ public:
         s.id = uuid(o, path, "id");
         if (present(o, "materialId"))
             s.materialId = uuid(o, path, "materialId");
-        s.source = timeRange(object(o, path, "source"), path + u".source");
+        s.source = timeRange(object(o, path, "source"), path + QStringLiteral(".source"));
         s.targetStart = integer(o, path, "targetStart");
         s.speed = number(o, path, "speed");
         s.volume = number(o, path, "volume");
         s.fadeIn = integer(o, path, "fadeIn");
         s.fadeOut = integer(o, path, "fadeOut");
-        s.transform = transform(object(o, path, "transform"), path + u".transform");
+        s.transform = transform(object(o, path, "transform"), path + QStringLiteral(".transform"));
         s.opacity = number(o, path, "opacity");
-        s.adjust = adjust(object(o, path, "adjust"), path + u".adjust");
+        s.adjust = adjust(object(o, path, "adjust"), path + QStringLiteral(".adjust"));
         if (present(o, "filter")) {
-            const QString p = path + u".filter";
+            const QString p = path + QStringLiteral(".filter");
             const QJsonObject f = object(o, path, "filter");
             s.filter = FilterSetting{enumeration<FilterPreset>(f, p, "preset"), number(f, p, "intensity")};
         }
@@ -408,21 +408,21 @@ public:
             // Tipos que esta versão não conhece (o app do Mac tem animações por letra, palavra
             // e linha) viram "esmaecer" em vez de impedir a abertura. A chave `animationLoop`
             // também é ignorada. Ao regravar, o tipo original e o loop se perdem.
-            const QString kindPath = p + u".kind";
+            const QString kindPath = p + QStringLiteral(".kind");
             const auto kind = enumFromKey<AnimationKind>(string(required(a, p, "kind"), kindPath));
             return SegmentAnimation{kind.value_or(AnimationKind::Fade), integer(a, p, "duration")};
         };
         s.animationIn = animation("animationIn");
         s.animationOut = animation("animationOut");
         if (present(o, "transition")) {
-            const QString p = path + u".transition";
+            const QString p = path + QStringLiteral(".transition");
             const QJsonObject t = object(o, path, "transition");
             s.transition = Transition{enumeration<TransitionKind>(t, p, "kind"), integer(t, p, "duration")};
         }
         if (present(o, "text")) {
-            const QString p = path + u".text";
+            const QString p = path + QStringLiteral(".text");
             const QJsonObject t = object(o, path, "text");
-            s.text = TextContent{string(t, p, "text"), textStyle(object(t, p, "style"), p + u".style")};
+            s.text = TextContent{string(t, p, "text"), textStyle(object(t, p, "style"), p + QStringLiteral(".style"))};
         }
         return s;
     }
@@ -471,7 +471,7 @@ public:
         }
         if (key == u"color") {
             const QJsonObject c = object(o.constBegin().value(), p);
-            return CanvasBackground::color(rgba(object(c, p, "_0"), p + u"._0"));
+            return CanvasBackground::color(rgba(object(c, p, "_0"), p + QStringLiteral("._0")));
         }
         if (key == u"blur") {
             const QJsonObject b = object(o.constBegin().value(), p);
@@ -489,8 +489,8 @@ public:
         p.formatVersion = int(integer(o, path, "formatVersion"));
         p.name = string(o, path, "name");
         const QJsonObject canvas = object(o, path, "canvas");
-        p.canvas.aspect = enumeration<AspectRatio>(canvas, path + u".canvas", "aspect");
-        p.canvas.background = background(object(canvas, path + u".canvas", "background"), path + u".canvas.background");
+        p.canvas.aspect = enumeration<AspectRatio>(canvas, path + QStringLiteral(".canvas"), "aspect");
+        p.canvas.background = background(object(canvas, path + QStringLiteral(".canvas"), "background"), path + QStringLiteral(".canvas.background"));
         p.fps = number(o, path, "fps");
         const QJsonArray materials = array(o, path, "materials");
         for (int i = 0; i < materials.size(); ++i) {
