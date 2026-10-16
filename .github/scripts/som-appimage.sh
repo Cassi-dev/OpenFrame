@@ -34,17 +34,31 @@ echo "Pacote: sem plugin de mídia do Qt e sem libva."
 
 # 2. O sistema: sem libva, com PulseAudio e uma tela virtual (o app usa a xcb do pacote).
 sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils xvfb xauth > /dev/null
-libva=$(dpkg-query -W -f='${Package} ${Status}\n' 'libva*' 2> /dev/null | awk '/ installed$/ { print $1 }')
+# O apt-get remove levaria junto o pulseaudio (pulseaudio → libasound2-plugins →
+# libavcodec → libva). O dpkg tira só a libva e deixa a dependência quebrada: a
+# saída nula do PulseAudio não usa os plugins do ALSA. Nenhum passo depois deste usa o apt.
+libva=$(dpkg-query -W -f='${Package} ${Status}\n' 'libva*' 2> /dev/null | awk '/ installed$/ && $1 ~ /^libva([0-9]|-)/ { print $1 }')
 if [[ -n $libva ]]; then
+    echo "Tirando só a libva: ${libva//$'\n'/ }"
     # shellcheck disable=SC2086
-    sudo apt-get remove -y $libva
+    sudo dpkg --remove --force-depends $libva
+    sudo ldconfig
 fi
-if ldconfig -p | awk '/libva/ { achou = 1 } END { exit !achou }'; then
+if ldconfig -p | awk '/libva[.-]/ { achou = 1 } END { exit !achou }'; then
     echo "::error::A libva continua no sistema"
     exit 1
 fi
 echo "Sistema: sem libva."
-pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=stderr
+for c in pulseaudio pactl parec; do
+    if ! command -v "$c" > /dev/null; then
+        echo "::error::O $c sumiu do sistema ao tirar a libva (pacotes tirados: ${libva//$'\n'/ })"
+        exit 1
+    fi
+done
+if ! pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=stderr || ! pactl info > /dev/null; then
+    echo "::error::O PulseAudio não subiu sem a libva (dependência quebrada do libasound2-plugins)"
+    exit 1
+fi
 pactl load-module module-null-sink sink_name=captura > /dev/null
 pactl set-default-sink captura
 
