@@ -41,7 +41,7 @@ jobs:
       - name: Dependências de sistema do Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
+          sudo apt-get install -y --no-install-recommends ninja-build nasm meson pkg-config
 
       - name: Instalar Qt 6 (Host Linux)
         uses: jurplel/install-qt-action@v4
@@ -64,18 +64,26 @@ jobs:
           aqtversion: "==3.3.*"
           cache: true
 
-      - name: Baixar FFmpeg compartilhado para Android (ARM64)
-        env:
-          FFMPEG_URL: "https://github.com/Javernaut/ffmpeg-android-maker/releases/download/v1.0.0/ffmpeg-android-maker-v1.0.0.tar.gz"
+      - name: Cache do FFmpeg Android ARM64
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/ffmpeg-android-output
+          key: ffmpeg-android-arm64-v8a-ndk26-7.1-v1
+
+      - name: Compilar FFmpeg compartilhado para Android (ARM64)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/ffmpeg-android"
-          cd "$RUNNER_TEMP/ffmpeg-android"
-          # Baixa build estável do FFmpeg com headers e libs .so para arm64-v8a
-          curl -fsSL --retry 3 -o ffmpeg-android.tar.gz "https://github.com/Khang-NT/ffmpeg-binary-android/releases/download/v6.0-1/ffmpeg-v6.0-arm64-v8a.tar.gz" || \
-          curl -fsSL --retry 3 -o ffmpeg-android.tar.gz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-05-31-12-55/ffmpeg-n6.1.1-linux64-gpl-shared-6.1.tar.xz"
-          mkdir -p extraido
-          tar -xf ffmpeg-android.tar.gz -C extraido || true
-          echo "FFMPEG_ANDROID_ROOT=$RUNNER_TEMP/ffmpeg-android/extraido" >> "$GITHUB_ENV"
+          git clone --depth 1 https://github.com/Javernaut/ffmpeg-android-maker.git "$RUNNER_TEMP/ffmpeg-maker"
+          cd "$RUNNER_TEMP/ffmpeg-maker"
+          export ANDROID_SDK_HOME="$ANDROID_HOME"
+          export ANDROID_NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
+          ./ffmpeg-android-maker.sh --source-tar=7.1 -android=26 -abis=arm64-v8a
+          mkdir -p /home/runner/ffmpeg-android-output
+          cp -r output/* /home/runner/ffmpeg-android-output/
+
+      - name: Configurar variável FFMPEG_ANDROID_ROOT
+        run: echo "FFMPEG_ANDROID_ROOT=/home/runner/ffmpeg-android-output" >> "$GITHUB_ENV"
 
       - name: Configurar CMake para Android
         env:
@@ -83,17 +91,19 @@ jobs:
         run: |
           cmake -S qt -B build-android \
             -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_TOOLCHAIN_FILE="$QT_ROOT_DIR/lib/cmake/Qt6/qt.toolchain.cmake" \
             -DQT_HOST_PATH="$QT_HOST_PATH" \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DANDROID_SDK_ROOT="$ANDROID_HOME" \
+            -DANDROID_NDK_ROOT="$ANDROID_NDK_HOME" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=26 \
             -DOPENFRAME_BUILD_TESTS=OFF \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Compilar APK
         run: |
-          cmake --build build-android --target OpenFrame_make_apk --parallel
+          cmake --build build-android --target OpenFrame --parallel
+          cmake --build build-android --target OpenFrame_make_apk --parallel || cmake --build build-android --target apk --parallel
 
       - name: Localizar APK gerado
         run: |

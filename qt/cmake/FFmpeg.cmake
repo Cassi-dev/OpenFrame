@@ -15,24 +15,30 @@ if(NOT TARGET FFmpeg::FFmpeg)
             set(FFMPEG_ROOT "$ENV{FFMPEG_ANDROID_ROOT}")
         endif()
 
-        # Tenta subdiretório com a ABI (ex: arm64-v8a) ou raiz direta
-        if(EXISTS "${FFMPEG_ROOT}/${ANDROID_ABI}")
-            set(_ffmpeg_base "${FFMPEG_ROOT}/${ANDROID_ABI}")
-        else()
-            set(_ffmpeg_base "${FFMPEG_ROOT}")
-        endif()
-
-        find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h PATHS "${_ffmpeg_base}/include" "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
+        # Procura os headers em múltiplos locais possíveis (layout padrão, ffmpeg-android-maker ou plano)
+        find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
+            PATHS
+                "${FFMPEG_ROOT}/include"
+                "${FFMPEG_ROOT}/include/${ANDROID_ABI}"
+                "${FFMPEG_ROOT}/${ANDROID_ABI}/include"
+            NO_DEFAULT_PATH REQUIRED
+        )
         add_library(FFmpeg::FFmpeg INTERFACE IMPORTED)
         target_include_directories(FFmpeg::FFmpeg INTERFACE "${FFMPEG_INCLUDE_DIR}")
 
-        set(OPENFRAME_ANDROID_FFMPEG_LIBS "")
+        set(_of_android_libs "")
         foreach(lib ${_of_ffmpeg_libs})
-            find_library(FFMPEG_${lib}_LIBRARY NAMES ${lib} PATHS "${_ffmpeg_base}/lib" NO_DEFAULT_PATH REQUIRED)
+            find_library(FFMPEG_${lib}_LIBRARY NAMES ${lib}
+                PATHS
+                    "${FFMPEG_ROOT}/lib"
+                    "${FFMPEG_ROOT}/lib/${ANDROID_ABI}"
+                    "${FFMPEG_ROOT}/${ANDROID_ABI}/lib"
+                NO_DEFAULT_PATH REQUIRED
+            )
             target_link_libraries(FFmpeg::FFmpeg INTERFACE "${FFMPEG_${lib}_LIBRARY}")
-            list(APPEND OPENFRAME_ANDROID_FFMPEG_LIBS "${FFMPEG_${lib}_LIBRARY}")
+            list(APPEND _of_android_libs "${FFMPEG_${lib}_LIBRARY}")
         endforeach()
-        set(OPENFRAME_ANDROID_FFMPEG_LIBS "${OPENFRAME_ANDROID_FFMPEG_LIBS}" PARENT_SCOPE)
+        set(OPENFRAME_ANDROID_FFMPEG_LIBS "${_of_android_libs}" CACHE INTERNAL "Android FFmpeg extra libs")
 
     # Windows ou FFMPEG_ROOT explícito no Desktop
     elseif(FFMPEG_ROOT OR DEFINED ENV{FFMPEG_ROOT})
