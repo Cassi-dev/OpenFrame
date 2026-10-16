@@ -8,21 +8,25 @@ Window {
     id: window
     width: 1440
     height: 900
-    minimumWidth: 1180
-    minimumHeight: 740
+    minimumWidth: 360
+    minimumHeight: 540
     visible: true
     color: Theme.background
     title: Editor.screen === "editor" ? Editor.projectName + " — OpenFrame" : "OpenFrame"
 
     readonly property bool inEditor: Editor.screen === "editor"
     readonly property bool idle: Editor.modalCount === 0 && !Editor.showExport
+    readonly property bool isMobile: width < 780 || Qt.platform.os === "android" || Qt.platform.os === "ios"
 
     Loader {
         anchors.fill: parent
-        sourceComponent: window.inEditor ? editorComponent : homeComponent
+        sourceComponent: window.inEditor 
+            ? (window.isMobile ? mobileEditorComponent : editorComponent) 
+            : homeComponent
     }
     Component { id: homeComponent; HomeView {} }
     Component { id: editorComponent; EditorView {} }
+    Component { id: mobileEditorComponent; MobileEditorView {} }
 
     ExportSheet {}
 

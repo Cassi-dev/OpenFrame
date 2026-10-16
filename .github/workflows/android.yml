@@ -1,0 +1,109 @@
+name: Android (ARM64 APK)
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+    paths: ["qt/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["qt/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Compilar APK Android (ARM64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Configurar Android SDK e NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          add-to-path: true
+
+      - name: Dependências de sistema do Host
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Instalar Qt 6 (Host Linux)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.0"
+          arch: "linux_gcc_64"
+          aqtversion: "==3.3.*"
+          cache: true
+
+      - name: Salvar caminho do Qt Host
+        run: echo "QT_HOST_PATH=$QT_ROOT_DIR" >> "$GITHUB_ENV"
+
+      - name: Instalar Qt 6 (Target Android ARM64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.0"
+          target: "android"
+          arch: "android_arm64_v8a"
+          modules: "qtmultimedia"
+          aqtversion: "==3.3.*"
+          cache: true
+
+      - name: Baixar FFmpeg compartilhado para Android (ARM64)
+        env:
+          FFMPEG_URL: "https://github.com/Javernaut/ffmpeg-android-maker/releases/download/v1.0.0/ffmpeg-android-maker-v1.0.0.tar.gz"
+        run: |
+          mkdir -p "$RUNNER_TEMP/ffmpeg-android"
+          cd "$RUNNER_TEMP/ffmpeg-android"
+          # Baixa build estável do FFmpeg com headers e libs .so para arm64-v8a
+          curl -fsSL --retry 3 -o ffmpeg-android.tar.gz "https://github.com/Khang-NT/ffmpeg-binary-android/releases/download/v6.0-1/ffmpeg-v6.0-arm64-v8a.tar.gz" || \
+          curl -fsSL --retry 3 -o ffmpeg-android.tar.gz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-05-31-12-55/ffmpeg-n6.1.1-linux64-gpl-shared-6.1.tar.xz"
+          mkdir -p extraido
+          tar -xf ffmpeg-android.tar.gz -C extraido || true
+          echo "FFMPEG_ANDROID_ROOT=$RUNNER_TEMP/ffmpeg-android/extraido" >> "$GITHUB_ENV"
+
+      - name: Configurar CMake para Android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cmake -S qt -B build-android \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DQT_HOST_PATH="$QT_HOST_PATH" \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DOPENFRAME_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar APK
+        run: |
+          cmake --build build-android --target OpenFrame_make_apk --parallel
+
+      - name: Localizar APK gerado
+        run: |
+          mkdir -p dist-apk
+          find build-android -name "*.apk" -exec cp {} dist-apk/OpenFrame-Android-arm64.apk \;
+          ls -la dist-apk/
+
+      - name: Publicar APK como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenFrame-Android-arm64
+          path: dist-apk/*.apk
+          retention-days: 14

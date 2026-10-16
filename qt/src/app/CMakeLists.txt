@@ -66,6 +66,18 @@ if(WIN32)
     target_sources(OpenFrame PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/OpenFrame.rc")
 endif()
 
+# Configuração de empacotamento do APK no Android
+if(ANDROID)
+    set_target_properties(OpenFrame PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/android"
+    )
+    if(OPENFRAME_ANDROID_FFMPEG_LIBS)
+        set_target_properties(OpenFrame PROPERTIES
+            QT_ANDROID_EXTRA_LIBS "${OPENFRAME_ANDROID_FFMPEG_LIBS}"
+        )
+    endif()
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS OpenFrame
     BUNDLE DESTINATION .
