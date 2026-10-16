@@ -9,10 +9,15 @@ function(openframe_add_test name)
     # do contexto da plataforma "windows" e derruba os testes que consultam fontes.
     if(NOT WIN32)
         set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    elseif(OPENFRAME_WHISPER_LIB_DIR AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-        # As DLLs do whisper/ggml ficam numa pasta própria do build.
-        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${OPENFRAME_WHISPER_LIB_DIR}")
+    else()
+        # Sem um console (o ctest da CI), o Qt Test no Windows escreve tudo no OutputDebugString, e o log do
+        # ctest fica vazio: assim a saída vai para o stdout.
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1")
+        if(OPENFRAME_WHISPER_LIB_DIR AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+            # As DLLs do whisper/ggml ficam numa pasta própria do build.
+            set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${OPENFRAME_WHISPER_LIB_DIR}")
+        endif()
     endif()
 endfunction()
 
@@ -59,6 +64,18 @@ include(FFmpeg)
 target_link_libraries(ExportTests PRIVATE FFmpeg::FFmpeg)
 set_tests_properties(ExportTests PROPERTIES TIMEOUT 1500)
 set_tests_properties(PlayerTests PROPERTIES TIMEOUT 900)
+
+# Fora do Mac, as fontes do Mac viram a Inter e as outras livres (FontCatalog::resolve), um pouco mais largas: a
+# segmentação das legendas e as quebras de linha mudam. No Mac, estas rodam de novo só com as fontes distribuídas,
+# para pegar aqui o que a CI do Windows e do Linux pegaria.
+if(APPLE)
+    foreach(t CaptionTests CaptionRenderTests TextLayoutTests)
+        add_test(NAME ${t}BundledFonts COMMAND ${t})
+        set_tests_properties(${t}BundledFonts PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;OPENFRAME_BUNDLED_FONTS_ONLY=1")
+    endforeach()
+    set_tests_properties(CaptionRenderTestsBundledFonts PROPERTIES RESOURCE_LOCK heavy)
+endif()
 
 # Os que disputam CPU ou medem tempo um de cada vez, como o HeavyWork do Swift: o whisper, a comparação com o
 # Swift, a exportação, o player e as medições de desempenho.

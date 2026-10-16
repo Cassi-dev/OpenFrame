@@ -144,7 +144,7 @@ do Swift. Nada muda na chamada do app: `Renderer::shared().render(project, t, si
 |---|---|
 | `AnimationPreview.h` | `AnimationPreview::frames(subject, part, size, count) -> QList<QImage>`: miniaturas animadas da aba Animação e dos cartões da janela das legendas, pelo mesmo `Renderer` (prévia = resultado). `Subject` = `TextContent` ou `QImage` (foto ou quadro do vídeo); `Part::entry(kind)`, `Part::exit(kind)`, `Part::loopOf(loopKind)`. Entrada: 600 ms de animação e 600 ms parado; saída: parado e depois a saída; loop: dois períodos na intensidade máxima. Texto centralizado e com a fonte ajustada para caber (nítido); imagem encaixada. Fundo transparente (`Format_ARGB32_Premultiplied`). Vazio com texto vazio, imagem nula ou `count` ≤ 0. Precisa de `QGuiApplication`; pode rodar fora da thread da interface |
 | `Renderer.h` | `RenderOptions{stills, transparent}` e `render(project, t, size, options)`: fotos em memória por material e fundo transparente (é o que o `AnimationPreview` usa; o app não precisa) |
-| `FontCatalog.h` | `registerBundled()` (chamada sozinha pelo `TextRenderer` e por `families()`) e `resolve(family, face) -> ResolvedFont{family, face}`: a família pedida, se existir; senão a equivalente distribuída (abaixo). `families()` passa a listar também as fontes do núcleo |
+| `FontCatalog.h` | `registerBundled()` (chamada sozinha pelo `TextRenderer` e por `families()`) e `resolve(family, face) -> ResolvedFont{family, face}`: a família pedida, se existir; senão a equivalente distribuída (abaixo). `families()` passa a listar também as fontes do núcleo. `OPENFRAME_BUNDLED_FONTS_ONLY=1` (testes): só as distribuídas contam como existentes, e o Mac resolve como o Windows e o Linux; no Mac, o ctest roda o CaptionTests, o CaptionRenderTests e o TextLayoutTests de novo assim (`*BundledFonts`) |
 | `TextRenderer.h` | `imageSize(content, canvas)`, `rasterScale(content, canvas, peak)`: o texto é rasterizado na escala efetiva (estilo × pico da animação, passos de 1/8, mínimo 1, lado de até 8192 px) e só reduzido depois |
 
 Fontes embutidas no núcleo (recurso `:/openframe/fonts`, 2,6 MB; todas SIL Open Font License 1.1, com o texto da
@@ -244,6 +244,17 @@ termina com "motor indisponível", sem travar.
 **Rede:** o download usa HTTPS (huggingface.co): o pacote precisa do Qt Network e do plugin de TLS
 (`plugins/tls`: `qschannelbackend` no Windows; `qopensslbackend` no Linux, que usa a OpenSSL do sistema). Vale
 testar um download de verdade no pacote. É o único acesso à rede do app, só quando o usuário pede.
+
+**Proxy:** o download usa o proxy do sistema, mas a consulta roda numa thread de trabalho, antes do pedido. No Windows,
+com a detecção automática (WPAD) ligada, o Qt chama o `WinHttpGetProxyForUrl` antes de ver que o endereço é local, e
+isso pode travar a thread do pedido por dezenas de segundos. É a causa provável da falha do WhisperUnitTests na CI do
+Windows (34,7 s, as esperas de 10 s estourando, e passava logo depois, já com a consulta em cache); só a próxima CI
+confirma. O resultado da consulta vale também para os redirecionamentos (o CDN do
+Hugging Face). Endereço local (loopback, `localhost`, `file://`) vai direto, sem consulta. Cancelar durante a consulta
+termina na hora.
+
+**Testes no Windows:** sem um console (o ctest da CI), o Qt Test escreve no `OutputDebugString`, e o log do ctest fica
+vazio. Por isso todos os testes recebem `QT_FORCE_STDERR_LOGGING=1` e escrevem no stdout.
 
 ### Medições (CPU, 65 s de fala do `say`, build Release)
 

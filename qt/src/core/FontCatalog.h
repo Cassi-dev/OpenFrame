@@ -28,7 +28,8 @@ void registerBundled();
 /// a equivalente distribuída: Helvetica Neue, Avenir Next, Futura, Gill Sans e SF Pro → Inter (o estilo
 /// "Condensed Black"/"Condensed Bold" → Barlow Condensed Black/Bold); Menlo, Monaco, SF Mono, Courier, Courier
 /// New e American Typewriter → JetBrains Mono; Didot, Bodoni 72 e Baskerville → Playfair Display. Qualquer outra
-/// ausente → Inter (ou a fonte do sistema, se nem ela existir).
+/// ausente → Inter (ou a fonte do sistema, se nem ela existir). Com `OPENFRAME_BUNDLED_FONTS_ONLY=1` (testes), só as
+/// distribuídas contam como existentes: o Mac usa as mesmas fontes do Windows e do Linux.
 struct ResolvedFont {
     QString family;
     QString face;
