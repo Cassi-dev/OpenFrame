@@ -972,9 +972,9 @@ void Snapshot::captionsScenario()
             return fail("legendas: sem faixa automática");
         m_model->seekMicros(seg->targetStart + seg->targetDuration() * 45 / 100);
     };
-    // Modelo instalado (gera sem baixar) e um ausente (para o estado de erro do download).
+    // Modelo instalado: gera sem baixar. O cenário nunca baixa nada (o download é de verdade
+    // desde a etapa 3); os estados do download são simulados.
     auto installed = std::make_shared<QString>();
-    auto missing = std::make_shared<QString>();
     auto generate = [this, gen, installed](const QString &preset) {
         gen->setModel(*installed);
         gen->setPreset(preset);
@@ -994,13 +994,11 @@ void Snapshot::captionsScenario()
 
     // Janela: opções, modelos e os cartões dos estilos. Sem o texto padrão do projeto,
     // que ficaria por cima das legendas nas capturas.
-    then(0, [this, gen, installed, missing] {
-        for (const auto &m : CaptionsCore::models()) {
-            QString &slot = gen->engine()->isInstalled(m.id) ? *installed : *missing;
-            if (slot.isEmpty())
-                slot = m.id;
-        }
-        log(QStringLiteral("legendas: modelo instalado \"%1\", ausente \"%2\"").arg(*installed, *missing));
+    then(0, [this, gen, installed] {
+        for (const auto &m : CaptionsCore::models())
+            if (installed->isEmpty() && gen->engine()->isInstalled(m.id))
+                *installed = m.id;
+        log(QStringLiteral("legendas: modelo instalado \"%1\"").arg(*installed));
         if (installed->isEmpty())
             return fail(QStringLiteral("legendas: nenhum modelo instalado em %1; o cenário gera com um modelo "
                                        "instalado (OPENFRAME_MODELS_DIR) e a transcrição falsa")
@@ -1032,25 +1030,17 @@ void Snapshot::captionsScenario()
     });
     then(500, [this] { capture("legendas-3-estilo-sem-destaque"); });
 
-    // Estados: baixando (simulado, o download real chega com a etapa 3), erro do download, gerando, pronto.
+    // Estados: baixando e erro do download (simulados, sem rede), gerando, pronto.
     then(0, [gen] {
         gen->setIncludesDownload(true);
         gen->setPhase(QStringLiteral("downloading"), 0.42);
     });
     then(500, [this] { capture("legendas-4-baixando"); });
-    then(0, [this, gen, missing] {
-        gen->backToOptions();
-        if (missing->isEmpty())
-            return log("legendas: todos os modelos instalados, sem a captura do erro do download");
-        gen->setModel(*missing);
-        m_model->generateCaptions();
+    then(0, [gen] {
+        gen->setResult(0, QStringLiteral("O download veio incompleto (15 de 488 MB). Tente de novo."));
     });
-    waitUntil([gen, missing] { return missing->isEmpty() || gen->phase() == "failed"; }, 3000,
-              QStringLiteral("o erro do download"));
-    then(300, [this, gen, missing] {
-        if (missing->isEmpty())
-            return;
-        log("legendas: erro = " + gen->error());
+    then(500, [this, gen] {
+        log(QStringLiteral("legendas: fase %1, erro (simulado) = %2").arg(gen->phase(), gen->error()));
         capture("legendas-5-erro");
         gen->backToOptions();
     });
