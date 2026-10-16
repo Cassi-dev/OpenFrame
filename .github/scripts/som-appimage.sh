@@ -88,8 +88,9 @@ tocar() { # tocar <log> <capturas> [VAR=valor...]
         echo "::error::O AppImage não chegou ao fim do cenário de som (saída $status, $log)"
         return 1
     fi
-    if grep -q 'Loading media backend' "$log"; then
-        echo "::error::O AppImage carregou um backend de mídia do Qt ($log): $(grep -m 1 'Loading media backend' "$log")"
+    # Sem nenhum plugin, o Qt escreve 'Loading media backend ""' (nome vazio) e segue só com o QAudioSink.
+    if grep -q 'Loading media backend "[^"]' "$log"; then
+        echo "::error::O AppImage carregou um backend de mídia do Qt ($log): $(grep -m 1 'Loading media backend "[^"]' "$log")"
         return 1
     fi
 }
